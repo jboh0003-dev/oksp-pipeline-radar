@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import DashboardLoading from "@/components/DashboardLoading";
 import Header from "@/components/Header";
 import NoticeCard from "@/components/NoticeCard";
 import ProductFilter from "@/components/ProductFilter";
 import SearchBar from "@/components/SearchBar";
 import SummaryCards from "@/components/SummaryCards";
 import {
-  sampleNotices,
   type Notice,
   type ProductFilter as ProductFilterValue,
 } from "@/data/sampleNotices";
+import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import {
   countImminentDeadlines,
   getAverageFitScore,
@@ -38,25 +39,49 @@ function matchesProduct(notice: Notice, product: ProductFilterValue) {
 }
 
 export default function Home() {
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [dataSource, setDataSource] = useState<NoticeDataSource>("sample");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
   const [savedIds, setSavedIds] = useState<string[]>([]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadNotices() {
+      setIsLoading(true);
+      const result = await fetchNotices();
+      if (!isMounted) return;
+      setNotices(result.notices);
+      setDataSource(result.source);
+      setErrorMessage(result.error);
+      setIsLoading(false);
+    }
+
+    void loadNotices();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const filteredNotices = useMemo(() => {
-    return sampleNotices.filter(
+    return notices.filter(
       (notice) => matchesSearch(notice, searchQuery) && matchesProduct(notice, selectedProduct),
     );
-  }, [searchQuery, selectedProduct]);
+  }, [notices, searchQuery, selectedProduct]);
 
   const summary = useMemo(() => {
-    const savedCount = sampleNotices.filter((notice) => savedIds.includes(notice.id)).length;
+    const savedCount = notices.filter((notice) => savedIds.includes(notice.id)).length;
     return {
-      totalCount: sampleNotices.length,
+      totalCount: notices.length,
       savedCount,
       averageFitScore: getAverageFitScore(filteredNotices),
-      imminentCount: countImminentDeadlines(sampleNotices),
+      imminentCount: countImminentDeadlines(notices),
     };
-  }, [filteredNotices, savedIds]);
+  }, [notices, filteredNotices, savedIds]);
 
   const handleToggleSave = (id: string) => {
     setSavedIds((prev) =>
@@ -64,10 +89,31 @@ export default function Home() {
     );
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-full bg-[#F2F4F6]">
+        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+          <Header totalCount={0} filteredCount={0} />
+          <DashboardLoading />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-full bg-[#F2F4F6]">
       <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
-        <Header totalCount={sampleNotices.length} filteredCount={filteredNotices.length} />
+        <Header totalCount={notices.length} filteredCount={filteredNotices.length} />
+
+        {dataSource === "sample" && errorMessage && (
+          <div className="mb-4 rounded-xl border border-[#FFD6D6] bg-[#FFF0F0] px-4 py-4 text-sm text-[#B42318]">
+            <p className="font-semibold">Supabase 연결에 실패해 샘플 데이터를 표시하고 있습니다.</p>
+            <p className="mt-2 text-xs font-medium text-[#912018]">오류 상세</p>
+            <p className="mt-1 break-all rounded-lg bg-white/80 px-3 py-2 font-mono text-xs leading-relaxed text-[#912018]">
+              {errorMessage}
+            </p>
+          </div>
+        )}
 
         <SummaryCards
           totalCount={summary.totalCount}
@@ -104,7 +150,9 @@ export default function Home() {
         </section>
 
         <p className="mt-8 text-center text-xs text-[#8B95A1]">
-          샘플 데이터 기반 MVP · 나라장터 API 연동 예정
+          {dataSource === "supabase"
+            ? "Supabase 연동 · 나라장터 API 연동 예정"
+            : "샘플 데이터 기반 MVP · 나라장터 API 연동 예정"}
         </p>
       </main>
     </div>
