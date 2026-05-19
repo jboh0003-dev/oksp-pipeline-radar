@@ -1,4 +1,6 @@
 import { sampleNotices, type Notice } from "@/data/sampleNotices";
+import { getMatchGrade } from "@/lib/noticeGrades";
+import { isNoticeVisible, sortNoticesForDisplay } from "@/lib/noticeVisibility";
 import {
   getSupabaseClient,
   getSupabaseConfigError,
@@ -12,6 +14,11 @@ export type FetchNoticesResult = {
   source: NoticeDataSource;
   error: string | null;
 };
+
+function isTestNotice(row: NoticeRow): boolean {
+  const url = (row.original_url ?? "").toLowerCase();
+  return url.includes("example.com");
+}
 
 function formatDueDate(value: string): string {
   return value.includes("T") ? value.slice(0, 10) : value;
@@ -53,8 +60,8 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-/** Supabase row → NoticeCard용 Notice */
 function mapRowToNotice(row: NoticeRow): Notice {
+  const fitScore = row.match_score ?? 0;
   return {
     id: String(row.id),
     title: row.title,
@@ -62,24 +69,39 @@ function mapRowToNotice(row: NoticeRow): Notice {
     deadline: formatDueDate(row.due_date),
     budget: row.budget ?? "-",
     relatedProducts: parseStringArray(row.products),
-    fitScore: row.match_score ?? 0,
+    fitScore,
+    matchGrade: getMatchGrade(fitScore),
     keywords: parseStringArray(row.keywords),
+    summary: row.summary ?? undefined,
     sourceUrl: row.original_url ?? "https://www.g2b.go.kr/",
   };
+}
+
+function sortRowsForDisplay(rows: NoticeRow[]): NoticeRow[] {
+  return [...rows].sort((a, b) => {
+    const aG2b = a.source_type === "g2b" ? 0 : 1;
+    const bG2b = b.source_type === "g2b" ? 0 : 1;
+    if (aG2b !== bG2b) return aG2b - bG2b;
+    return String(a.due_date).localeCompare(String(b.due_date));
+  });
+}
+
+function filterVisibleSample(): Notice[] {
+  return sortNoticesForDisplay(sampleNotices.filter((notice) => isNoticeVisible(notice)));
 }
 
 export async function fetchNotices(): Promise<FetchNoticesResult> {
   const configError = getSupabaseConfigError();
   if (configError) {
     console.error("[fetchNotices] Supabase config error:", configError);
-    return { notices: sampleNotices, source: "sample", error: configError };
+    return { notices: filterVisibleSample(), source: "sample", error: configError };
   }
 
   const supabase = getSupabaseClient();
   if (!supabase) {
     const message = "Supabase 클라이언트를 생성하지 못했습니다.";
     console.error("[fetchNotices]", message);
-    return { notices: sampleNotices, source: "sample", error: message };
+    return { notices: filterVisibleSample(), source: "sample", error: message };
   }
 
   try {
@@ -90,23 +112,24 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
       .order("due_date", { ascending: true });
 
     if (error) {
-      console.error("[fetchNotices] Supabase select error:", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      });
+      console.error("[fetchNotices] Supabase select error:", error);
       throw error;
     }
 
+    const notices = sortNoticesForDisplay(
+      sortRowsForDisplay((data ?? []).filter((row) => !isTestNotice(row)))
+        .map(mapRowToNotice)
+        .filter((notice) => isNoticeVisible(notice)),
+    );
+
     return {
-      notices: (data ?? []).map(mapRowToNotice),
+      notices,
       source: "supabase",
       error: null,
     };
   } catch (error) {
     const message = formatError(error);
     console.error("[fetchNotices] Supabase request failed:", error);
-    return { notices: sampleNotices, source: "sample", error: message };
+    return { notices: filterVisibleSample(), source: "sample", error: message };
   }
 }

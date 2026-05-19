@@ -13,17 +13,21 @@ export type Database = {
 /** Supabase `notices` 테이블 실제 컬럼 */
 export type NoticeRow = {
   id: string;
+  external_id?: string | null;
   title: string;
   agency: string;
   source: string | null;
   original_url: string | null;
   budget: string | null;
   due_date: string;
+  notice_date?: string | null;
   products: string[] | string | null;
   match_score: number | null;
   keywords: string[] | string | null;
   summary: string | null;
   status: string;
+  source_type?: string | null;
+  raw_data?: Record<string, unknown> | null;
   created_at: string | null;
 };
 

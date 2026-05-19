@@ -1,3 +1,6 @@
+import type { MatchGrade } from "@/lib/noticeGrades";
+import { getMatchGrade } from "@/lib/noticeGrades";
+
 export const PRODUCT_FILTERS = [
   "전체",
   "CONTRABASS",
@@ -19,12 +22,21 @@ export type Notice = {
   budget: string;
   relatedProducts: string[];
   fitScore: number;
+  matchGrade: MatchGrade;
   keywords: string[];
+  summary?: string;
   sourceUrl: string;
 };
 
+function withGrade(notice: Omit<Notice, "matchGrade"> & { matchGrade?: MatchGrade }): Notice {
+  return {
+    ...notice,
+    matchGrade: notice.matchGrade ?? getMatchGrade(notice.fitScore),
+  };
+}
+
 export const sampleNotices: Notice[] = [
-  {
+  withGrade({
     id: "notice-001",
     title: "클라우드 통합관리 플랫폼(CMP) 구축 및 운영 용역",
     agency: "한국전력공사",
@@ -34,8 +46,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 94,
     keywords: ["CMP", "멀티클라우드", "자원관리", "운영"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-002",
     title: "보안 정보 및 이벤트 관리(SIEM) 고도화 사업",
     agency: "국민건강보험공단",
@@ -45,8 +57,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 91,
     keywords: ["SIEM", "보안관제", "로그분석", "위협탐지"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-003",
     title: "제로트러스트 기반 통합 보안관제 체계 구축",
     agency: "행정안전부",
@@ -56,8 +68,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 88,
     keywords: ["제로트러스트", "접근통제", "관제", "정부"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-004",
     title: "AI 기반 이상행위 탐지 및 자동 대응 시스템 도입",
     agency: "한국수자원공사",
@@ -67,8 +79,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 86,
     keywords: ["AI", "이상탐지", "SOAR", "자동대응"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-005",
     title: "공공 클라우드 자원 통합관리 및 비용 최적화",
     agency: "조달청",
@@ -78,8 +90,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 90,
     keywords: ["FinOps", "클라우드", "비용최적화", "공공"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-006",
     title: "데이터센터 보안관제센터(SOC) 운영 위탁",
     agency: "한국가스공사",
@@ -89,8 +101,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 85,
     keywords: ["SOC", "24x7", "관제위탁", "인프라"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-007",
     title: "DevSecOps 파이프라인 보안 점검 자동화 도구",
     agency: "한국철도공사",
@@ -100,8 +112,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 82,
     keywords: ["DevSecOps", "CI/CD", "취약점", "자동화"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-008",
     title: "하이브리드 클라우드 모니터링 및 성능관리",
     agency: "한국토지주택공사",
@@ -111,8 +123,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 79,
     keywords: ["모니터링", "APM", "하이브리드", "성능"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-009",
     title: "개인정보 접근 로그 통합분석 플랫폼 구축",
     agency: "국세청",
@@ -122,8 +134,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 87,
     keywords: ["개인정보", "접근로그", "컴플라이언스", "분석"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-010",
     title: "생성형 AI 기반 보안 운영 어시스턴트 PoC",
     agency: "과학기술정보통신부",
@@ -133,8 +145,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 92,
     keywords: ["생성형AI", "보안운영", "PoC", "어시스턴트"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-011",
     title: "통합 보안관제 및 위협 인텔리전스 연계",
     agency: "한국도로공사",
@@ -144,8 +156,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 84,
     keywords: ["TI", "위협정보", "관제", "연계"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-012",
     title: "클라우드 워크로드 배포 자동화 및 거버넌스",
     agency: "한국산업단지공단",
@@ -155,8 +167,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 78,
     keywords: ["IaC", "거버넌스", "배포자동화", "정책"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-013",
     title: "엔드포인트 보안 및 EDR 통합관리",
     agency: "국방부",
@@ -166,8 +178,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 81,
     keywords: ["EDR", "엔드포인트", "통합관리", "국방"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-014",
     title: "멀티클라우드 보안 정책 일원화 솔루션",
     agency: "한국은행",
@@ -177,8 +189,8 @@ export const sampleNotices: Notice[] = [
     fitScore: 89,
     keywords: ["멀티클라우드", "정책", "CSPM", "금융"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
-  {
+  }),
+  withGrade({
     id: "notice-015",
     title: "보안 이벤트 상관분석 및 AI 예측관제",
     agency: "서울특별시",
@@ -188,5 +200,5 @@ export const sampleNotices: Notice[] = [
     fitScore: 93,
     keywords: ["상관분석", "예측관제", "스마트시티", "AI"],
     sourceUrl: "https://www.g2b.go.kr/",
-  },
+  }),
 ];
