@@ -15,8 +15,14 @@ export type FetchNoticesResult = {
   error: string | null;
 };
 
-/** 화면에 표시할 source_type (g2b_keyword 포함, null 허용) */
+/** 화면에 표시할 source_type: g2b, g2b_keyword, null·빈 문자열 */
 const DISPLAY_SOURCE_TYPES = new Set(["g2b", "g2b_keyword"]);
+
+/** Supabase에서 가져올 최대 건수 (화면 필터 후에도 100건 이상 노출 가능하도록 여유) */
+export const DISPLAY_FETCH_LIMIT = 250;
+
+const DISPLAY_SOURCE_OR_FILTER =
+  "source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.is.null,source_type.eq.";
 
 function isDisplayableSourceType(sourceType: string | null | undefined): boolean {
   return sourceType == null || sourceType === "" || DISPLAY_SOURCE_TYPES.has(sourceType);
@@ -107,9 +113,10 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
       .from("notices")
       .select("*")
       .eq("status", "open")
-      .or("source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.is.null")
+      .or(DISPLAY_SOURCE_OR_FILTER)
       .order("match_score", { ascending: false, nullsFirst: false })
-      .order("due_date", { ascending: true });
+      .order("due_date", { ascending: true })
+      .limit(DISPLAY_FETCH_LIMIT);
 
     if (error) {
       console.error("[fetchNotices] Supabase select error:", error);
@@ -121,8 +128,7 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
     const notices = sortNoticesForDisplay(
       rows
         .filter((row) => isDisplayableSourceType(row.source_type) && !isTestNotice(row))
-        .map(mapRowToNotice)
-        .filter((notice) => isNoticeVisible(notice)),
+        .map(mapRowToNotice),
     );
 
     return {

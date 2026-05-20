@@ -15,65 +15,12 @@ import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import { getMatchGrade } from "@/lib/noticeGrades";
 import {
   countByGrade,
-  isNoticeVisible,
+  isTestNoticeUrl,
   sortNoticesForDisplay,
 } from "@/lib/noticeVisibility";
 import { getSupabaseClient } from "@/lib/supabase";
 
 type DisplayNotice = Notice & { rawData?: string };
-
-const EXCLUDE_DISPLAY_KEYWORDS = [
-  "체험학습",
-  "현장학습",
-  "수학여행",
-  "항공권",
-  "버스 임차",
-  "차량 임차",
-  "급식",
-  "청소",
-  "의류",
-] as const;
-
-const STRONG_TECH_RESCUE_KEYWORDS = [
-  "AI",
-  "인공지능",
-  "GPU",
-  "LLM",
-  "MLOps",
-  "생성형 AI",
-  "AI 인프라",
-  "클라우드",
-  "가상화",
-  "서버 가상화",
-  "서버",
-  "인프라",
-  "OpenStack",
-  "HCI",
-  "VMware",
-] as const;
-
-const CONCERTO_STRONG_KEYWORDS = [
-  "AI",
-  "인공지능",
-  "GPU",
-  "LLM",
-  "머신러닝",
-  "딥러닝",
-  "생성형",
-  "챗봇",
-  "NLP",
-  "음성인식",
-  "영상분석",
-] as const;
-
-function containsSearchTerm(text: string, term: string): boolean {
-  const lowerText = text.toLowerCase();
-  const lowerTerm = term.toLowerCase();
-  if (lowerTerm === "ai") {
-    return /(?:^|[^a-z0-9])ai(?:[^a-z0-9]|$)/i.test(text);
-  }
-  return lowerText.includes(lowerTerm);
-}
 
 function buildNoticeHaystack(notice: DisplayNotice): string {
   return [
@@ -88,53 +35,13 @@ function buildNoticeHaystack(notice: DisplayNotice): string {
     .toLowerCase();
 }
 
-function isConcertoLearningOnly(notice: DisplayNotice): boolean {
-  const hasConcerto = notice.relatedProducts.some((p) => p === "CONCERTO AI");
-  if (!hasConcerto) {
-    return false;
-  }
-  const haystack = buildNoticeHaystack(notice);
-  if (CONCERTO_STRONG_KEYWORDS.some((kw) => containsSearchTerm(haystack, kw))) {
-    return false;
-  }
-  return (
-    containsSearchTerm(haystack, "학습") &&
-    !STRONG_TECH_RESCUE_KEYWORDS.some((kw) => containsSearchTerm(haystack, kw))
-  );
-}
-
+/** 대시보드 노출: example.com 테스트 공고만 제외 (수집·매칭은 API에서 처리) */
 function shouldShowOnDashboard(notice: DisplayNotice): boolean {
-  if (!isNoticeVisible(notice)) {
-    return false;
-  }
-  if (notice.fitScore < 20) {
-    return false;
-  }
-  if (isConcertoLearningOnly(notice)) {
-    return false;
-  }
-
-  const haystack = buildNoticeHaystack(notice);
-  const hasExclude = EXCLUDE_DISPLAY_KEYWORDS.some((kw) => haystack.includes(kw.toLowerCase()));
-  const hasStrongTech = STRONG_TECH_RESCUE_KEYWORDS.some((kw) =>
-    containsSearchTerm(haystack, kw),
-  );
-
-  if (hasExclude && !hasStrongTech) {
-    return false;
-  }
-
-  return true;
+  return !isTestNoticeUrl(notice.sourceUrl);
 }
 
 function isSearchableCandidate(notice: DisplayNotice): boolean {
-  if (!isNoticeVisible(notice) || notice.fitScore < 20) {
-    return false;
-  }
-  if (isConcertoLearningOnly(notice)) {
-    return false;
-  }
-  return true;
+  return !isTestNoticeUrl(notice.sourceUrl);
 }
 
 function matchesSearch(notice: DisplayNotice, query: string): boolean {
@@ -173,7 +80,8 @@ async function attachRawData(
   const { data, error } = await supabase
     .from("notices")
     .select("id, raw_data")
-    .eq("status", "open");
+    .eq("status", "open")
+    .or("source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.is.null,source_type.eq.");
 
   if (error || !data) {
     return normalized.map((notice) => ({ ...notice, rawData: "" }));

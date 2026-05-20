@@ -7,57 +7,142 @@ export const maxDuration = 300;
 type G2BItem = Record<string, unknown>;
 
 const INQUIRY_DAYS = 30;
+const INQUIRY_DIV = "1";
 const NUM_OF_ROWS = 100;
 const DEFAULT_TARGET_COUNT = 100;
 const DEFAULT_MAX_PAGES = 150;
 
 const ENDPOINTS = ["getBidPblancListInfoServc", "getBidPblancListInfoThng"] as const;
 
-/** raw item 전체 문자열에서 하나라도 있으면 후보 */
-const COLLECT_KEYWORDS = [
-  "가상화",
-  "서버 가상화",
-  "VMware",
-  "VM웨어",
-  "OpenStack",
-  "오픈스택",
-  "IaaS",
-  "HCI",
-  "클라우드",
-  "프라이빗 클라우드",
-  "클라우드 전환",
-  "클라우드 플랫폼",
-  "클라우드 관리",
-  "CMP",
-  "통합관리",
-  "멀티클라우드",
-  "하이브리드 클라우드",
-  "Kubernetes",
-  "쿠버네티스",
-  "K8S",
-  "PaaS",
-  "컨테이너",
-  "클라우드 네이티브",
-  "MSA",
-  "SDS",
-  "소프트웨어 정의 스토리지",
-  "스토리지",
-  "오브젝트 스토리지",
-  "백업",
-  "DevOps",
-  "CI/CD",
-  "형상관리",
-  "배포관리",
-  "AI 인프라",
-  "인공지능",
-  "생성형 AI",
-  "GPU",
-  "LLM",
-  "MLOps",
-  "딥러닝",
-  "머신러닝",
-  "추론",
+const REVIEW_NEEDED_LABEL = "검토 필요";
+
+/** productMatchedCount 집계 대상 제품명 */
+const MATCHED_PRODUCT_NAMES = new Set([
+  "CONTRABASS",
+  "CONTRABASS Legato",
+  "CONTRABASS SDS+",
+  "OKESTRO CMP",
+  "VIOLA",
+  "TROMBONE",
+  "CONCERTO AI",
+]);
+
+/** 일반 IT 후보 — 제품 매핑 없을 때만 "검토 필요" */
+const GENERAL_IT_KEYWORDS = [
+  "정보시스템",
+  "전산",
+  "시스템 구축",
+  "시스템 고도화",
+  "통합유지관리",
+  "유지관리",
+  "업무시스템",
+  "소프트웨어",
+  "솔루션",
+  "데이터 이관",
+  "정보화",
 ] as const;
+
+const GENERAL_IT_KEYWORD_SET = new Set<string>(GENERAL_IT_KEYWORDS);
+
+const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
+  CONTRABASS: [
+    "가상화",
+    "서버 가상화",
+    "VMware",
+    "VM웨어",
+    "OpenStack",
+    "오픈스택",
+    "IaaS",
+    "HCI",
+    "프라이빗 클라우드",
+    "클라우드 인프라",
+    "서버 인프라",
+    "전산 인프라",
+    "데이터센터",
+    "서버 구축",
+    "서버 증설",
+    "인프라 구축",
+    "인프라 고도화",
+    "서버",
+    "인프라",
+  ],
+  "OKESTRO CMP": [
+    "CMP",
+    "클라우드 관리",
+    "클라우드 포털",
+    "통합관리",
+    "자원관리",
+    "운영관리",
+    "멀티클라우드",
+    "하이브리드 클라우드",
+    "클라우드 플랫폼",
+    "통합 운영",
+    "시스템 통합관리",
+    "정보시스템 통합관리",
+    "시스템 통합",
+    "클라우드",
+    "클라우드 전환",
+  ],
+  VIOLA: [
+    "Kubernetes",
+    "쿠버네티스",
+    "K8S",
+    "PaaS",
+    "컨테이너",
+    "클라우드 네이티브",
+    "MSA",
+    "애플리케이션 현대화",
+    "플랫폼 구축",
+  ],
+  "CONTRABASS SDS+": [
+    "SDS",
+    "소프트웨어 정의 스토리지",
+    "스토리지",
+    "오브젝트 스토리지",
+    "백업",
+    "재해복구",
+    "DR",
+    "저장장치",
+    "스토리지 증설",
+  ],
+  TROMBONE: [
+    "DevOps",
+    "CI/CD",
+    "형상관리",
+    "배포관리",
+    "소스코드",
+    "Git",
+    "개발환경",
+    "개발 플랫폼",
+  ],
+  "CONCERTO AI": [
+    "AI 인프라",
+    "인공지능",
+    "생성형 AI",
+    "GPU",
+    "LLM",
+    "MLOps",
+    "딥러닝",
+    "머신러닝",
+    "추론",
+    "AI 플랫폼",
+    "지능형 플랫폼",
+  ],
+};
+
+const CONCERTO_KEYWORDS = PRODUCT_KEYWORD_MAP["CONCERTO AI"];
+
+const ALL_PRODUCT_KEYWORDS = new Set(
+  Object.values(PRODUCT_KEYWORD_MAP).flatMap((keywords) => [...keywords]),
+);
+
+const COLLECT_KEYWORDS = [
+  ...new Set([...ALL_PRODUCT_KEYWORDS, ...GENERAL_IT_KEYWORDS]),
+] as readonly string[];
+
+const GENERAL_COLLECT_KEYWORDS = COLLECT_KEYWORDS.filter(
+  (kw) => !ALL_PRODUCT_KEYWORDS.has(kw),
+);
 
 const EXCLUDE_KEYWORDS = [
   "체험학습",
@@ -89,65 +174,11 @@ const STRONG_TECH_RESCUE_KEYWORDS = [
   "인공지능",
 ] as const;
 
-const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
-  CONTRABASS: [
-    "가상화",
-    "서버 가상화",
-    "VMware",
-    "VM웨어",
-    "OpenStack",
-    "오픈스택",
-    "IaaS",
-    "HCI",
-    "프라이빗 클라우드",
-  ],
-  "OKESTRO CMP": [
-    "CMP",
-    "클라우드 관리",
-    "통합관리",
-    "멀티클라우드",
-    "하이브리드 클라우드",
-    "클라우드 플랫폼",
-  ],
-  VIOLA: [
-    "Kubernetes",
-    "쿠버네티스",
-    "K8S",
-    "PaaS",
-    "컨테이너",
-    "클라우드 네이티브",
-    "MSA",
-  ],
-  "CONTRABASS SDS+": [
-    "SDS",
-    "소프트웨어 정의 스토리지",
-    "스토리지",
-    "오브젝트 스토리지",
-    "백업",
-  ],
-  TROMBONE: ["DevOps", "CI/CD", "형상관리", "배포관리"],
-  "CONCERTO AI": [
-    "AI 인프라",
-    "인공지능",
-    "생성형 AI",
-    "GPU",
-    "LLM",
-    "MLOps",
-    "딥러닝",
-    "머신러닝",
-    "추론",
-  ],
+type DateRange = {
+  from: string;
+  to: string;
+  label: { from: string; to: string };
 };
-
-const CONCERTO_KEYWORDS = PRODUCT_KEYWORD_MAP["CONCERTO AI"];
-
-const ALL_PRODUCT_KEYWORDS = new Set(
-  Object.values(PRODUCT_KEYWORD_MAP).flatMap((keywords) => [...keywords]),
-);
-
-const GENERAL_COLLECT_KEYWORDS = COLLECT_KEYWORDS.filter(
-  (kw) => !ALL_PRODUCT_KEYWORDS.has(kw),
-);
 
 function getEnv() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -164,10 +195,7 @@ function getEnv() {
   return { supabaseUrl, serviceRoleKey, g2bServiceKey, g2bBaseUrl, missing };
 }
 
-function parsePositiveInt(
-  raw: string | null,
-  fallback: number,
-): number {
+function parsePositiveInt(raw: string | null, fallback: number): number {
   if (raw == null || raw.trim() === "") return fallback;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
@@ -192,27 +220,37 @@ function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
+function getKstDateParts(date: Date) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return { year: get("year"), month: get("month"), day: get("day") };
+}
+
 function formatG2BDate(date: Date, endOfDay = false) {
-  const yyyy = date.getFullYear();
-  const mm = pad2(date.getMonth() + 1);
-  const dd = pad2(date.getDate());
+  const { year, month, day } = getKstDateParts(date);
   const hh = endOfDay ? "23" : "00";
   const min = endOfDay ? "59" : "00";
-  return `${yyyy}${mm}${dd}${hh}${min}`;
+  return `${year}${month}${day}${hh}${min}`;
 }
 
-function getDateRange(days: number) {
+/** 최근 등록 공고 조회: 오늘(KST) 기준 과거 days일 ~ 오늘 */
+function getRecentRegistrationDateRange(days: number): DateRange {
   const now = new Date();
-  const start = new Date(now);
-  start.setDate(start.getDate() - days);
+  const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const from = formatG2BDate(start, false);
+  const to = formatG2BDate(now, true);
   return {
-    from: formatG2BDate(start, false),
-    to: formatG2BDate(now, true),
+    from,
+    to,
+    label: { from, to },
   };
-}
-
-function maskUrl(url: string) {
-  return url.replace(/serviceKey=([^&]+)/, "serviceKey=***");
 }
 
 function buildG2BUrl(
@@ -220,12 +258,12 @@ function buildG2BUrl(
   endpoint: string,
   serviceKey: string,
   pageNo: number,
-  dateRange: { from: string; to: string },
+  dateRange: DateRange,
 ) {
   const params = new URLSearchParams({
     pageNo: String(pageNo),
     numOfRows: String(NUM_OF_ROWS),
-    inqryDiv: "1",
+    inqryDiv: INQUIRY_DIV,
     inqryBgnDt: dateRange.from,
     inqryEndDt: dateRange.to,
     type: "json",
@@ -311,7 +349,11 @@ function containsKeyword(text: string, keyword: string): boolean {
   const lowerText = text.toLowerCase();
   const lowerKeyword = keyword.toLowerCase();
 
-  if (["ai", "vm", "gpu", "llm", "k8s", "cmp", "msa", "sds", "hci", "iaas", "paas"].includes(lowerKeyword)) {
+  if (
+    ["ai", "vm", "gpu", "llm", "k8s", "cmp", "msa", "sds", "hci", "iaas", "paas", "dr", "git"].includes(
+      lowerKeyword,
+    )
+  ) {
     const escaped = lowerKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(text);
   }
@@ -338,12 +380,34 @@ function shouldExclude(rawText: string): boolean {
   return !hasRescue;
 }
 
-function resolveProducts(item: G2BItem, matchedKeywords: string[]): string[] {
+function parseDate(value: string): string | null {
+  if (!value) return null;
+  const text = String(value).trim();
+  const compactMatch = text.match(/^(\d{4})(\d{2})(\d{2})/);
+  if (compactMatch) {
+    return `${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}`;
+  }
+  const dashedMatch = text.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (dashedMatch) {
+    return `${dashedMatch[1]}-${dashedMatch[2]}-${dashedMatch[3]}`;
+  }
+  return null;
+}
+
+function getItemDueDate(item: G2BItem): string {
+  return (
+    parseDate(getString(item, ["bidClseDt", "bidClseTm", "opengDt", "opengTm"])) ??
+    parseDate(getString(item, ["bidBeginDt", "bidNtceDt"])) ??
+    new Date().toISOString().slice(0, 10)
+  );
+}
+
+function resolveProducts(item: G2BItem): string[] {
   const rawText = itemToRawString(item);
   const products = new Set<string>();
 
   for (const [product, keywords] of Object.entries(PRODUCT_KEYWORD_MAP)) {
-    if (keywords.some((kw) => matchedKeywords.includes(kw))) {
+    if (keywords.some((kw) => containsKeyword(rawText, kw))) {
       products.add(product);
     }
   }
@@ -359,11 +423,27 @@ function resolveProducts(item: G2BItem, matchedKeywords: string[]): string[] {
   return Array.from(products);
 }
 
+function isReviewNeededOnly(products: string[]): boolean {
+  return products.length === 1 && products[0] === REVIEW_NEEDED_LABEL;
+}
+
+function hasRealProductMatch(products: string[]): boolean {
+  return products.some((product) => MATCHED_PRODUCT_NAMES.has(product));
+}
+
 function calcMatchScore(
   titleText: string,
   rawText: string,
   matchedKeywords: string[],
+  products: string[],
 ): number {
+  if (isReviewNeededOnly(products)) {
+    const generalHits = matchedKeywords.filter((kw) => GENERAL_IT_KEYWORD_SET.has(kw));
+    if (generalHits.some((kw) => containsKeyword(titleText, kw))) return 40;
+    if (generalHits.some((kw) => containsKeyword(rawText, kw))) return 35;
+    return 30;
+  }
+
   const strongHits = matchedKeywords.filter((kw) => ALL_PRODUCT_KEYWORDS.has(kw));
   const generalHits = matchedKeywords.filter((kw) =>
     (GENERAL_COLLECT_KEYWORDS as readonly string[]).includes(kw),
@@ -388,18 +468,10 @@ function buildSummary(products: string[], matchedKeywords: string[], score: numb
   return `[${grade}] ${kwSample} 키워드가 포함되어 ${productLabel} 검토 후보`;
 }
 
-function parseDate(value: string): string | null {
-  if (!value) return null;
-  const text = String(value).trim();
-  const compactMatch = text.match(/^(\d{4})(\d{2})(\d{2})/);
-  if (compactMatch) {
-    return `${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}`;
-  }
-  const dashedMatch = text.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (dashedMatch) {
-    return `${dashedMatch[1]}-${dashedMatch[2]}-${dashedMatch[3]}`;
-  }
-  return null;
+function buildGeneralItSummary(matchedKeywords: string[]): string {
+  const generalHits = matchedKeywords.filter((kw) => GENERAL_IT_KEYWORD_SET.has(kw));
+  const kwSample = generalHits.slice(0, 5).join("/");
+  return `[관찰] ${kwSample} 키워드가 포함되어 검토 필요 후보`;
 }
 
 type MatchResult = {
@@ -419,11 +491,18 @@ function evaluateItem(item: G2BItem): MatchResult | null {
   const matchedKeywords = findMatchedKeywords(rawText, COLLECT_KEYWORDS);
   if (matchedKeywords.length === 0) return null;
 
-  const products = resolveProducts(item, matchedKeywords);
-  if (products.length === 0) return null;
+  let products = resolveProducts(item);
 
-  const matchScore = calcMatchScore(titleText, rawText, matchedKeywords);
-  const summary = buildSummary(products, matchedKeywords, matchScore);
+  if (products.length === 0) {
+    const hasGeneralIt = GENERAL_IT_KEYWORDS.some((kw) => containsKeyword(rawText, kw));
+    if (!hasGeneralIt) return null;
+    products = [REVIEW_NEEDED_LABEL];
+  }
+
+  const matchScore = calcMatchScore(titleText, rawText, matchedKeywords, products);
+  const summary = isReviewNeededOnly(products)
+    ? buildGeneralItSummary(matchedKeywords)
+    : buildSummary(products, matchedKeywords, matchScore);
 
   return { matchedKeywords, products, matchScore, summary };
 }
@@ -436,9 +515,7 @@ function toNoticeRow(item: G2BItem, match: MatchResult) {
   const originalUrl =
     getString(item, ["bidNtceDtlUrl", "bidNtceUrl", "ntceSpecDocUrl1", "ntceSpecDocUrl2"]) || "";
   const budget = getString(item, ["asignBdgtAmt", "presmptPrce", "bssamt", "bdgtAmt", "bidPrce"]);
-  const dueDate =
-    parseDate(getString(item, ["bidClseDt", "opengDt", "bidBeginDt", "bidNtceDt"])) ??
-    new Date().toISOString().slice(0, 10);
+  const dueDate = getItemDueDate(item);
   const noticeDate = parseDate(getString(item, ["bidNtceDt", "rgstDt"]));
 
   return {
@@ -470,6 +547,7 @@ type SampleItem = {
   products: string[];
   keywords: string[];
   summary: string;
+  due_date: string;
 };
 
 function toSample(row: NoticeRow): SampleItem {
@@ -481,6 +559,7 @@ function toSample(row: NoticeRow): SampleItem {
     products: row.products,
     keywords: row.keywords,
     summary: row.summary,
+    due_date: row.due_date,
   };
 }
 
@@ -490,10 +569,13 @@ type CollectResponse = {
   fetchedCount: number;
   matchedCount: number;
   savedCount: number;
+  productMatchedCount: number;
+  generalReviewCount: number;
   fetchedPages: number;
+  dateRange: DateRange["label"];
   productCounts: Record<string, number>;
   matchedKeywordCounts: Record<string, number>;
-  sampleSavedItems: SampleItem[];
+  sampleProductMatchedItems: SampleItem[];
   errors: string[];
 };
 
@@ -501,12 +583,34 @@ function buildResponse(partial: CollectResponse): CollectResponse {
   return partial;
 }
 
+function emptyCollectResponse(
+  targetCount: number,
+  dateRange: DateRange["label"],
+  errors: string[],
+): CollectResponse {
+  return buildResponse({
+    ok: false,
+    targetCount,
+    fetchedCount: 0,
+    matchedCount: 0,
+    savedCount: 0,
+    productMatchedCount: 0,
+    generalReviewCount: 0,
+    fetchedPages: 0,
+    dateRange,
+    productCounts: {},
+    matchedKeywordCounts: {},
+    sampleProductMatchedItems: [],
+    errors,
+  });
+}
+
 async function fetchG2BPage(
   baseUrl: string,
   endpoint: string,
   serviceKey: string,
   pageNo: number,
-  dateRange: { from: string; to: string },
+  dateRange: DateRange,
 ) {
   const url = buildG2BUrl(baseUrl, endpoint, serviceKey, pageNo, dateRange);
   const res = await fetch(url, { cache: "no-store" });
@@ -548,53 +652,46 @@ function recordMatchStats(
     matchedKeywordCounts[kw] = (matchedKeywordCounts[kw] ?? 0) + 1;
   }
   for (const product of match.products) {
+    if (product === REVIEW_NEEDED_LABEL) continue;
     productCounts[product] = (productCounts[product] ?? 0) + 1;
   }
 }
 
-function hasReachedTarget(
-  savedCount: number,
-  matchedCount: number,
-  targetCount: number,
-): boolean {
-  return savedCount >= targetCount || matchedCount >= targetCount;
+function hasReachedProductTarget(productMatchedCount: number, targetCount: number): boolean {
+  return productMatchedCount >= targetCount;
+}
+
+function pushSample(samples: SampleItem[], row: NoticeRow, limit = 10) {
+  if (samples.length < limit) {
+    samples.push(toSample(row));
+  }
 }
 
 async function handleCollect(request: NextRequest) {
   const targetCount = parseTargetCount(request);
   const maxPages = parseMaxPages(request);
   const { supabaseUrl, serviceRoleKey, g2bServiceKey, g2bBaseUrl, missing } = getEnv();
-
-  const emptyResponse = (errors: string[]): CollectResponse =>
-    buildResponse({
-      ok: false,
-      targetCount,
-      fetchedCount: 0,
-      matchedCount: 0,
-      savedCount: 0,
-      fetchedPages: 0,
-      productCounts: {},
-      matchedKeywordCounts: {},
-      sampleSavedItems: [],
-      errors,
-    });
+  const dateRange = getRecentRegistrationDateRange(INQUIRY_DAYS);
 
   if (missing.length > 0) {
-    return NextResponse.json(emptyResponse(missing), { status: 500 });
+    return NextResponse.json(emptyCollectResponse(targetCount, dateRange.label, missing), {
+      status: 500,
+    });
   }
 
-  const dateRange = getDateRange(INQUIRY_DAYS);
   const errors: string[] = [];
   const seenExternalIds = new Set<string>();
   const exhaustedEndpoints = new Set<string>();
   const productCounts: Record<string, number> = {};
   const matchedKeywordCounts: Record<string, number> = {};
-  const sampleSavedItems: SampleItem[] = [];
+  const sampleProductMatchedItems: SampleItem[] = [];
   const pendingRows: NoticeRow[] = [];
 
   let fetchedCount = 0;
   let matchedCount = 0;
   let savedCount = 0;
+  let productMatchedCount = 0;
+  let generalReviewCount = 0;
   let fetchedPages = 0;
 
   const supabase = createClient(supabaseUrl!, serviceRoleKey!, {
@@ -618,18 +715,13 @@ async function handleCollect(request: NextRequest) {
     }
 
     savedCount += data?.length ?? batch.length;
-    for (const row of batch) {
-      if (sampleSavedItems.length < 10) {
-        sampleSavedItems.push(toSample(row));
-      }
-    }
   };
 
   pageLoop: for (let pageNo = 1; pageNo <= maxPages; pageNo += 1) {
-    if (hasReachedTarget(savedCount, matchedCount, targetCount)) break;
+    if (hasReachedProductTarget(productMatchedCount, targetCount)) break;
 
     for (const endpoint of ENDPOINTS) {
-      if (hasReachedTarget(savedCount, matchedCount, targetCount)) break pageLoop;
+      if (hasReachedProductTarget(productMatchedCount, targetCount)) break pageLoop;
       if (exhaustedEndpoints.has(endpoint)) continue;
 
       const page = await fetchG2BPage(
@@ -643,7 +735,7 @@ async function handleCollect(request: NextRequest) {
       if (page.error) errors.push(page.error);
 
       for (const item of page.items) {
-        if (hasReachedTarget(savedCount, matchedCount, targetCount)) break;
+        if (hasReachedProductTarget(productMatchedCount, targetCount)) break;
 
         const externalId = getExternalId(item);
         if (!externalId || seenExternalIds.has(externalId)) continue;
@@ -655,9 +747,18 @@ async function handleCollect(request: NextRequest) {
 
         matchedCount += 1;
         recordMatchStats(match, productCounts, matchedKeywordCounts);
-        pendingRows.push(toNoticeRow(item, match));
 
-        if (hasReachedTarget(savedCount, matchedCount, targetCount)) break;
+        const row = toNoticeRow(item, match);
+        pendingRows.push(row);
+
+        if (hasRealProductMatch(match.products)) {
+          productMatchedCount += 1;
+          pushSample(sampleProductMatchedItems, row);
+        } else if (isReviewNeededOnly(match.products)) {
+          generalReviewCount += 1;
+        }
+
+        if (hasReachedProductTarget(productMatchedCount, targetCount)) break;
       }
 
       if (page.items.length < NUM_OF_ROWS) {
@@ -666,7 +767,7 @@ async function handleCollect(request: NextRequest) {
 
       await flushPending();
 
-      if (hasReachedTarget(savedCount, matchedCount, targetCount)) break pageLoop;
+      if (hasReachedProductTarget(productMatchedCount, targetCount)) break pageLoop;
     }
 
     if (exhaustedEndpoints.size >= ENDPOINTS.length) break;
@@ -676,15 +777,18 @@ async function handleCollect(request: NextRequest) {
 
   return NextResponse.json(
     buildResponse({
-      ok: errors.length === 0 && savedCount >= targetCount,
+      ok: errors.length === 0 && productMatchedCount >= targetCount,
       targetCount,
       fetchedCount,
       matchedCount,
       savedCount,
+      productMatchedCount,
+      generalReviewCount,
       fetchedPages,
+      dateRange: dateRange.label,
       productCounts,
       matchedKeywordCounts,
-      sampleSavedItems,
+      sampleProductMatchedItems,
       errors,
     }),
   );
