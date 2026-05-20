@@ -8,7 +8,7 @@ type G2BItem = Record<string, unknown>;
 
 const INQUIRY_DAYS = 30;
 const NUM_OF_ROWS = 100;
-const SAFETY_MAX_PAGES = 300;
+const SAFETY_MAX_PAGES = 5;
 
 const ENDPOINTS = [
   "getBidPblancListInfoServc",

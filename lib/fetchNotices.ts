@@ -15,6 +15,13 @@ export type FetchNoticesResult = {
   error: string | null;
 };
 
+/** 화면에 표시할 source_type (g2b_keyword 포함, null 허용) */
+const DISPLAY_SOURCE_TYPES = new Set(["g2b", "g2b_keyword"]);
+
+function isDisplayableSourceType(sourceType: string | null | undefined): boolean {
+  return sourceType == null || sourceType === "" || DISPLAY_SOURCE_TYPES.has(sourceType);
+}
+
 function isTestNotice(row: NoticeRow): boolean {
   const url = (row.original_url ?? "").toLowerCase();
   return url.includes("example.com");
@@ -77,15 +84,6 @@ function mapRowToNotice(row: NoticeRow): Notice {
   };
 }
 
-function sortRowsForDisplay(rows: NoticeRow[]): NoticeRow[] {
-  return [...rows].sort((a, b) => {
-    const aG2b = a.source_type === "g2b" ? 0 : 1;
-    const bG2b = b.source_type === "g2b" ? 0 : 1;
-    if (aG2b !== bG2b) return aG2b - bG2b;
-    return String(a.due_date).localeCompare(String(b.due_date));
-  });
-}
-
 function filterVisibleSample(): Notice[] {
   return sortNoticesForDisplay(sampleNotices.filter((notice) => isNoticeVisible(notice)));
 }
@@ -109,6 +107,8 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
       .from("notices")
       .select("*")
       .eq("status", "open")
+      .or("source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.is.null")
+      .order("match_score", { ascending: false, nullsFirst: false })
       .order("due_date", { ascending: true });
 
     if (error) {
@@ -116,8 +116,11 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
       throw error;
     }
 
+    const rows = (data ?? []) as NoticeRow[];
+
     const notices = sortNoticesForDisplay(
-      sortRowsForDisplay((data ?? []).filter((row) => !isTestNotice(row)))
+      rows
+        .filter((row) => isDisplayableSourceType(row.source_type) && !isTestNotice(row))
         .map(mapRowToNotice)
         .filter((notice) => isNoticeVisible(notice)),
     );
