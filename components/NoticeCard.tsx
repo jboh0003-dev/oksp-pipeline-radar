@@ -1,6 +1,47 @@
-import type { Notice } from "@/data/sampleNotices";
+import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
 import { getMatchGradeStyle } from "@/lib/noticeGrades";
-import { hasReopenKeyword, isPastDueDate } from "@/lib/noticeVisibility";
+import { getDueStatus, type DueStatus } from "@/lib/noticeVisibility";
+
+const dueStatusStyles: Record<DueStatus, { badge: string; deadline: string }> = {
+  "진행 중": {
+    badge: "bg-[#E8F3FF] text-[#1B64DA] ring-[#C9E2FF]",
+    deadline: "text-[#191F28]",
+  },
+  "마감 지남": {
+    badge: "bg-[#F2F4F6] text-[#6B7684] ring-[#E5E8EB]",
+    deadline: "text-[#6B7684]",
+  },
+  "마감일 확인 필요": {
+    badge: "bg-[#FFF4E0] text-[#E68600] ring-[#FFE0A3]",
+    deadline: "text-[#E68600]",
+  },
+};
+
+const dueStatusLabels: Record<DueStatus, string> = {
+  "진행 중": "진행 중",
+  "마감 지남": "마감 지난",
+  "마감일 확인 필요": "마감일 확인 필요",
+};
+
+const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
+
+function toDisplayProductLabel(product: string): string | null {
+  if (CONTRABASS_FAMILY_SET.has(product)) return "CONTRABASS";
+  if (product === "VIOLA") return "VIOLA";
+  return null;
+}
+
+function dedupeDisplayProducts(products: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const product of products) {
+    const label = toDisplayProductLabel(product);
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    result.push(label);
+  }
+  return result;
+}
 
 type NoticeCardProps = {
   notice: Notice;
@@ -10,14 +51,31 @@ type NoticeCardProps = {
 
 export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCardProps) {
   const gradeStyle = getMatchGradeStyle(notice.matchGrade);
-  const isExpired = isPastDueDate(notice.deadline);
-  const isReopen = isExpired && hasReopenKeyword(`${notice.title} ${notice.summary ?? ""}`);
+  const dueStatus = getDueStatus(notice.deadline);
+  const statusStyle = dueStatusStyles[dueStatus];
+  const dueStatusLabel = dueStatusLabels[dueStatus];
   const budgetLabel =
-    notice.budget && notice.budget !== "-" ? notice.budget : "\uBBF8\uACF5\uAC1C";
+    notice.budget && notice.budget !== "-" ? notice.budget : "미공개";
+  const deadlineLabel =
+    dueStatus === "마감일 확인 필요" ? "마감일 확인 필요" : notice.deadline;
+  const noticeDateLabel = notice.noticeDate?.trim()
+    ? notice.noticeDate
+    : "\uAC8C\uC2DC\uC77C \uD655\uC778 \uD544\uC694";
+  const hasNoticeDate = Boolean(notice.noticeDate?.trim());
+  const displayProducts = dedupeDisplayProducts(notice.relatedProducts);
 
   return (
-    <article className="rounded-2xl border border-[#E5E8EB] bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6">
+    <article
+      className={`rounded-2xl border border-[#E5E8EB] bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6 ${
+        dueStatus === "마감 지남" ? "opacity-90" : ""
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${statusStyle.badge}`}
+        >
+          {dueStatusLabel}
+        </span>
         <span
           className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${gradeStyle.badge}`}
         >
@@ -27,16 +85,6 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
           {notice.fitScore}
           {"\uC810"}
         </span>
-        {isReopen && (
-          <span className="inline-flex items-center rounded-full bg-[#FFF4E0] px-2.5 py-1 text-xs font-semibold text-[#E68600] ring-1 ring-inset ring-[#FFE0A3]">
-            {"\uC7AC\uACF5\uACE0\u00B7\uC5F0\uC7A5"}
-          </span>
-        )}
-        {!isReopen && isExpired && (
-          <span className="inline-flex items-center rounded-full bg-[#FFF0F0] px-2.5 py-1 text-xs font-semibold text-[#F04452] ring-1 ring-inset ring-[#FFD6D6]">
-            {"\uB9C8\uAC10 \uC9C0\uB0A8"}
-          </span>
-        )}
       </div>
 
       <div className="mt-4 sm:mt-5">
@@ -46,8 +94,27 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
         <p className="mt-1.5 text-sm text-[#6B7684]">{notice.agency}</p>
       </div>
 
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
+        <div className="rounded-xl bg-[#F9FAFB] px-3 py-2.5 ring-1 ring-inset ring-[#F2F4F6]">
+          <p className="text-[11px] font-medium text-[#8B95A1]">{"\uAC8C\uC2DC\uC77C"}</p>
+          <p
+            className={`mt-0.5 text-sm font-semibold ${
+              hasNoticeDate ? "text-[#191F28]" : "text-[#E68600]"
+            }`}
+          >
+            {noticeDateLabel}
+          </p>
+        </div>
+        <div className="rounded-xl bg-[#F9FAFB] px-3 py-2.5 ring-1 ring-inset ring-[#F2F4F6]">
+          <p className="text-[11px] font-medium text-[#8B95A1]">{"\uB9C8\uAC10\uC77C"}</p>
+          <p className={`mt-0.5 text-sm font-semibold ${statusStyle.deadline}`}>
+            {deadlineLabel}
+          </p>
+        </div>
+      </div>
+
       <div className="mt-4 flex flex-wrap gap-2">
-        {notice.relatedProducts.map((product) => (
+        {displayProducts.map((product) => (
           <span
             key={product}
             className="rounded-lg bg-[#E8F3FF] px-2.5 py-1 text-xs font-medium text-[#1B64DA]"
@@ -78,13 +145,6 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
 
       <div className="mt-5 flex flex-col gap-3 border-t border-[#F2F4F6] pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-sm text-[#6B7684]">
-          <span>
-            {"\uB9C8\uAC10 "}
-            <span className="font-semibold text-[#191F28]">{notice.deadline}</span>
-          </span>
-          <span className="hidden text-[#E5E8EB] sm:inline" aria-hidden>
-            |
-          </span>
           <span>
             {"\uC608\uC0B0 "}
             <span className="font-semibold text-[#191F28]">{budgetLabel}</span>

@@ -1,50 +1,36 @@
-type SummaryCardsProps = {
-  totalCount: number;
-  recommendedCount: number;
-  reviewCount: number;
-  watchCount: number;
-};
+import type { DashboardSummaryCounts } from "@/lib/noticeVisibility";
+
+type SummaryCardsProps = DashboardSummaryCounts;
 
 const cards: Array<{
-  key: string;
+  key: keyof DashboardSummaryCounts;
   label: string;
   accent: string;
   bg: string;
-  getValue: (props: SummaryCardsProps) => number;
 }> = [
   {
-    key: "total",
-    label: "전체 후보",
+    key: "activeTotal",
+    label: "진행 중 공고",
     accent: "text-[#3182F6]",
     bg: "bg-[#E8F3FF]",
-    getValue: (p) => p.totalCount,
   },
   {
-    key: "recommended",
-    label: "추천 공고",
+    key: "contrabass",
+    label: "CONTRABASS",
     accent: "text-[#1B64DA]",
     bg: "bg-[#E8F3FF]",
-    getValue: (p) => p.recommendedCount,
   },
   {
-    key: "review",
-    label: "검토 공고",
-    accent: "text-[#E68600]",
-    bg: "bg-[#FFF4E0]",
-    getValue: (p) => p.reviewCount,
-  },
-  {
-    key: "watch",
-    label: "관찰 공고",
-    accent: "text-[#6B7684]",
-    bg: "bg-[#F2F4F6]",
-    getValue: (p) => p.watchCount,
+    key: "viola",
+    label: "VIOLA",
+    accent: "text-[#1B64DA]",
+    bg: "bg-[#E8F3FF]",
   },
 ];
 
 export default function SummaryCards(props: SummaryCardsProps) {
   return (
-    <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+    <section className="mb-6 grid grid-cols-3 gap-3 sm:gap-4">
       {cards.map((card) => (
         <div
           key={card.key}
@@ -52,9 +38,9 @@ export default function SummaryCards(props: SummaryCardsProps) {
         >
           <p className="text-xs font-medium text-[#8B95A1] sm:text-sm">{card.label}</p>
           <p className={`mt-2 text-2xl font-bold tracking-tight sm:text-3xl ${card.accent}`}>
-            {card.getValue(props)}
+            {props[card.key]}
           </p>
-          <div className={`mt-3 h-1 w-10 rounded-full ${card.bg}`} aria-hidden />
+          <div aria-hidden className={`mt-3 h-1 w-10 rounded-full ${card.bg}`} />
         </div>
       ))}
     </section>

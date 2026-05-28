@@ -6,44 +6,29 @@ export const maxDuration = 300;
 
 type G2BItem = Record<string, unknown>;
 
-const INQUIRY_DAYS = 30;
+const DEFAULT_LOOKBACK_DAYS = 180;
+const WINDOW_SIZE_DAYS = 30;
+const DEFAULT_MAX_PAGES_PER_WINDOW = 80;
+const DEFAULT_TARGET_COUNT = 50;
+
 const INQUIRY_DIV = "1";
 const NUM_OF_ROWS = 100;
-const DEFAULT_TARGET_COUNT = 100;
-const DEFAULT_MAX_PAGES = 150;
 
-const ENDPOINTS = ["getBidPblancListInfoServc", "getBidPblancListInfoThng"] as const;
+const SOURCE_TYPE_VALUE = "g2b_active_core";
 
-const REVIEW_NEEDED_LABEL = "검토 필요";
-
-/** productMatchedCount 집계 대상 제품명 */
-const MATCHED_PRODUCT_NAMES = new Set([
-  "CONTRABASS",
-  "CONTRABASS Legato",
-  "CONTRABASS SDS+",
-  "OKESTRO CMP",
-  "VIOLA",
-  "TROMBONE",
-  "CONCERTO AI",
-]);
-
-/** 일반 IT 후보 — 제품 매핑 없을 때만 "검토 필요" */
-const GENERAL_IT_KEYWORDS = [
-  "정보시스템",
-  "전산",
-  "시스템 구축",
-  "시스템 고도화",
-  "통합유지관리",
-  "유지관리",
-  "업무시스템",
-  "소프트웨어",
-  "솔루션",
-  "데이터 이관",
-  "정보화",
+/** 나라장터 입찰공고 4개 엔드포인트(용역/물품/공사/외자). 일부가 실패해도 다른 것은 계속 시도. */
+const ENDPOINTS = [
+  "getBidPblancListInfoServc",
+  "getBidPblancListInfoThng",
+  "getBidPblancListInfoCnstwk",
+  "getBidPblancListInfoFrgcpt",
 ] as const;
 
-const GENERAL_IT_KEYWORD_SET = new Set<string>(GENERAL_IT_KEYWORDS);
-
+/**
+ * 이번 버전 매칭 대상 — CONTRABASS / VIOLA 두 제품만.
+ * 강한 키워드만 등록한다. 약한 키워드(서버, 인프라, 플랫폼, 시스템, ...)는
+ * 단독으로 제품 매칭을 트리거하지 않으므로 여기에 포함하지 않는다.
+ */
 const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
   CONTRABASS: [
     "가상화",
@@ -52,10 +37,10 @@ const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
     "VM웨어",
     "OpenStack",
     "오픈스택",
-    "IaaS",
     "HCI",
-    "프라이빗 클라우드",
+    "IaaS",
     "클라우드 인프라",
+    "프라이빗 클라우드",
     "서버 인프라",
     "전산 인프라",
     "데이터센터",
@@ -63,25 +48,8 @@ const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
     "서버 증설",
     "인프라 구축",
     "인프라 고도화",
-    "서버",
-    "인프라",
-  ],
-  "OKESTRO CMP": [
-    "CMP",
-    "클라우드 관리",
-    "클라우드 포털",
-    "통합관리",
-    "자원관리",
-    "운영관리",
-    "멀티클라우드",
-    "하이브리드 클라우드",
-    "클라우드 플랫폼",
-    "통합 운영",
-    "시스템 통합관리",
-    "정보시스템 통합관리",
-    "시스템 통합",
-    "클라우드",
     "클라우드 전환",
+    "클라우드 기반",
   ],
   VIOLA: [
     "Kubernetes",
@@ -89,60 +57,36 @@ const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
     "K8S",
     "PaaS",
     "컨테이너",
+    "컨테이너 플랫폼",
     "클라우드 네이티브",
     "MSA",
     "애플리케이션 현대화",
     "플랫폼 구축",
-  ],
-  "CONTRABASS SDS+": [
-    "SDS",
-    "소프트웨어 정의 스토리지",
-    "스토리지",
-    "오브젝트 스토리지",
-    "백업",
-    "재해복구",
-    "DR",
-    "저장장치",
-    "스토리지 증설",
-  ],
-  TROMBONE: [
-    "DevOps",
-    "CI/CD",
-    "형상관리",
-    "배포관리",
-    "소스코드",
-    "Git",
-    "개발환경",
-    "개발 플랫폼",
-  ],
-  "CONCERTO AI": [
-    "AI 인프라",
-    "인공지능",
-    "생성형 AI",
-    "GPU",
-    "LLM",
-    "MLOps",
-    "딥러닝",
-    "머신러닝",
-    "추론",
-    "AI 플랫폼",
-    "지능형 플랫폼",
+    "서비스 플랫폼",
+    "업무 플랫폼",
+    "디지털 플랫폼",
   ],
 };
 
-const CONCERTO_KEYWORDS = PRODUCT_KEYWORD_MAP["CONCERTO AI"];
+const MATCHED_PRODUCT_NAMES = new Set(Object.keys(PRODUCT_KEYWORD_MAP));
 
 const ALL_PRODUCT_KEYWORDS = new Set(
   Object.values(PRODUCT_KEYWORD_MAP).flatMap((keywords) => [...keywords]),
 );
 
-const COLLECT_KEYWORDS = [
-  ...new Set([...ALL_PRODUCT_KEYWORDS, ...GENERAL_IT_KEYWORDS]),
-] as readonly string[];
+/** 단독 매칭 금지 — 강한 키워드와 함께 있을 때만 참고 키워드로 같이 저장 */
+const WEAK_KEYWORDS = [
+  "서버",
+  "인프라",
+  "플랫폼",
+  "시스템",
+  "전산",
+  "정보시스템",
+  "유지관리",
+  "운영관리",
+] as const;
 
-const GENERAL_COLLECT_KEYWORDS = COLLECT_KEYWORDS.filter(
-  (kw) => !ALL_PRODUCT_KEYWORDS.has(kw),
-);
+const COLLECT_KEYWORDS: readonly string[] = [...ALL_PRODUCT_KEYWORDS];
 
 const EXCLUDE_KEYWORDS = [
   "체험학습",
@@ -158,27 +102,91 @@ const EXCLUDE_KEYWORDS = [
   "기념품",
 ] as const;
 
+/** EXCLUDE 단어가 있어도 이 강한 기술 키워드가 같이 있으면 살림 */
 const STRONG_TECH_RESCUE_KEYWORDS = [
   "가상화",
   "VMware",
   "VM웨어",
   "클라우드",
-  "GPU",
-  "AI 인프라",
-  "서버 가상화",
   "OpenStack",
   "오픈스택",
-  "IaaS",
   "HCI",
-  "LLM",
-  "인공지능",
+  "Kubernetes",
+  "쿠버네티스",
 ] as const;
+
+type DateRangeLabel = { from: string; to: string };
 
 type DateRange = {
   from: string;
   to: string;
-  label: { from: string; to: string };
+  label: DateRangeLabel;
 };
+
+type CollectParams = {
+  targetCount: number;
+  lookbackDays: number;
+  maxPagesPerWindow: number;
+  pageStart: number;
+  /** null이면 maxPagesPerWindow까지 (기존 호환 모드) */
+  pageEnd: number | null;
+  /** pageEnd가 명시적으로 들어왔는지 (explicit range 모드 여부) */
+  useExplicitPageRange: boolean;
+};
+
+function parsePositiveInt(raw: string | null, fallback: number): number {
+  if (raw == null || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.floor(parsed);
+}
+
+function parseOptionalPositiveInt(raw: string | null): number | null {
+  if (raw == null || raw.trim() === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return null;
+  return Math.floor(parsed);
+}
+
+function readQueryParam(request: NextRequest, key: string): string | null {
+  return request.nextUrl.searchParams.get(key);
+}
+
+function parseCollectParams(request: NextRequest): CollectParams {
+  const targetCount = parsePositiveInt(
+    readQueryParam(request, "targetCount"),
+    DEFAULT_TARGET_COUNT,
+  );
+  const lookbackDays = parsePositiveInt(
+    readQueryParam(request, "lookbackDays"),
+    DEFAULT_LOOKBACK_DAYS,
+  );
+
+  const explicitPerWindow = readQueryParam(request, "maxPagesPerWindow");
+  let maxPagesPerWindow: number;
+  if (explicitPerWindow != null && explicitPerWindow.trim() !== "") {
+    maxPagesPerWindow = parsePositiveInt(explicitPerWindow, DEFAULT_MAX_PAGES_PER_WINDOW);
+  } else {
+    const legacy = readQueryParam(request, "maxPages");
+    maxPagesPerWindow =
+      legacy != null && legacy.trim() !== ""
+        ? parsePositiveInt(legacy, DEFAULT_MAX_PAGES_PER_WINDOW)
+        : DEFAULT_MAX_PAGES_PER_WINDOW;
+  }
+
+  const pageStart = parsePositiveInt(readQueryParam(request, "pageStart"), 1);
+  const pageEnd = parseOptionalPositiveInt(readQueryParam(request, "pageEnd"));
+  const useExplicitPageRange = pageEnd != null;
+
+  return {
+    targetCount,
+    lookbackDays,
+    maxPagesPerWindow,
+    pageStart,
+    pageEnd,
+    useExplicitPageRange,
+  };
+}
 
 function getEnv() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -195,31 +203,6 @@ function getEnv() {
   return { supabaseUrl, serviceRoleKey, g2bServiceKey, g2bBaseUrl, missing };
 }
 
-function parsePositiveInt(raw: string | null, fallback: number): number {
-  if (raw == null || raw.trim() === "") return fallback;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.floor(parsed);
-}
-
-function parseTargetCount(request: NextRequest): number {
-  return parsePositiveInt(
-    request.nextUrl.searchParams.get("targetCount"),
-    DEFAULT_TARGET_COUNT,
-  );
-}
-
-function parseMaxPages(request: NextRequest): number {
-  return parsePositiveInt(
-    request.nextUrl.searchParams.get("maxPages"),
-    DEFAULT_MAX_PAGES,
-  );
-}
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-
 function getKstDateParts(date: Date) {
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Seoul",
@@ -233,6 +216,11 @@ function getKstDateParts(date: Date) {
   return { year: get("year"), month: get("month"), day: get("day") };
 }
 
+function getKstTodayDateString(): string {
+  const { year, month, day } = getKstDateParts(new Date());
+  return `${year}-${month}-${day}`;
+}
+
 function formatG2BDate(date: Date, endOfDay = false) {
   const { year, month, day } = getKstDateParts(date);
   const hh = endOfDay ? "23" : "00";
@@ -240,17 +228,34 @@ function formatG2BDate(date: Date, endOfDay = false) {
   return `${year}${month}${day}${hh}${min}`;
 }
 
-/** 최근 등록 공고 조회: 오늘(KST) 기준 과거 days일 ~ 오늘 */
-function getRecentRegistrationDateRange(days: number): DateRange {
+function offsetDays(now: Date, days: number): Date {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+function buildDateWindows(lookbackDays: number, windowSize: number): DateRange[] {
+  const windows: DateRange[] = [];
   const now = new Date();
-  const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-  const from = formatG2BDate(start, false);
-  const to = formatG2BDate(now, true);
-  return {
-    from,
-    to,
-    label: { from, to },
-  };
+  let k = 0;
+
+  while (true) {
+    const toOffset = k === 0 ? 0 : k * windowSize + 1;
+    if (toOffset >= lookbackDays) break;
+
+    const rawFromOffset = (k + 1) * windowSize;
+    const fromOffset = Math.min(rawFromOffset, lookbackDays);
+
+    const toDate = offsetDays(now, toOffset);
+    const fromDate = offsetDays(now, fromOffset);
+
+    const from = formatG2BDate(fromDate, false);
+    const to = formatG2BDate(toDate, true);
+    windows.push({ from, to, label: { from, to } });
+
+    if (rawFromOffset >= lookbackDays) break;
+    k += 1;
+  }
+
+  return windows;
 }
 
 function buildG2BUrl(
@@ -369,10 +374,6 @@ function findMatchedKeywords(text: string, keywords: readonly string[]): string[
   return matched;
 }
 
-function hasCollectKeyword(rawText: string): boolean {
-  return COLLECT_KEYWORDS.some((kw) => containsKeyword(rawText, kw));
-}
-
 function shouldExclude(rawText: string): boolean {
   const hasExclude = EXCLUDE_KEYWORDS.some((kw) => rawText.includes(kw));
   if (!hasExclude) return false;
@@ -394,64 +395,24 @@ function parseDate(value: string): string | null {
   return null;
 }
 
-function getItemDueDate(item: G2BItem): string {
-  return (
-    parseDate(getString(item, ["bidClseDt", "bidClseTm", "opengDt", "opengTm"])) ??
-    parseDate(getString(item, ["bidBeginDt", "bidNtceDt"])) ??
-    new Date().toISOString().slice(0, 10)
-  );
+/** 입찰 마감 관련 필드만 사용 (등록일/시작일 fallback 안 함) */
+function getRealDueDate(item: G2BItem): string | null {
+  return parseDate(getString(item, ["bidClseDt", "bidClseTm", "opengDt", "opengTm"]));
 }
 
-function resolveProducts(item: G2BItem): string[] {
-  const rawText = itemToRawString(item);
+function resolveProducts(rawText: string): string[] {
   const products = new Set<string>();
-
   for (const [product, keywords] of Object.entries(PRODUCT_KEYWORD_MAP)) {
     if (keywords.some((kw) => containsKeyword(rawText, kw))) {
       products.add(product);
     }
   }
-
-  if (products.has("CONCERTO AI")) {
-    const hasConcertoHit = CONCERTO_KEYWORDS.some((kw) => containsKeyword(rawText, kw));
-    const hasLearning = containsKeyword(rawText, "학습");
-    if (hasLearning && !hasConcertoHit) {
-      products.delete("CONCERTO AI");
-    }
-  }
-
   return Array.from(products);
 }
 
-function isReviewNeededOnly(products: string[]): boolean {
-  return products.length === 1 && products[0] === REVIEW_NEEDED_LABEL;
-}
-
-function hasRealProductMatch(products: string[]): boolean {
-  return products.some((product) => MATCHED_PRODUCT_NAMES.has(product));
-}
-
-function calcMatchScore(
-  titleText: string,
-  rawText: string,
-  matchedKeywords: string[],
-  products: string[],
-): number {
-  if (isReviewNeededOnly(products)) {
-    const generalHits = matchedKeywords.filter((kw) => GENERAL_IT_KEYWORD_SET.has(kw));
-    if (generalHits.some((kw) => containsKeyword(titleText, kw))) return 40;
-    if (generalHits.some((kw) => containsKeyword(rawText, kw))) return 35;
-    return 30;
-  }
-
-  const strongHits = matchedKeywords.filter((kw) => ALL_PRODUCT_KEYWORDS.has(kw));
-  const generalHits = matchedKeywords.filter((kw) =>
-    (GENERAL_COLLECT_KEYWORDS as readonly string[]).includes(kw),
-  );
-
+function calcMatchScore(titleText: string, rawText: string, strongHits: string[]): number {
   if (strongHits.some((kw) => containsKeyword(titleText, kw))) return 80;
   if (strongHits.some((kw) => containsKeyword(rawText, kw))) return 60;
-  if (generalHits.length > 0 || matchedKeywords.length > 0) return 40;
   return 40;
 }
 
@@ -461,21 +422,16 @@ function classifyGrade(score: number): string {
   return "관찰";
 }
 
-function buildSummary(products: string[], matchedKeywords: string[], score: number): string {
+function buildSummary(products: string[], strongHits: string[], score: number): string {
   const grade = classifyGrade(score);
-  const kwSample = matchedKeywords.slice(0, 5).join(", ");
+  const kwSample = strongHits.slice(0, 5).join(", ");
   const productLabel = products[0] ?? "제품";
   return `[${grade}] ${kwSample} 키워드가 포함되어 ${productLabel} 검토 후보`;
 }
 
-function buildGeneralItSummary(matchedKeywords: string[]): string {
-  const generalHits = matchedKeywords.filter((kw) => GENERAL_IT_KEYWORD_SET.has(kw));
-  const kwSample = generalHits.slice(0, 5).join("/");
-  return `[관찰] ${kwSample} 키워드가 포함되어 검토 필요 후보`;
-}
-
 type MatchResult = {
-  matchedKeywords: string[];
+  matchedKeywords: string[]; // 저장될 키워드 (강한 + 동반 약한)
+  strongMatchedKeywords: string[]; // 통계용
   products: string[];
   matchScore: number;
   summary: string;
@@ -485,29 +441,25 @@ function evaluateItem(item: G2BItem): MatchResult | null {
   const rawText = itemToRawString(item);
   const titleText = getTitleText(item);
 
-  if (!hasCollectKeyword(rawText)) return null;
   if (shouldExclude(rawText)) return null;
 
-  const matchedKeywords = findMatchedKeywords(rawText, COLLECT_KEYWORDS);
-  if (matchedKeywords.length === 0) return null;
+  const strongMatchedKeywords = findMatchedKeywords(rawText, COLLECT_KEYWORDS);
+  if (strongMatchedKeywords.length === 0) return null;
 
-  let products = resolveProducts(item);
+  const products = resolveProducts(rawText);
+  if (products.length === 0) return null;
 
-  if (products.length === 0) {
-    const hasGeneralIt = GENERAL_IT_KEYWORDS.some((kw) => containsKeyword(rawText, kw));
-    if (!hasGeneralIt) return null;
-    products = [REVIEW_NEEDED_LABEL];
-  }
+  // 강한 키워드 매칭이 있을 때만 약한 키워드도 참고용으로 함께 저장
+  const weakHits = findMatchedKeywords(rawText, WEAK_KEYWORDS);
+  const matchedKeywords = [...strongMatchedKeywords, ...weakHits];
 
-  const matchScore = calcMatchScore(titleText, rawText, matchedKeywords, products);
-  const summary = isReviewNeededOnly(products)
-    ? buildGeneralItSummary(matchedKeywords)
-    : buildSummary(products, matchedKeywords, matchScore);
+  const matchScore = calcMatchScore(titleText, rawText, strongMatchedKeywords);
+  const summary = buildSummary(products, strongMatchedKeywords, matchScore);
 
-  return { matchedKeywords, products, matchScore, summary };
+  return { matchedKeywords, strongMatchedKeywords, products, matchScore, summary };
 }
 
-function toNoticeRow(item: G2BItem, match: MatchResult) {
+function toNoticeRow(item: G2BItem, match: MatchResult, dueDate: string) {
   const bidNtceNo = getString(item, ["bidNtceNo", "bidNo", "ntceNo"]);
   const bidNtceOrd = getString(item, ["bidNtceOrd", "bidOrd", "ntceOrd"]) || "0";
   const title = getString(item, ["bidNtceNm", "bidNm", "ntceNm", "bsnsNm"]) || "제목 없음";
@@ -515,7 +467,6 @@ function toNoticeRow(item: G2BItem, match: MatchResult) {
   const originalUrl =
     getString(item, ["bidNtceDtlUrl", "bidNtceUrl", "ntceSpecDocUrl1", "ntceSpecDocUrl2"]) || "";
   const budget = getString(item, ["asignBdgtAmt", "presmptPrce", "bssamt", "bdgtAmt", "bidPrce"]);
-  const dueDate = getItemDueDate(item);
   const noticeDate = parseDate(getString(item, ["bidNtceDt", "rgstDt"]));
 
   return {
@@ -532,7 +483,7 @@ function toNoticeRow(item: G2BItem, match: MatchResult) {
     keywords: match.matchedKeywords,
     summary: match.summary,
     status: "open",
-    source_type: "g2b_keyword",
+    source_type: SOURCE_TYPE_VALUE,
     raw_data: item,
   };
 }
@@ -563,46 +514,75 @@ function toSample(row: NoticeRow): SampleItem {
   };
 }
 
-type CollectResponse = {
-  ok: boolean;
-  targetCount: number;
+type CollectStats = {
   fetchedCount: number;
   matchedCount: number;
   savedCount: number;
-  productMatchedCount: number;
-  generalReviewCount: number;
+  activeProductMatchedCount: number;
+  skippedExpiredCount: number;
+  skippedNoProductCount: number;
   fetchedPages: number;
-  dateRange: DateRange["label"];
   productCounts: Record<string, number>;
   matchedKeywordCounts: Record<string, number>;
-  sampleProductMatchedItems: SampleItem[];
+  sampleSavedItems: SampleItem[];
+};
+
+type CollectResponse = {
+  ok: boolean;
+  targetCount: number;
+  pageStart: number;
+  pageEnd: number | null;
+  fetchedPages: number;
+  fetchedCount: number;
+  matchedCount: number;
+  savedCount: number;
+  activeProductMatchedCount: number;
+  skippedExpiredCount: number;
+  skippedNoProductCount: number;
+  productCounts: Record<string, number>;
+  matchedKeywordCounts: Record<string, number>;
+  sampleSavedItems: SampleItem[];
   errors: string[];
 };
 
-function buildResponse(partial: CollectResponse): CollectResponse {
-  return partial;
-}
-
-function emptyCollectResponse(
-  targetCount: number,
-  dateRange: DateRange["label"],
-  errors: string[],
-): CollectResponse {
-  return buildResponse({
-    ok: false,
-    targetCount,
+function emptyStats(): CollectStats {
+  return {
     fetchedCount: 0,
     matchedCount: 0,
     savedCount: 0,
-    productMatchedCount: 0,
-    generalReviewCount: 0,
+    activeProductMatchedCount: 0,
+    skippedExpiredCount: 0,
+    skippedNoProductCount: 0,
     fetchedPages: 0,
-    dateRange,
     productCounts: {},
     matchedKeywordCounts: {},
-    sampleProductMatchedItems: [],
+    sampleSavedItems: [],
+  };
+}
+
+function buildResponseBody(
+  ok: boolean,
+  params: CollectParams,
+  stats: CollectStats,
+  errors: string[],
+): CollectResponse {
+  return {
+    ok,
+    targetCount: params.targetCount,
+    pageStart: params.pageStart,
+    pageEnd: params.pageEnd,
+    fetchedPages: stats.fetchedPages,
+    fetchedCount: stats.fetchedCount,
+    matchedCount: stats.matchedCount,
+    savedCount: stats.savedCount,
+    activeProductMatchedCount: stats.activeProductMatchedCount,
+    skippedExpiredCount: stats.skippedExpiredCount,
+    skippedNoProductCount: stats.skippedNoProductCount,
+    productCounts: stats.productCounts,
+    matchedKeywordCounts: stats.matchedKeywordCounts,
+    sampleSavedItems: stats.sampleSavedItems,
     errors,
-  });
+  };
 }
 
 async function fetchG2BPage(
@@ -611,18 +591,49 @@ async function fetchG2BPage(
   serviceKey: string,
   pageNo: number,
   dateRange: DateRange,
-) {
+): Promise<{ items: G2BItem[]; error: string | null; fatal?: boolean }> {
   const url = buildG2BUrl(baseUrl, endpoint, serviceKey, pageNo, dateRange);
-  const res = await fetch(url, { cache: "no-store" });
-  const text = await res.text();
+
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: "no-store" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      items: [],
+      error: `${endpoint} p${pageNo}: 네트워크 오류 (${message})`,
+      fatal: true,
+    };
+  }
+
+  if (!res.ok) {
+    return {
+      items: [],
+      error: `${endpoint} p${pageNo}: HTTP ${res.status}`,
+      fatal: true,
+    };
+  }
+
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      items: [],
+      error: `${endpoint} p${pageNo}: 본문 읽기 실패 (${message})`,
+      fatal: true,
+    };
+  }
 
   let json: unknown = null;
   try {
     json = JSON.parse(text);
   } catch {
     return {
-      items: [] as G2BItem[],
-      error: `JSON 파싱 실패 (${endpoint} p${pageNo})`,
+      items: [],
+      error: `${endpoint} p${pageNo}: JSON 파싱 실패`,
+      fatal: true,
     };
   }
 
@@ -632,33 +643,25 @@ async function fetchG2BPage(
 
   if (resultCode != null && resultCode !== "00") {
     return {
-      items: [] as G2BItem[],
+      items: [],
       error: `${endpoint} p${pageNo}: ${header?.resultMsg ?? resultCode}`,
+      fatal: true,
     };
   }
 
   return {
     items: parseItems(json),
-    error: null as string | null,
+    error: null,
   };
 }
 
-function recordMatchStats(
-  match: MatchResult,
-  productCounts: Record<string, number>,
-  matchedKeywordCounts: Record<string, number>,
-) {
-  for (const kw of match.matchedKeywords) {
-    matchedKeywordCounts[kw] = (matchedKeywordCounts[kw] ?? 0) + 1;
+function recordMatchStats(match: MatchResult, stats: CollectStats) {
+  for (const kw of match.strongMatchedKeywords) {
+    stats.matchedKeywordCounts[kw] = (stats.matchedKeywordCounts[kw] ?? 0) + 1;
   }
   for (const product of match.products) {
-    if (product === REVIEW_NEEDED_LABEL) continue;
-    productCounts[product] = (productCounts[product] ?? 0) + 1;
+    stats.productCounts[product] = (stats.productCounts[product] ?? 0) + 1;
   }
-}
-
-function hasReachedProductTarget(productMatchedCount: number, targetCount: number): boolean {
-  return productMatchedCount >= targetCount;
 }
 
 function pushSample(samples: SampleItem[], row: NoticeRow, limit = 10) {
@@ -668,31 +671,32 @@ function pushSample(samples: SampleItem[], row: NoticeRow, limit = 10) {
 }
 
 async function handleCollect(request: NextRequest) {
-  const targetCount = parseTargetCount(request);
-  const maxPages = parseMaxPages(request);
+  const params = parseCollectParams(request);
+  const { targetCount, lookbackDays, maxPagesPerWindow, pageStart, pageEnd, useExplicitPageRange } =
+    params;
+  const windows = buildDateWindows(lookbackDays, WINDOW_SIZE_DAYS);
+
   const { supabaseUrl, serviceRoleKey, g2bServiceKey, g2bBaseUrl, missing } = getEnv();
-  const dateRange = getRecentRegistrationDateRange(INQUIRY_DAYS);
 
   if (missing.length > 0) {
-    return NextResponse.json(emptyCollectResponse(targetCount, dateRange.label, missing), {
-      status: 500,
-    });
+    return NextResponse.json(
+      buildResponseBody(false, params, emptyStats(), missing),
+      { status: 500 },
+    );
   }
 
-  const errors: string[] = [];
-  const seenExternalIds = new Set<string>();
-  const exhaustedEndpoints = new Set<string>();
-  const productCounts: Record<string, number> = {};
-  const matchedKeywordCounts: Record<string, number> = {};
-  const sampleProductMatchedItems: SampleItem[] = [];
-  const pendingRows: NoticeRow[] = [];
+  // 페이지 범위 결정:
+  //  - pageEnd 명시 → [pageStart, pageEnd]            (explicit range 모드)
+  //  - pageEnd 미지정 → [pageStart, maxPagesPerWindow] (기존 maxPages 호환 모드)
+  const effectivePageEnd = pageEnd ?? maxPagesPerWindow;
+  const startPage = pageStart;
+  const endPage = Math.max(effectivePageEnd, startPage);
 
-  let fetchedCount = 0;
-  let matchedCount = 0;
-  let savedCount = 0;
-  let productMatchedCount = 0;
-  let generalReviewCount = 0;
-  let fetchedPages = 0;
+  const today = getKstTodayDateString();
+  const errors: string[] = [];
+  const stats = emptyStats();
+  const seenExternalIds = new Set<string>();
+  const pendingRows: NoticeRow[] = [];
 
   const supabase = createClient(supabaseUrl!, serviceRoleKey!, {
     auth: { persistSession: false },
@@ -714,86 +718,98 @@ async function handleCollect(request: NextRequest) {
       return;
     }
 
-    savedCount += data?.length ?? batch.length;
+    stats.savedCount += data?.length ?? batch.length;
   };
 
-  pageLoop: for (let pageNo = 1; pageNo <= maxPages; pageNo += 1) {
-    if (hasReachedProductTarget(productMatchedCount, targetCount)) break;
+  /**
+   * legacy 모드(maxPages 기반)에서만 활성. 명시적 pageStart/pageEnd 구간 모드에서는
+   * targetCount에 도달하더라도 현재 구간(window 전체)을 정상적으로 마치고 응답한다.
+   */
+  const shouldStopOnTarget = () =>
+    !useExplicitPageRange && stats.activeProductMatchedCount >= targetCount;
 
-    for (const endpoint of ENDPOINTS) {
-      if (hasReachedProductTarget(productMatchedCount, targetCount)) break pageLoop;
-      if (exhaustedEndpoints.has(endpoint)) continue;
+  windowLoop: for (const dateRange of windows) {
+    if (shouldStopOnTarget()) break;
 
-      const page = await fetchG2BPage(
-        g2bBaseUrl!,
-        endpoint,
-        g2bServiceKey!,
-        pageNo,
-        dateRange,
-      );
-      fetchedPages += 1;
-      if (page.error) errors.push(page.error);
+    const exhaustedEndpoints = new Set<string>();
 
-      for (const item of page.items) {
-        if (hasReachedProductTarget(productMatchedCount, targetCount)) break;
+    pageLoop: for (let pageNo = startPage; pageNo <= endPage; pageNo += 1) {
+      if (shouldStopOnTarget()) break windowLoop;
 
-        const externalId = getExternalId(item);
-        if (!externalId || seenExternalIds.has(externalId)) continue;
-        seenExternalIds.add(externalId);
-        fetchedCount += 1;
+      for (const endpoint of ENDPOINTS) {
+        if (shouldStopOnTarget()) break windowLoop;
+        if (exhaustedEndpoints.has(endpoint)) continue;
 
-        const match = evaluateItem(item);
-        if (!match) continue;
+        stats.fetchedPages += 1;
 
-        matchedCount += 1;
-        recordMatchStats(match, productCounts, matchedKeywordCounts);
-
-        const row = toNoticeRow(item, match);
-        pendingRows.push(row);
-
-        if (hasRealProductMatch(match.products)) {
-          productMatchedCount += 1;
-          pushSample(sampleProductMatchedItems, row);
-        } else if (isReviewNeededOnly(match.products)) {
-          generalReviewCount += 1;
+        const page = await fetchG2BPage(
+          g2bBaseUrl!,
+          endpoint,
+          g2bServiceKey!,
+          pageNo,
+          dateRange,
+        );
+        if (page.error) errors.push(page.error);
+        // 추가 endpoint(공사·외자)가 미지원·404 등으로 실패해도 전체 수집을 멈추지 않고
+        // 해당 endpoint만 더 이상 시도하지 않도록 표시한 뒤 다음 endpoint로 진행한다.
+        if (page.fatal) {
+          exhaustedEndpoints.add(endpoint);
+          continue;
         }
 
-        if (hasReachedProductTarget(productMatchedCount, targetCount)) break;
+        for (const item of page.items) {
+          const externalId = getExternalId(item);
+          if (!externalId || seenExternalIds.has(externalId)) continue;
+          seenExternalIds.add(externalId);
+          stats.fetchedCount += 1;
+
+          const match = evaluateItem(item);
+          if (!match) {
+            stats.skippedNoProductCount += 1;
+            continue;
+          }
+
+          stats.matchedCount += 1;
+
+          const dueDate = getRealDueDate(item);
+          if (dueDate == null || dueDate < today) {
+            // 마감 지난 공고 / 마감일 없는 공고는 저장하지 않음
+            stats.skippedExpiredCount += 1;
+            continue;
+          }
+
+          recordMatchStats(match, stats);
+          const row = toNoticeRow(item, match, dueDate);
+          pendingRows.push(row);
+          pushSample(stats.sampleSavedItems, row);
+          stats.activeProductMatchedCount += 1;
+
+          // legacy 모드에서만 item 단위 조기 종료 (explicit range 모드는 구간 끝까지 진행)
+          if (shouldStopOnTarget()) break;
+        }
+
+        if (page.items.length < NUM_OF_ROWS) {
+          exhaustedEndpoints.add(endpoint);
+        }
+
+        await flushPending();
+
+        if (shouldStopOnTarget()) break windowLoop;
       }
 
-      if (page.items.length < NUM_OF_ROWS) {
-        exhaustedEndpoints.add(endpoint);
-      }
-
-      await flushPending();
-
-      if (hasReachedProductTarget(productMatchedCount, targetCount)) break pageLoop;
+      if (exhaustedEndpoints.size >= ENDPOINTS.length) break pageLoop;
     }
-
-    if (exhaustedEndpoints.size >= ENDPOINTS.length) break;
   }
 
   await flushPending();
 
-  return NextResponse.json(
-    buildResponse({
-      ok: errors.length === 0 && productMatchedCount >= targetCount,
-      targetCount,
-      fetchedCount,
-      matchedCount,
-      savedCount,
-      productMatchedCount,
-      generalReviewCount,
-      fetchedPages,
-      dateRange: dateRange.label,
-      productCounts,
-      matchedKeywordCounts,
-      sampleProductMatchedItems,
-      errors,
-    }),
-  );
+  const ok = errors.length === 0 && stats.activeProductMatchedCount >= targetCount;
+  return NextResponse.json(buildResponseBody(ok, params, stats, errors));
 }
 
 export async function GET(request: NextRequest) {
   return handleCollect(request);
 }
+
+// MATCHED_PRODUCT_NAMES는 다른 모듈과의 호환을 위해 노출만 해 둔다 (no-op).
+void MATCHED_PRODUCT_NAMES;

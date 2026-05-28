@@ -1,24 +1,23 @@
 import type { MatchGrade } from "@/lib/noticeGrades";
 import { getMatchGrade } from "@/lib/noticeGrades";
 
-export const PRODUCT_FILTERS = [
-  "전체",
+export const PRODUCT_FILTERS = ["전체", "CONTRABASS", "VIOLA"] as const;
+
+export type ProductFilter = (typeof PRODUCT_FILTERS)[number];
+
+/** 화면에서 CONTRABASS 하나로 통합 표시할 DB 제품명 */
+export const CONTRABASS_FAMILY = [
   "CONTRABASS",
   "CONTRABASS Legato",
   "CONTRABASS SDS+",
-  "OKESTRO CMP",
-  "VIOLA",
-  "TROMBONE",
-  "CONCERTO AI",
 ] as const;
-
-export type ProductFilter = (typeof PRODUCT_FILTERS)[number];
 
 export type Notice = {
   id: string;
   title: string;
   agency: string;
   deadline: string;
+  noticeDate?: string | null;
   budget: string;
   relatedProducts: string[];
   fitScore: number;

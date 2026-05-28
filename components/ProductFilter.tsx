@@ -10,7 +10,7 @@ export default function ProductFilter({ selected, onChange }: ProductFilterProps
     <div>
       <p className="mb-3 text-sm font-semibold text-[#4E5968]">제품 필터</p>
       <div
-        className="flex flex-wrap gap-2"
+        className="flex w-full flex-wrap gap-2 overflow-visible"
         role="tablist"
         aria-label="제품 필터"
       >

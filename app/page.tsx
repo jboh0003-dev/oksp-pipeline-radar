@@ -8,17 +8,148 @@ import ProductFilter from "@/components/ProductFilter";
 import SearchBar from "@/components/SearchBar";
 import SummaryCards from "@/components/SummaryCards";
 import {
+  CONTRABASS_FAMILY,
   type Notice,
   type ProductFilter as ProductFilterValue,
 } from "@/data/sampleNotices";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import { getMatchGrade } from "@/lib/noticeGrades";
 import {
-  countByGrade,
+  getDueStatus,
+  hasRealProductMatch,
+  isMissingDueDate,
   isTestNoticeUrl,
-  sortNoticesForDisplay,
+  type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
 import { getSupabaseClient } from "@/lib/supabase";
+
+const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
+
+type SortOption =
+  | "fit_desc"
+  | "fit_asc"
+  | "notice_desc"
+  | "due_asc"
+  | "due_desc";
+
+const SORT_OPTIONS: Array<{ id: SortOption; label: string }> = [
+  { id: "fit_desc", label: "적합도 높은순" },
+  { id: "fit_asc", label: "적합도 낮은순" },
+  { id: "notice_desc", label: "게시일 최신순" },
+  { id: "due_asc", label: "마감일 가까운순" },
+  { id: "due_desc", label: "마감일 먼순" },
+];
+
+function deadlineSortKey(deadline: string): string {
+  if (isMissingDueDate(deadline)) return "";
+  return deadline.includes("T") ? deadline.slice(0, 10) : deadline;
+}
+
+function noticeDateSortKey(noticeDate: string | null | undefined): string {
+  if (!noticeDate) return "";
+  const trimmed = noticeDate.trim();
+  if (!trimmed) return "";
+  return trimmed.includes("T") ? trimmed.slice(0, 10) : trimmed;
+}
+
+function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
+  const counts: DashboardSummaryCounts = {
+    activeTotal: 0,
+    contrabass: 0,
+    viola: 0,
+  };
+
+  for (const notice of notices) {
+    counts.activeTotal += 1;
+    if (notice.relatedProducts.some((p) => CONTRABASS_FAMILY_SET.has(p))) {
+      counts.contrabass += 1;
+    }
+    if (notice.relatedProducts.includes("VIOLA")) {
+      counts.viola += 1;
+    }
+  }
+
+  return counts;
+}
+
+function partitionByDateKey(
+  notices: DisplayNotice[],
+  getKey: (notice: DisplayNotice) => string,
+): { withKey: DisplayNotice[]; withoutKey: DisplayNotice[] } {
+  const withKey: DisplayNotice[] = [];
+  const withoutKey: DisplayNotice[] = [];
+  for (const notice of notices) {
+    if (getKey(notice)) withKey.push(notice);
+    else withoutKey.push(notice);
+  }
+  return { withKey, withoutKey };
+}
+
+function sortNoticesByOption(
+  notices: DisplayNotice[],
+  option: SortOption,
+): DisplayNotice[] {
+  if (option === "fit_desc") {
+    return [...notices].sort((a, b) => {
+      if (b.fitScore !== a.fitScore) return b.fitScore - a.fitScore;
+      const aKey = deadlineSortKey(a.deadline);
+      const bKey = deadlineSortKey(b.deadline);
+      if (!aKey && !bKey) return 0;
+      if (!aKey) return 1;
+      if (!bKey) return -1;
+      return aKey.localeCompare(bKey);
+    });
+  }
+
+  if (option === "fit_asc") {
+    return [...notices].sort((a, b) => {
+      if (a.fitScore !== b.fitScore) return a.fitScore - b.fitScore;
+      const aKey = deadlineSortKey(a.deadline);
+      const bKey = deadlineSortKey(b.deadline);
+      if (!aKey && !bKey) return 0;
+      if (!aKey) return 1;
+      if (!bKey) return -1;
+      return aKey.localeCompare(bKey);
+    });
+  }
+
+  if (option === "notice_desc") {
+    const { withKey, withoutKey } = partitionByDateKey(notices, (n) =>
+      noticeDateSortKey(n.noticeDate),
+    );
+    withKey.sort((a, b) => {
+      const aKey = noticeDateSortKey(a.noticeDate);
+      const bKey = noticeDateSortKey(b.noticeDate);
+      const cmp = bKey.localeCompare(aKey);
+      if (cmp !== 0) return cmp;
+      return b.fitScore - a.fitScore;
+    });
+    return [...withKey, ...withoutKey];
+  }
+
+  if (option === "due_asc") {
+    const { withKey, withoutKey } = partitionByDateKey(notices, (n) => deadlineSortKey(n.deadline));
+    withKey.sort((a, b) => {
+      const aKey = deadlineSortKey(a.deadline);
+      const bKey = deadlineSortKey(b.deadline);
+      const cmp = aKey.localeCompare(bKey);
+      if (cmp !== 0) return cmp;
+      return b.fitScore - a.fitScore;
+    });
+    return [...withKey, ...withoutKey];
+  }
+
+  // due_desc
+  const { withKey, withoutKey } = partitionByDateKey(notices, (n) => deadlineSortKey(n.deadline));
+  withKey.sort((a, b) => {
+    const aKey = deadlineSortKey(a.deadline);
+    const bKey = deadlineSortKey(b.deadline);
+    const cmp = bKey.localeCompare(aKey);
+    if (cmp !== 0) return cmp;
+    return b.fitScore - a.fitScore;
+  });
+  return [...withKey, ...withoutKey];
+}
 
 type DisplayNotice = Notice & { rawData?: string };
 
@@ -35,13 +166,11 @@ function buildNoticeHaystack(notice: DisplayNotice): string {
     .toLowerCase();
 }
 
-/** 대시보드 노출: example.com 테스트 공고만 제외 (수집·매칭은 API에서 처리) */
-function shouldShowOnDashboard(notice: DisplayNotice): boolean {
-  return !isTestNoticeUrl(notice.sourceUrl);
-}
-
-function isSearchableCandidate(notice: DisplayNotice): boolean {
-  return !isTestNoticeUrl(notice.sourceUrl);
+/** 화면 노출 조건: 진행 중 (마감 전) + 제품 매칭(CONTRABASS/VIOLA) + 테스트 URL 아님 */
+function isVisibleCandidate(notice: DisplayNotice): boolean {
+  if (isTestNoticeUrl(notice.sourceUrl)) return false;
+  if (getDueStatus(notice.deadline) !== "진행 중") return false;
+  return hasRealProductMatch(notice);
 }
 
 function matchesSearch(notice: DisplayNotice, query: string): boolean {
@@ -52,7 +181,13 @@ function matchesSearch(notice: DisplayNotice, query: string): boolean {
 
 function matchesProduct(notice: DisplayNotice, product: ProductFilterValue) {
   if (product === "전체") return true;
-  return notice.relatedProducts.includes(product);
+  if (product === "CONTRABASS") {
+    return notice.relatedProducts.some((p) => CONTRABASS_FAMILY_SET.has(p));
+  }
+  if (product === "VIOLA") {
+    return notice.relatedProducts.includes("VIOLA");
+  }
+  return false;
 }
 
 function normalizeNotice(notice: Notice): DisplayNotice {
@@ -81,7 +216,9 @@ async function attachRawData(
     .from("notices")
     .select("id, raw_data")
     .eq("status", "open")
-    .or("source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.is.null,source_type.eq.");
+    .or(
+      "source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.eq.g2b_active_core,source_type.is.null,source_type.eq.",
+    );
 
   if (error || !data) {
     return normalized.map((notice) => ({ ...notice, rawData: "" }));
@@ -108,9 +245,7 @@ export default function Home() {
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
+  const [sortOption, setSortOption] = useState<SortOption>("fit_desc");
 
   useEffect(() => {
     let isMounted = true;
@@ -132,94 +267,50 @@ export default function Home() {
     return () => {
       isMounted = false;
     };
-  }, [reloadKey]);
+  }, []);
 
-  const handleSyncG2b = async () => {
-    setIsSyncing(true);
-    setSyncMessage(null);
-
-    try {
-      const response = await fetch("/api/sync-g2b", { method: "POST" });
-      const result = (await response.json()) as {
-        ok?: boolean;
-        message?: string;
-        savedCount?: number;
-        fetchedCount?: number;
-        uniqueFetchedCount?: number;
-        matchedCount?: number;
-        recommendedCount?: number;
-        reviewCount?: number;
-        watchCount?: number;
-        expiredSkippedCount?: number;
-        errors?: string[];
-      };
-
-      if (!response.ok || !result.ok) {
-        const detail = result.errors?.length ? result.errors.join(" / ") : result.message;
-        setSyncMessage(detail ?? "나라장터 공고 수집에 실패했습니다.");
-        return;
-      }
-
-      const parts = [
-        result.message,
-        result.fetchedCount != null ? `수집 ${result.fetchedCount}건` : null,
-        result.uniqueFetchedCount != null ? `고유 ${result.uniqueFetchedCount}건` : null,
-        result.matchedCount != null ? `후보 ${result.matchedCount}건` : null,
-        result.recommendedCount != null
-          ? `추천 ${result.recommendedCount} · 검토 ${result.reviewCount ?? 0} · 관찰 ${result.watchCount ?? 0}`
-          : null,
-        result.expiredSkippedCount != null && result.expiredSkippedCount > 0
-          ? `마감 제외 ${result.expiredSkippedCount}건`
-          : null,
-      ].filter(Boolean);
-
-      setSyncMessage(parts.join(" · "));
-      setReloadKey((prev) => prev + 1);
-    } catch (error) {
-      setSyncMessage(error instanceof Error ? error.message : "나라장터 공고 수집에 실패했습니다.");
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const visibleNotices = useMemo(
-    () => notices.filter((notice) => shouldShowOnDashboard(notice)),
+  const candidates = useMemo(
+    () => notices.filter((notice) => isVisibleCandidate(notice)),
     [notices],
   );
 
+  const summaryCounts = useMemo(() => countSummaryForCards(candidates), [candidates]);
+
   const filteredNotices = useMemo(() => {
     const query = searchQuery.trim();
-    const basePool = query
-      ? notices.filter((notice) => isSearchableCandidate(notice) && matchesSearch(notice, query))
-      : visibleNotices;
-
-    const filtered = basePool.filter(
+    let pool = candidates;
+    if (query) {
+      pool = pool.filter((notice) => matchesSearch(notice, query));
+    }
+    const filtered = pool.filter(
       (notice) =>
         matchesProduct(notice, selectedProduct) &&
         (!showSavedOnly || savedIds.includes(notice.id)),
     );
-    return sortNoticesForDisplay(filtered);
-  }, [notices, visibleNotices, searchQuery, selectedProduct, showSavedOnly, savedIds]);
-
-  const gradeCounts = useMemo(() => countByGrade(filteredNotices), [filteredNotices]);
+    return sortNoticesByOption(filtered, sortOption);
+  }, [candidates, searchQuery, selectedProduct, showSavedOnly, savedIds, sortOption]);
 
   const hasActiveSearch = searchQuery.trim().length > 0;
   const matchesExceptSearch = useMemo(
     () =>
-      notices
-        .filter((notice) => isSearchableCandidate(notice))
-        .filter(
-          (notice) =>
-            matchesProduct(notice, selectedProduct) &&
-            (!showSavedOnly || savedIds.includes(notice.id)),
-        ),
-    [notices, selectedProduct, showSavedOnly, savedIds],
+      candidates.filter(
+        (notice) =>
+          matchesProduct(notice, selectedProduct) &&
+          (!showSavedOnly || savedIds.includes(notice.id)),
+      ),
+    [candidates, selectedProduct, showSavedOnly, savedIds],
   );
 
   const handleToggleSave = (id: string) => {
     setSavedIds((prev) =>
       prev.includes(id) ? prev.filter((savedId) => savedId !== id) : [...prev, id],
     );
+  };
+
+  const handleRefresh = () => {
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
   };
 
   if (isLoading) {
@@ -236,18 +327,16 @@ export default function Home() {
   return (
     <div className="min-h-full bg-[#F2F4F6]">
       <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
-        <Header totalCount={visibleNotices.length} filteredCount={filteredNotices.length} />
+        <Header totalCount={candidates.length} filteredCount={filteredNotices.length} />
 
         <div className="mb-4">
           <button
             type="button"
-            onClick={() => void handleSyncG2b()}
-            disabled={isSyncing || isLoading}
-            className="rounded-xl bg-[#3182F6] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1B64DA] disabled:cursor-not-allowed disabled:bg-[#ADB5BD]"
+            onClick={handleRefresh}
+            className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#3182F6] ring-1 ring-[#C9E2FF] transition hover:bg-[#F2F8FF]"
           >
-            {isSyncing ? "수집 중..." : "나라장터 공고 수집"}
+            데이터 새로고침
           </button>
-          {syncMessage && <p className="mt-2 text-sm text-[#4E5968]">{syncMessage}</p>}
         </div>
 
         {dataSource === "sample" && errorMessage && (
@@ -260,15 +349,30 @@ export default function Home() {
           </div>
         )}
 
-        <SummaryCards
-          totalCount={filteredNotices.length}
-          recommendedCount={gradeCounts.추천}
-          reviewCount={gradeCounts.검토}
-          watchCount={gradeCounts.관찰}
-        />
+        <SummaryCards {...summaryCounts} />
 
         <section className="min-w-0 rounded-2xl bg-white p-4 shadow-sm sm:p-6">
           <SearchBar value={searchQuery} onChange={setSearchQuery} />
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <label
+              htmlFor="notice-sort"
+              className="text-xs font-semibold text-[#4E5968] sm:text-sm"
+            >
+              정렬
+            </label>
+            <select
+              id="notice-sort"
+              value={sortOption}
+              onChange={(event) => setSortOption(event.target.value as SortOption)}
+              className="h-10 w-full rounded-xl border border-[#E5E8EB] bg-white px-3 text-sm font-medium text-[#191F28] shadow-sm transition focus:border-[#3182F6] focus:outline-none focus:ring-2 focus:ring-[#C9E2FF] sm:w-auto"
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
             <button
               type="button"
@@ -308,7 +412,7 @@ export default function Home() {
                 {showSavedOnly
                   ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
                   : hasActiveSearch && matchesExceptSearch.length > 0
-                    ? "저장된 후보 공고 중 해당 키워드가 없습니다. 수집 범위 또는 매칭 키워드 확인이 필요합니다."
+                    ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
                     : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
               </p>
             </div>
