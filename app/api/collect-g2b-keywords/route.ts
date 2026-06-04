@@ -670,8 +670,9 @@ function pushSample(samples: SampleItem[], row: NoticeRow, limit = 10) {
   }
 }
 
-async function handleCollect(request: NextRequest) {
-  const params = parseCollectParams(request);
+async function executeCollect(
+  params: CollectParams,
+): Promise<{ status: number; body: CollectResponse }> {
   const { targetCount, lookbackDays, maxPagesPerWindow, pageStart, pageEnd, useExplicitPageRange } =
     params;
   const windows = buildDateWindows(lookbackDays, WINDOW_SIZE_DAYS);
@@ -679,10 +680,10 @@ async function handleCollect(request: NextRequest) {
   const { supabaseUrl, serviceRoleKey, g2bServiceKey, g2bBaseUrl, missing } = getEnv();
 
   if (missing.length > 0) {
-    return NextResponse.json(
-      buildResponseBody(false, params, emptyStats(), missing),
-      { status: 500 },
-    );
+    return {
+      status: 500,
+      body: buildResponseBody(false, params, emptyStats(), missing),
+    };
   }
 
   // 페이지 범위 결정:
@@ -804,8 +805,49 @@ async function handleCollect(request: NextRequest) {
   await flushPending();
 
   const ok = errors.length === 0 && stats.activeProductMatchedCount >= targetCount;
-  return NextResponse.json(buildResponseBody(ok, params, stats, errors));
+  return {
+    status: 200,
+    body: buildResponseBody(ok, params, stats, errors),
+  };
 }
+
+async function handleCollect(request: NextRequest) {
+  const params = parseCollectParams(request);
+  const { status, body } = await executeCollect(params);
+  if (status !== 200) {
+    return NextResponse.json(body, { status });
+  }
+  return NextResponse.json(body);
+}
+
+/**
+ * 외부(예: cron route)에서 같은 수집 로직을 호출할 때 쓰는 진입점.
+ * NextRequest 없이 직접 파라미터를 넘긴다. 누락 항목은 기본값 사용.
+ */
+export type RunCollectInput = Partial<{
+  targetCount: number;
+  lookbackDays: number;
+  maxPagesPerWindow: number;
+  pageStart: number;
+  pageEnd: number | null;
+}>;
+
+export async function runCollect(
+  input: RunCollectInput = {},
+): Promise<{ status: number; body: CollectResponse }> {
+  const pageEnd = input.pageEnd ?? null;
+  const params: CollectParams = {
+    targetCount: input.targetCount ?? DEFAULT_TARGET_COUNT,
+    lookbackDays: input.lookbackDays ?? DEFAULT_LOOKBACK_DAYS,
+    maxPagesPerWindow: input.maxPagesPerWindow ?? DEFAULT_MAX_PAGES_PER_WINDOW,
+    pageStart: input.pageStart ?? 1,
+    pageEnd,
+    useExplicitPageRange: pageEnd != null,
+  };
+  return executeCollect(params);
+}
+
+export type { CollectResponse };
 
 export async function GET(request: NextRequest) {
   return handleCollect(request);

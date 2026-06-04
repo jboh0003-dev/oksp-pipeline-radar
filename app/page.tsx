@@ -335,7 +335,7 @@ export default function Home() {
             onClick={handleRefresh}
             className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#3182F6] ring-1 ring-[#C9E2FF] transition hover:bg-[#F2F8FF]"
           >
-            데이터 새로고침
+            화면 새로고침
           </button>
         </div>
 
