@@ -6,7 +6,13 @@ export const maxDuration = 300;
 
 type G2BItem = Record<string, unknown>;
 
-const DEFAULT_LOOKBACK_DAYS = 180;
+// 수동 수집의 기본 lookbackDays.
+// 기본값을 짧게 두어 "마감 임박/진행 중" 공고 비율을 높이고, 화면 기본 노출에서
+// 마감 공고가 끌려오지 않도록 한다. 더 멀리 수집해야 할 때는 query parameter
+// (`lookbackDays=...`) 로 명시적으로 늘린다.
+//
+// cron(/api/cron/collect-g2b)은 자체 DEFAULTS.lookbackDays(=30) 로 호출한다.
+const DEFAULT_LOOKBACK_DAYS = 30;
 const WINDOW_SIZE_DAYS = 30;
 const DEFAULT_MAX_PAGES_PER_WINDOW = 80;
 const DEFAULT_TARGET_COUNT = 50;
@@ -16,7 +22,19 @@ const NUM_OF_ROWS = 100;
 
 const SOURCE_TYPE_VALUE = "g2b_active_core";
 
-/** 나라장터 입찰공고 4개 엔드포인트(용역/물품/공사/외자). 일부가 실패해도 다른 것은 계속 시도. */
+/**
+ * 나라장터 입찰공고 4개 엔드포인트.
+ *  - servc  : 용역 (CONTRABASS / VIOLA 영업기회의 주력)
+ *  - thng   : 물품 (HW 납품성 비중이 큼 → NEGATIVE_KEYWORDS 로 등급 다운그레이드 처리)
+ *  - cnstwk : 공사 (후순위, 대부분 무관)
+ *  - frgcpt : 외자 (보조)
+ *
+ * 일부가 실패해도 다른 것은 계속 시도한다. 키워드는 G2B 검색 파라미터가 아니라
+ * 응답 후 post-filter 매칭(PRODUCT_KEYWORD_MAP) 으로 사용한다.
+ *
+ * TODO: 향후 endpoint 별로 ON/OFF 토글 또는 가중치를 부여해
+ *       물품·공사 비중을 조절할 수 있게 옵션을 노출하는 것을 검토한다.
+ */
 const ENDPOINTS = [
   "getBidPblancListInfoServc",
   "getBidPblancListInfoThng",
@@ -26,11 +44,22 @@ const ENDPOINTS = [
 
 /**
  * 이번 버전 매칭 대상 — CONTRABASS / VIOLA 두 제품만.
- * 강한 키워드만 등록한다. 약한 키워드(서버, 인프라, 플랫폼, 시스템, ...)는
- * 단독으로 제품 매칭을 트리거하지 않으므로 여기에 포함하지 않는다.
+ *
+ * 키워드 정책:
+ *  - 수집 자체(G2B fetch) 는 키워드를 검색 파라미터로 넘기지 않고 4개 endpoint 의
+ *    공고 전체를 가져온 뒤 본문/제목/raw 데이터에서 이 키워드를 substring 으로 검색한다.
+ *    → 키워드를 늘리면 매칭 가능 범위가 넓어지고, 그만큼 무관 공고도 들어올 수 있다.
+ *  - 그래서 "가상화", "정보시스템", "데이터센터" 같이 광범위한 키워드는 일부러 포함시킨 뒤,
+ *    하드웨어 납품성/단순구매성 단어(NEGATIVE_KEYWORDS)와 함께 등급(matchGrade) 단계에서
+ *    감점·다운그레이드해 영업 적합도가 낮은 공고를 화면 하단으로 밀어낸다.
+ *  - "단순 납품/장비구매/CCTV/UPS/스위치/PC구매" 등이 포함된 공고는
+ *    NEGATIVE_KEYWORDS(lib/g2b/constants.ts) 가중치로 등급이 내려간다.
+ *  - 단, "서버 가상화", "클라우드 인프라 구축" 같은 표현은 양성 시그널이 강해
+ *    그대로 핵심검토/검토 등급을 유지한다.
  */
 const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
   CONTRABASS: [
+    // 가상화 / 사설 클라우드 / IaaS 핵심
     "가상화",
     "서버 가상화",
     "VMware",
@@ -39,19 +68,31 @@ const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
     "오픈스택",
     "HCI",
     "IaaS",
+    // 클라우드 인프라 군
+    "클라우드",
     "클라우드 인프라",
     "프라이빗 클라우드",
+    "클라우드 구축",
+    "클라우드 전환",
+    "클라우드 기반",
+    "데이터센터 클라우드",
+    // 인프라/시스템 구축 (광범위 — NEGATIVE 로 보정)
     "서버 인프라",
     "전산 인프라",
     "데이터센터",
+    "전산센터",
     "서버 구축",
     "서버 증설",
     "인프라 구축",
     "인프라 고도화",
-    "클라우드 전환",
-    "클라우드 기반",
+    "정보시스템",
+    "시스템 구축",
+    "차세대 시스템",
+    "정보화 사업",
+    "AI 플랫폼",
   ],
   VIOLA: [
+    // PaaS / Kubernetes 핵심
     "Kubernetes",
     "쿠버네티스",
     "K8S",
@@ -61,8 +102,15 @@ const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
     "클라우드 네이티브",
     "MSA",
     "애플리케이션 현대화",
+    "DevOps",
+    // 플랫폼 군 (광범위 — NEGATIVE 로 보정)
     "플랫폼 구축",
+    "애플리케이션 플랫폼",
     "서비스 플랫폼",
+    "통합 플랫폼",
+    "개발 플랫폼",
+    "운영 플랫폼",
+    "데이터 플랫폼",
     "업무 플랫폼",
     "디지털 플랫폼",
   ],

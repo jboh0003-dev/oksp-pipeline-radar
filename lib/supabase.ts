@@ -6,8 +6,59 @@ export type Database = {
       notices: {
         Row: NoticeRow;
       };
+      collection_runs: {
+        Row: CollectionRunRow;
+      };
+      customer_accounts: {
+        Row: CustomerAccountRow;
+      };
     };
   };
+};
+
+/**
+ * Supabase `customer_accounts` 테이블 row.
+ * 내부 고객사 마스터. 공고 기관명과 매칭해 담당본부 / Named / 지역 정보를 화면에 표시한다.
+ */
+export type CustomerAccountRow = {
+  id: string;
+  customer_name: string;
+  customer_name_norm: string;
+  customer_group: string | null;
+  account_type: string | null;
+  territory: string | null;
+  region_group: string | null;
+  region: string | null;
+  address: string | null;
+  business_number: string | null;
+  source_file: string | null;
+  updated_at: string | null;
+};
+
+/**
+ * Supabase `collection_runs` 테이블 row.
+ * 자동수집(cron) 실행 이력. 화면에서는 가장 최근 1건만 읽는다.
+ */
+export type CollectionRunRow = {
+  id: string;
+  source: string | null;
+  started_at: string;
+  finished_at: string | null;
+  ok: boolean;
+  target_count: number | null;
+  page_start: number | null;
+  page_end: number | null;
+  fetched_count: number | null;
+  matched_count: number | null;
+  saved_count: number | null;
+  skipped_expired_count: number | null;
+  skipped_no_product_count: number | null;
+  errors: string[] | null;
+  // warnings / message 는 후속 마이그레이션으로 추가된 컬럼.
+  // 아직 alter 가 적용되지 않은 환경에서도 UI 가 깨지지 않도록 optional 로 둔다.
+  warnings?: string[] | null;
+  message?: string | null;
+  created_at: string | null;
 };
 
 /** Supabase `notices` 테이블 실제 컬럼 */

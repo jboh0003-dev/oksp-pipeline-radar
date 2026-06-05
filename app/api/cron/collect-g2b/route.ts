@@ -74,6 +74,8 @@ type CollectionRunRow = {
   skipped_expired_count: number;
   skipped_no_product_count: number;
   errors: string[];
+  warnings: string[];
+  message: string | null;
 };
 
 /**
@@ -213,6 +215,8 @@ async function handleCron(request: NextRequest) {
     skipped_expired_count: result.skippedExpiredCount,
     skipped_no_product_count: result.skippedNoProductCount,
     errors: result.errors,
+    warnings: result.warnings,
+    message: result.message,
   });
 
   if (recordError) {

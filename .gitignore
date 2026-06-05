@@ -39,3 +39,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# customer master / private data
+# 2026_고객리스트_*.xlsx 같은 원본 엑셀과 임시 변환 CSV 가 GitHub 에 올라가지 않도록 차단.
+# (data/ 하위에는 sampleNotices.ts 같은 코드가 있으므로 디렉터리 전체는 ignore 하지 않는다.)
+*.xlsx
+*.xls
+/private/
+/customer-master/
+/data/customer-list/
+2026_고객리스트*
+고객리스트*
+customer_accounts*.csv
+
+

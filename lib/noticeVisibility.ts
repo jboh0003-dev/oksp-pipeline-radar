@@ -65,6 +65,37 @@ export function isActiveOrUnknownDue(deadline: string, now = new Date()): boolea
   return status === "진행 중" || status === "마감일 확인 필요";
 }
 
+/**
+ * 오늘(KST) 기준 마감일까지 남은 일수.
+ * - 마감일이 비어있거나 형식이 이상하면 null
+ * - 오늘이 마감일이면 0
+ * - 이미 지난 날짜는 음수
+ */
+export function getDaysUntilDeadline(deadline: string, now = new Date()): number | null {
+  const day = normalizeDeadlineDay(deadline);
+  if (!day) return null;
+  // YYYY-MM-DD 형식만 허용.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const today = getKstTodayDateString(now);
+  const dueMs = Date.parse(`${day}T00:00:00+09:00`);
+  const todayMs = Date.parse(`${today}T00:00:00+09:00`);
+  if (Number.isNaN(dueMs) || Number.isNaN(todayMs)) return null;
+  const diff = Math.round((dueMs - todayMs) / (1000 * 60 * 60 * 24));
+  return diff;
+}
+
+/** 진행 중이면서 D-day가 [0, threshold]인 경우. 기본 7일 이내. */
+export function isImminentDeadline(
+  deadline: string,
+  thresholdDays = 7,
+  now = new Date(),
+): boolean {
+  if (getDueStatus(deadline, now) !== "진행 중") return false;
+  const diff = getDaysUntilDeadline(deadline, now);
+  if (diff == null) return false;
+  return diff >= 0 && diff <= thresholdDays;
+}
+
 export function hasRealProductMatch(notice: Notice): boolean {
   return notice.relatedProducts.some((product) => MATCHED_PRODUCT_NAMES.has(product));
 }
@@ -172,13 +203,21 @@ export function countDashboardSummary(notices: Notice[], now = new Date()): Dash
   return counts;
 }
 
+/**
+ * 등급별 카운트.
+ * 점수만으로 base 등급을 산출하므로 negative 다운그레이드는 반영하지 않는다.
+ * (대시보드 누적 표시용으로는 score 기반 기본 분포가 더 직관적이다.)
+ */
 export function countByGrade(notices: Notice[]): Record<MatchGrade, number> {
-  const counts: Record<MatchGrade, number> = { 추천: 0, 검토: 0, 관찰: 0 };
+  const counts: Record<MatchGrade, number> = {
+    핵심검토: 0,
+    검토: 0,
+    참고: 0,
+    제외후보: 0,
+  };
   for (const notice of notices) {
-    const score = notice.fitScore;
-    if (score >= 70) counts.추천 += 1;
-    else if (score >= 40) counts.검토 += 1;
-    else if (score >= 20) counts.관찰 += 1;
+    const grade = notice.matchGrade;
+    counts[grade] = (counts[grade] ?? 0) + 1;
   }
   return counts;
 }

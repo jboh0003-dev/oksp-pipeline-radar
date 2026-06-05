@@ -12,6 +12,19 @@ export const CONTRABASS_FAMILY = [
   "CONTRABASS SDS+",
 ] as const;
 
+/**
+ * 공고 기관명과 내부 customer_accounts 매칭 결과.
+ * fetchNotices 단계에서 부착되며, 매칭 안 된 경우 undefined.
+ */
+export type NoticeCustomerInfo = {
+  customerName: string;
+  accountType: string | null;
+  territory: string | null;
+  regionGroup: string | null;
+  region: string | null;
+  matchType: "exact" | "normalized" | "contains";
+};
+
 export type Notice = {
   id: string;
   title: string;
@@ -25,6 +38,8 @@ export type Notice = {
   keywords: string[];
   summary?: string;
   sourceUrl: string;
+  /** customer_accounts 와 매칭된 경우만 채워진다. */
+  customer?: NoticeCustomerInfo;
 };
 
 function withGrade(notice: Omit<Notice, "matchGrade"> & { matchGrade?: MatchGrade }): Notice {

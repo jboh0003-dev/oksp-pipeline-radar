@@ -1,5 +1,6 @@
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
-import { getMatchGradeStyle } from "@/lib/noticeGrades";
+import { formatAccountTypeLabel } from "@/lib/customerMatching";
+import { getMatchGradeStyle, toDisplayMatchGrade } from "@/lib/noticeGrades";
 import { getDueStatus, type DueStatus } from "@/lib/noticeVisibility";
 
 const dueStatusStyles: Record<DueStatus, { badge: string; deadline: string }> = {
@@ -49,8 +50,53 @@ type NoticeCardProps = {
   onToggleSave: (id: string) => void;
 };
 
+function CustomerInline({
+  customer,
+  agency,
+}: {
+  customer: NonNullable<Notice["customer"]>;
+  agency: string;
+}) {
+  const accountLabel = formatAccountTypeLabel(customer.accountType);
+  const showName = customer.customerName && customer.customerName !== agency;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+      {customer.territory && (
+        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#E8F3FF] px-2 py-0.5 font-semibold text-[#1B64DA]">
+          {customer.territory}
+        </span>
+      )}
+      {accountLabel === "Named" ? (
+        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#E5F5EA] px-2 py-0.5 font-bold text-[#1A8245]">
+          Named
+        </span>
+      ) : accountLabel === "Non Named" ? (
+        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#F2F4F6] px-2 py-0.5 font-semibold text-[#6B7684]">
+          Non Named
+        </span>
+      ) : null}
+      {showName && (
+        <span
+          title={`내부 매칭: ${customer.customerName} (${
+            customer.matchType === "exact"
+              ? "정확 일치"
+              : customer.matchType === "normalized"
+                ? "정규화 일치"
+                : "포함관계 일치"
+          })`}
+          className="text-[#3182F6]"
+        >
+          ↳ {customer.customerName}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCardProps) {
-  const gradeStyle = getMatchGradeStyle(notice.matchGrade);
+  // 화면에는 3단계(핵심검토/검토/참고)만 노출. 내부 "제외후보" 는 "참고" 로 통합 표시.
+  const displayGrade = toDisplayMatchGrade(notice.matchGrade);
+  const gradeStyle = getMatchGradeStyle(displayGrade);
   const dueStatus = getDueStatus(notice.deadline);
   const statusStyle = dueStatusStyles[dueStatus];
   const dueStatusLabel = dueStatusLabels[dueStatus];
@@ -77,13 +123,15 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
           {dueStatusLabel}
         </span>
         <span
-          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${gradeStyle.badge}`}
+          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${gradeStyle.badge}`}
         >
-          {notice.matchGrade}
+          {displayGrade}
         </span>
-        <span className="rounded-full bg-[#F2F4F6] px-2.5 py-1 text-xs font-semibold text-[#4E5968]">
-          {notice.fitScore}
-          {"\uC810"}
+        <span
+          title="점수 기반 기본 추천도 (참고용)"
+          className="rounded-full bg-[#F9FAFB] px-2 py-1 text-[11px] font-medium text-[#8B95A1] ring-1 ring-inset ring-[#E5E8EB]"
+        >
+          점수 {notice.fitScore}
         </span>
       </div>
 
@@ -92,6 +140,9 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
           {notice.title}
         </h2>
         <p className="mt-1.5 text-sm text-[#6B7684]">{notice.agency}</p>
+        {notice.customer && (
+          <CustomerInline customer={notice.customer} agency={notice.agency} />
+        )}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">

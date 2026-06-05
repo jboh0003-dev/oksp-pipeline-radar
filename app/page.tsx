@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import DashboardLoading from "@/components/DashboardLoading";
 import Header from "@/components/Header";
+import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import NoticeCard from "@/components/NoticeCard";
+import NoticeTable from "@/components/NoticeTable";
 import ProductFilter from "@/components/ProductFilter";
 import SearchBar from "@/components/SearchBar";
 import SummaryCards from "@/components/SummaryCards";
@@ -12,8 +14,10 @@ import {
   type Notice,
   type ProductFilter as ProductFilterValue,
 } from "@/data/sampleNotices";
+import { fetchLastCollectionRun } from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
-import { getMatchGrade } from "@/lib/noticeGrades";
+import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
+import { evaluateMatchGrade } from "@/lib/noticeGrades";
 import {
   getDueStatus,
   hasRealProductMatch,
@@ -21,7 +25,7 @@ import {
   isTestNoticeUrl,
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
-import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
@@ -166,7 +170,16 @@ function buildNoticeHaystack(notice: DisplayNotice): string {
     .toLowerCase();
 }
 
-/** 화면 노출 조건: 진행 중 (마감 전) + 제품 매칭(CONTRABASS/VIOLA) + 테스트 URL 아님 */
+/**
+ * 화면 노출 조건.
+ *  - 마감 공고 기본 제외: 한국시간 기준 deadline >= today 인 공고만 노출.
+ *    (getDueStatus === "진행 중" 이 정확히 이 조건을 보장한다.)
+ *  - 제품 매칭: CONTRABASS / VIOLA 중 하나라도 매칭되어야 함.
+ *  - 테스트 URL 제외.
+ *
+ * Supabase 에서는 마감 공고도 그대로 보존되고 (delete 금지), 화면에서만 숨긴다.
+ * 추후 "마감 포함" 토글이 필요해지면 이 함수에 옵션을 추가한다.
+ */
 function isVisibleCandidate(notice: DisplayNotice): boolean {
   if (isTestNoticeUrl(notice.sourceUrl)) return false;
   if (getDueStatus(notice.deadline) !== "진행 중") return false;
@@ -191,9 +204,19 @@ function matchesProduct(notice: DisplayNotice, product: ProductFilterValue) {
 }
 
 function normalizeNotice(notice: Notice): DisplayNotice {
+  // fetchNotices 가 이미 negativeWeight 를 반영해 matchGrade 를 계산해 넘겨주지만,
+  // 샘플 데이터(supabase 미연결) 경로에서도 동일한 정책을 적용하기 위해
+  // 클라이언트 측에서도 한 번 더 evaluateMatchGrade 를 돌려준다.
+  const negativeText = buildNegativeSearchText({
+    title: notice.title,
+    agency: notice.agency,
+    summary: notice.summary,
+    keywords: notice.keywords,
+  });
+  const { weight: negativeWeight } = detectNegativeSignals(negativeText);
   return {
     ...notice,
-    matchGrade: getMatchGrade(notice.fitScore),
+    matchGrade: evaluateMatchGrade(notice.fitScore, negativeWeight),
   };
 }
 
@@ -246,6 +269,9 @@ export default function Home() {
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [sortOption, setSortOption] = useState<SortOption>("fit_desc");
+  const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
+  const [lastRunError, setLastRunError] = useState<string | null>(null);
+  const [isLastRunLoading, setIsLastRunLoading] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
@@ -262,7 +288,17 @@ export default function Home() {
       setIsLoading(false);
     }
 
+    async function loadLastRun() {
+      setIsLastRunLoading(true);
+      const { run, error } = await fetchLastCollectionRun();
+      if (!isMounted) return;
+      setLastRun(run);
+      setLastRunError(error);
+      setIsLastRunLoading(false);
+    }
+
     void loadNotices();
+    void loadLastRun();
 
     return () => {
       isMounted = false;
@@ -316,7 +352,7 @@ export default function Home() {
   if (isLoading) {
     return (
       <div className="min-h-full bg-[#F2F4F6]">
-        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1600px]">
           <Header totalCount={0} filteredCount={0} />
           <DashboardLoading />
         </main>
@@ -326,7 +362,7 @@ export default function Home() {
 
   return (
     <div className="min-h-full bg-[#F2F4F6]">
-      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1600px]">
         <Header totalCount={candidates.length} filteredCount={filteredNotices.length} />
 
         <div className="mb-4">
@@ -348,6 +384,12 @@ export default function Home() {
             </p>
           </div>
         )}
+
+        <LastCollectionRunCard
+          run={lastRun}
+          error={lastRunError}
+          isLoading={isLastRunLoading}
+        />
 
         <SummaryCards {...summaryCounts} />
 
@@ -395,7 +437,8 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="mt-6 space-y-5 sm:space-y-6">
+        {/* 모바일: 기존 카드 UI */}
+        <section className="mt-6 space-y-5 sm:space-y-6 md:hidden">
           {filteredNotices.length > 0 ? (
             filteredNotices.map((notice) => (
               <NoticeCard
@@ -417,6 +460,15 @@ export default function Home() {
               </p>
             </div>
           )}
+        </section>
+
+        {/* PC/노트북: 테이블 UI */}
+        <section className="mt-6 hidden md:block">
+          <NoticeTable
+            notices={filteredNotices}
+            savedIds={savedIds}
+            onToggleSave={handleToggleSave}
+          />
         </section>
 
         <p className="mt-8 text-center text-xs text-[#8B95A1]">
