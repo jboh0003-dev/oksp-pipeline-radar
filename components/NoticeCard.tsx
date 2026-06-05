@@ -175,18 +175,26 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
         ))}
       </div>
 
-      {notice.keywords.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {notice.keywords.map((keyword) => (
-            <span
-              key={keyword}
-              className="rounded-md bg-[#F2F4F6] px-2 py-0.5 text-xs text-[#4E5968]"
-            >
-              {keyword}
-            </span>
-          ))}
-        </div>
-      )}
+      {(() => {
+        // keywords 가 null/undefined/빈 값이거나 같은 키워드가 중복으로 들어오는 경우를 방어.
+        // (예: ["정보시스템", "정보시스템"] → React key 중복 경고)
+        const uniqueKeywords = Array.from(
+          new Set((notice.keywords ?? []).filter((kw): kw is string => Boolean(kw))),
+        );
+        if (uniqueKeywords.length === 0) return null;
+        return (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {uniqueKeywords.map((keyword, index) => (
+              <span
+                key={`${keyword}-${index}`}
+                className="rounded-md bg-[#F2F4F6] px-2 py-0.5 text-xs text-[#4E5968]"
+              >
+                {keyword}
+              </span>
+            ))}
+          </div>
+        );
+      })()}
 
       {notice.summary && (
         <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-[#4E5968]">

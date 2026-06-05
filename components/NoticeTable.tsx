@@ -321,18 +321,23 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   {/* 9. 매칭 키워드 — 배지 단위 wrap, 글자는 nowrap */}
                   <td className="min-w-[220px] px-3 py-3 align-top">
                     <div className="flex flex-wrap gap-1">
-                      {notice.keywords.length > 0 ? (
-                        notice.keywords.map((kw) => (
+                      {(() => {
+                        // keywords null/undefined/중복 방어. (예: ["정보시스템", "정보시스템"])
+                        const uniqueKeywords = Array.from(
+                          new Set((notice.keywords ?? []).filter((kw): kw is string => Boolean(kw))),
+                        );
+                        if (uniqueKeywords.length === 0) {
+                          return <span className="text-xs text-[#8B95A1]">-</span>;
+                        }
+                        return uniqueKeywords.map((kw, index) => (
                           <span
-                            key={kw}
+                            key={`${kw}-${index}`}
                             className="whitespace-nowrap rounded-md bg-[#F2F4F6] px-1.5 py-0.5 text-[11px] text-[#4E5968]"
                           >
                             {kw}
                           </span>
-                        ))
-                      ) : (
-                        <span className="text-xs text-[#8B95A1]">-</span>
-                      )}
+                        ));
+                      })()}
                     </div>
                   </td>
 
