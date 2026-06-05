@@ -5,16 +5,19 @@ import { getDueStatus, type DueStatus } from "@/lib/noticeVisibility";
 
 const dueStatusStyles: Record<DueStatus, { badge: string; deadline: string }> = {
   "진행 중": {
-    badge: "bg-[#E8F3FF] text-[#1B64DA] ring-[#C9E2FF]",
-    deadline: "text-[#191F28]",
+    badge:
+      "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30",
+    deadline: "text-slate-900 dark:text-slate-100",
   },
   "마감 지남": {
-    badge: "bg-[#F2F4F6] text-[#6B7684] ring-[#E5E8EB]",
-    deadline: "text-[#6B7684]",
+    badge:
+      "bg-slate-100 text-slate-500 ring-slate-200 dark:bg-slate-700/40 dark:text-slate-400 dark:ring-white/10",
+    deadline: "text-slate-500 dark:text-slate-400",
   },
   "마감일 확인 필요": {
-    badge: "bg-[#FFF4E0] text-[#E68600] ring-[#FFE0A3]",
-    deadline: "text-[#E68600]",
+    badge:
+      "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30",
+    deadline: "text-amber-700 dark:text-amber-300",
   },
 };
 
@@ -62,16 +65,16 @@ function CustomerInline({
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
       {customer.territory && (
-        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#E8F3FF] px-2 py-0.5 font-semibold text-[#1B64DA]">
+        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-blue-50 px-2 py-0.5 font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
           {customer.territory}
         </span>
       )}
       {accountLabel === "Named" ? (
-        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#E5F5EA] px-2 py-0.5 font-bold text-[#1A8245]">
+        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
           Named
         </span>
       ) : accountLabel === "Non Named" ? (
-        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#F2F4F6] px-2 py-0.5 font-semibold text-[#6B7684]">
+        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 dark:bg-slate-700/40 dark:text-slate-300">
           Non Named
         </span>
       ) : null}
@@ -84,7 +87,7 @@ function CustomerInline({
                 ? "정규화 일치"
                 : "포함관계 일치"
           })`}
-          className="text-[#3182F6]"
+          className="text-blue-600 dark:text-blue-300"
         >
           ↳ {customer.customerName}
         </span>
@@ -94,7 +97,6 @@ function CustomerInline({
 }
 
 export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCardProps) {
-  // 화면에는 3단계(핵심검토/검토/참고)만 노출. 내부 "제외후보" 는 "참고" 로 통합 표시.
   const displayGrade = toDisplayMatchGrade(notice.matchGrade);
   const gradeStyle = getMatchGradeStyle(displayGrade);
   const dueStatus = getDueStatus(notice.deadline);
@@ -106,13 +108,13 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
     dueStatus === "마감일 확인 필요" ? "마감일 확인 필요" : notice.deadline;
   const noticeDateLabel = notice.noticeDate?.trim()
     ? notice.noticeDate
-    : "\uAC8C\uC2DC\uC77C \uD655\uC778 \uD544\uC694";
+    : "게시일 확인 필요";
   const hasNoticeDate = Boolean(notice.noticeDate?.trim());
   const displayProducts = dedupeDisplayProducts(notice.relatedProducts);
 
   return (
     <article
-      className={`rounded-2xl border border-[#E5E8EB] bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6 ${
+      className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm dark:hover:border-blue-400/30 sm:p-6 ${
         dueStatus === "마감 지남" ? "opacity-90" : ""
       }`}
     >
@@ -129,35 +131,43 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
         </span>
         <span
           title="점수 기반 기본 추천도 (참고용)"
-          className="rounded-full bg-[#F9FAFB] px-2 py-1 text-[11px] font-medium text-[#8B95A1] ring-1 ring-inset ring-[#E5E8EB]"
+          className="rounded-full bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-white/10"
         >
           점수 {notice.fitScore}
         </span>
       </div>
 
       <div className="mt-4 sm:mt-5">
-        <h2 className="text-base font-bold leading-snug text-[#191F28] sm:text-lg">
+        <h2 className="text-base font-bold leading-snug text-slate-900 dark:text-slate-50 sm:text-lg">
           {notice.title}
         </h2>
-        <p className="mt-1.5 text-sm text-[#6B7684]">{notice.agency}</p>
+        <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+          {notice.agency}
+        </p>
         {notice.customer && (
           <CustomerInline customer={notice.customer} agency={notice.agency} />
         )}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
-        <div className="rounded-xl bg-[#F9FAFB] px-3 py-2.5 ring-1 ring-inset ring-[#F2F4F6]">
-          <p className="text-[11px] font-medium text-[#8B95A1]">{"\uAC8C\uC2DC\uC77C"}</p>
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-100 dark:bg-slate-800/40 dark:ring-white/5">
+          <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            게시일
+          </p>
           <p
             className={`mt-0.5 text-sm font-semibold ${
-              hasNoticeDate ? "text-[#191F28]" : "text-[#E68600]"
+              hasNoticeDate
+                ? "text-slate-900 dark:text-slate-100"
+                : "text-amber-700 dark:text-amber-300"
             }`}
           >
             {noticeDateLabel}
           </p>
         </div>
-        <div className="rounded-xl bg-[#F9FAFB] px-3 py-2.5 ring-1 ring-inset ring-[#F2F4F6]">
-          <p className="text-[11px] font-medium text-[#8B95A1]">{"\uB9C8\uAC10\uC77C"}</p>
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-100 dark:bg-slate-800/40 dark:ring-white/5">
+          <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            마감일
+          </p>
           <p className={`mt-0.5 text-sm font-semibold ${statusStyle.deadline}`}>
             {deadlineLabel}
           </p>
@@ -168,7 +178,7 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
         {displayProducts.map((product) => (
           <span
             key={product}
-            className="rounded-lg bg-[#E8F3FF] px-2.5 py-1 text-xs font-medium text-[#1B64DA]"
+            className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
           >
             {product}
           </span>
@@ -177,7 +187,6 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
 
       {(() => {
         // keywords 가 null/undefined/빈 값이거나 같은 키워드가 중복으로 들어오는 경우를 방어.
-        // (예: ["정보시스템", "정보시스템"] → React key 중복 경고)
         const uniqueKeywords = Array.from(
           new Set((notice.keywords ?? []).filter((kw): kw is string => Boolean(kw))),
         );
@@ -187,7 +196,7 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
             {uniqueKeywords.map((keyword, index) => (
               <span
                 key={`${keyword}-${index}`}
-                className="rounded-md bg-[#F2F4F6] px-2 py-0.5 text-xs text-[#4E5968]"
+                className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"
               >
                 {keyword}
               </span>
@@ -197,16 +206,18 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
       })()}
 
       {notice.summary && (
-        <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-[#4E5968]">
+        <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           {notice.summary}
         </p>
       )}
 
-      <div className="mt-5 flex flex-col gap-3 border-t border-[#F2F4F6] pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-[#6B7684]">
+      <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-white/5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
           <span>
-            {"\uC608\uC0B0 "}
-            <span className="font-semibold text-[#191F28]">{budgetLabel}</span>
+            {"예산 "}
+            <span className="font-semibold text-slate-900 dark:text-slate-100">
+              {budgetLabel}
+            </span>
           </span>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -214,20 +225,20 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
             href={notice.sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center justify-center rounded-xl bg-[#3182F6] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1B64DA] active:scale-[0.98]"
+            className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 active:scale-[0.98] dark:bg-blue-500 dark:hover:bg-blue-400"
           >
-            {"\uACF5\uACE0 \uBCF4\uAE30"}
+            공고 보기
           </a>
           <button
             type="button"
             onClick={() => onToggleSave(notice.id)}
             className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] ${
               isSaved
-                ? "bg-[#FFF4E0] text-[#E68600] ring-1 ring-[#FFE0A3]"
-                : "bg-white text-[#4E5968] ring-1 ring-[#E5E8EB] hover:bg-[#F9FAFB]"
+                ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
             }`}
           >
-            {isSaved ? "\uAD00\uC2EC \uD574\uC81C" : "\uAD00\uC2EC \uC800\uC7A5"}
+            {isSaved ? "관심 해제" : "관심 저장"}
           </button>
         </div>
       </div>

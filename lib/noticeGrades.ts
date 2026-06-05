@@ -82,26 +82,30 @@ export function getMatchGradeStyle(grade: MatchGrade) {
     case "핵심검토":
       return {
         // 강조 - 진한 파랑
-        badge: "bg-[#E8F3FF] text-[#1B64DA] ring-[#C9E2FF]",
-        bar: "bg-[#3182F6]",
+        badge:
+          "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-400/30",
+        bar: "bg-blue-500 dark:bg-blue-400",
       };
     case "검토":
       return {
         // 노랑 — 추가 확인 필요
-        badge: "bg-[#FFF4E0] text-[#E68600] ring-[#FFE0A3]",
-        bar: "bg-[#FFB020]",
+        badge:
+          "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30",
+        bar: "bg-amber-400 dark:bg-amber-300",
       };
     case "참고":
       return {
         // 회색 — 우선순위 낮음
-        badge: "bg-[#F2F4F6] text-[#6B7684] ring-[#E5E8EB]",
-        bar: "bg-[#ADB5BD]",
+        badge:
+          "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-700/40 dark:text-slate-300 dark:ring-white/10",
+        bar: "bg-slate-400 dark:bg-slate-500",
       };
     case "제외후보":
       return {
-        // 빨강톤 — 영업 적합도 낮음
-        badge: "bg-[#FFEBEB] text-[#C92A2A] ring-[#FFC9C9]",
-        bar: "bg-[#C92A2A]",
+        // 빨강톤 — 영업 적합도 낮음 (실제 화면에서는 toDisplayMatchGrade 로 "참고" 표시)
+        badge:
+          "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30",
+        bar: "bg-rose-500 dark:bg-rose-400",
       };
   }
 }

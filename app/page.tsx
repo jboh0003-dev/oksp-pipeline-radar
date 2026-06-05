@@ -351,8 +351,8 @@ export default function Home() {
 
   if (isLoading) {
     return (
-      <div className="min-h-full bg-[#F2F4F6]">
-        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1800px] md:px-6">
+      <div className="min-h-full bg-slate-50 dark:bg-[#0b1120]">
+        <main className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6 sm:py-5 md:max-w-[1800px] md:px-6">
           <Header totalCount={0} filteredCount={0} />
           <DashboardLoading />
         </main>
@@ -361,25 +361,16 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-full bg-[#F2F4F6]">
-      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1800px] md:px-6">
+    <div className="min-h-full bg-slate-50 dark:bg-[#0b1120]">
+      <main className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6 sm:py-5 md:max-w-[1800px] md:px-6">
         <Header totalCount={candidates.length} filteredCount={filteredNotices.length} />
 
-        <div className="mb-4">
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#3182F6] ring-1 ring-[#C9E2FF] transition hover:bg-[#F2F8FF]"
-          >
-            화면 새로고침
-          </button>
-        </div>
-
         {dataSource === "sample" && errorMessage && (
-          <div className="mb-4 rounded-xl border border-[#FFD6D6] bg-[#FFF0F0] px-4 py-4 text-sm text-[#B42318]">
-            <p className="font-semibold">Supabase 연결에 실패해 샘플 데이터를 표시하고 있습니다.</p>
-            <p className="mt-2 text-xs font-medium text-[#912018]">오류 상세</p>
-            <p className="mt-1 break-all rounded-lg bg-white/80 px-3 py-2 font-mono text-xs leading-relaxed text-[#912018]">
+          <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200">
+            <p className="font-semibold">
+              Supabase 연결에 실패해 샘플 데이터를 표시하고 있습니다.
+            </p>
+            <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
               {errorMessage}
             </p>
           </div>
@@ -393,52 +384,70 @@ export default function Home() {
 
         <SummaryCards {...summaryCounts} />
 
-        <section className="min-w-0 rounded-2xl bg-white p-4 shadow-sm sm:p-6">
-          <SearchBar value={searchQuery} onChange={setSearchQuery} />
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <label
-              htmlFor="notice-sort"
-              className="text-xs font-semibold text-[#4E5968] sm:text-sm"
-            >
-              정렬
-            </label>
-            <select
-              id="notice-sort"
-              value={sortOption}
-              onChange={(event) => setSortOption(event.target.value as SortOption)}
-              className="h-10 w-full rounded-xl border border-[#E5E8EB] bg-white px-3 text-sm font-medium text-[#191F28] shadow-sm transition focus:border-[#3182F6] focus:outline-none focus:ring-2 focus:ring-[#C9E2FF] sm:w-auto"
-            >
-              {SORT_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+        {/*
+          검색/정렬/관심/제품 필터를 한 줄(혹은 좁은 화면에서 두 줄)에 배치하여
+          공고 테이블이 더 위로 올라오게 한다.
+        */}
+        <section className="mb-4 min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-4 sm:py-3">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
+            <div className="min-w-0 flex-1 lg:max-w-md">
+              <SearchBar value={searchQuery} onChange={setSearchQuery} />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="notice-sort" className="sr-only">
+                정렬
+              </label>
+              <select
+                id="notice-sort"
+                value={sortOption}
+                onChange={(event) => setSortOption(event.target.value as SortOption)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-white/10 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-400/20 sm:text-sm"
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setShowSavedOnly((prev) => !prev)}
+                aria-pressed={showSavedOnly}
+                className={`inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
+                  showSavedOnly
+                    ? "bg-blue-600 text-white shadow-sm hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400"
+                    : "bg-slate-100 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
+                }`}
+              >
+                {showSavedOnly ? "★ 관심만 (켜짐)" : "☆ 관심만"}
+              </button>
+
+              <span aria-hidden className="hidden h-5 w-px bg-slate-200 dark:bg-white/10 lg:inline-block" />
+
+              <ProductFilter selected={selectedProduct} onChange={setSelectedProduct} />
+
+              <button
+                type="button"
+                onClick={handleRefresh}
+                title="화면 새로고침"
+                className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-2.5 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 transition hover:bg-blue-50 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 dark:hover:bg-slate-800"
+              >
+                ⟳ 새로고침
+              </button>
+            </div>
           </div>
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-            <button
-              type="button"
-              onClick={() => setShowSavedOnly((prev) => !prev)}
-              aria-pressed={showSavedOnly}
-              className={`inline-flex min-h-10 shrink-0 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition ${
-                showSavedOnly
-                  ? "bg-[#3182F6] text-white shadow-sm"
-                  : "bg-[#F2F4F6] text-[#4E5968] ring-1 ring-[#E5E8EB] hover:bg-[#E5E8EB]"
-              }`}
-            >
-              {showSavedOnly ? "관심 공고만 보기 (켜짐)" : "관심 공고만 보기"}
-            </button>
-            {showSavedOnly && savedIds.length === 0 && (
-              <p className="text-xs text-[#8B95A1]">저장한 관심 공고가 없습니다.</p>
-            )}
-          </div>
-          <div className="mt-5 min-w-0">
-            <ProductFilter selected={selectedProduct} onChange={setSelectedProduct} />
-          </div>
+
+          {showSavedOnly && savedIds.length === 0 && (
+            <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+              저장한 관심 공고가 없습니다.
+            </p>
+          )}
         </section>
 
         {/* 모바일: 기존 카드 UI */}
-        <section className="mt-6 space-y-5 sm:space-y-6 md:hidden">
+        <section className="space-y-4 sm:space-y-5 md:hidden">
           {filteredNotices.length > 0 ? (
             filteredNotices.map((notice) => (
               <NoticeCard
@@ -449,9 +458,11 @@ export default function Home() {
               />
             ))
           ) : (
-            <div className="rounded-2xl border border-dashed border-[#D1D6DB] bg-white px-6 py-14 text-center">
-              <p className="text-base font-semibold text-[#191F28]">검색 결과가 없습니다</p>
-              <p className="mt-2 text-sm text-[#6B7684]">
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
+              <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                검색 결과가 없습니다
+              </p>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 {showSavedOnly
                   ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
                   : hasActiveSearch && matchesExceptSearch.length > 0
@@ -463,7 +474,7 @@ export default function Home() {
         </section>
 
         {/* PC/노트북: 테이블 UI */}
-        <section className="mt-6 hidden md:block">
+        <section className="hidden md:block">
           <NoticeTable
             notices={filteredNotices}
             savedIds={savedIds}
@@ -471,7 +482,7 @@ export default function Home() {
           />
         </section>
 
-        <p className="mt-8 text-center text-xs text-[#8B95A1]">
+        <p className="mt-6 text-center text-[11px] text-slate-400 dark:text-slate-500">
           {dataSource === "supabase" ? "Supabase · 나라장터 연동" : "샘플 데이터 기반 MVP"}
         </p>
       </main>
