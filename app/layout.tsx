@@ -54,7 +54,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className="min-h-full flex flex-col bg-slate-50 text-slate-900 dark:bg-[#0b1120] dark:text-slate-100">
+      <body className="min-h-full flex flex-col">
         {children}
       </body>
     </html>

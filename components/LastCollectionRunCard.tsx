@@ -58,7 +58,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <section
       aria-label={CARD_TITLE}
-      className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-4 sm:py-2.5 sm:text-[13px]"
+      className="mb-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-5 sm:py-3.5 sm:text-[13px]"
     >
       {children}
     </section>
@@ -109,13 +109,13 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
   const meta = [slotLabel, pageRange, targetLabel].filter((v): v is string => Boolean(v));
 
   const statusBadge = run.ok ? (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30">
-      <span aria-hidden className="h-1 w-1 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
       정상
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30">
-      <span aria-hidden className="h-1 w-1 rounded-full bg-rose-600 dark:bg-rose-400" />
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-rose-600 dark:bg-rose-400" />
       실패
     </span>
   );
@@ -123,7 +123,8 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
   return (
     <Shell>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 leading-tight">
-        <span className="font-semibold text-slate-700 dark:text-slate-200">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
+          <span aria-hidden className="text-blue-500 dark:text-blue-400">●</span>
           {CARD_TITLE}
         </span>
         {statusBadge}
@@ -131,7 +132,7 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
           {formatKstShort(run.finished_at)} <span className="opacity-60">KST</span>
         </span>
 
-        <span aria-hidden className="hidden h-3 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
+        <span aria-hidden className="hidden h-3.5 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
 
         <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
           저장
@@ -154,7 +155,7 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
 
         {meta.length > 0 && (
           <>
-            <span aria-hidden className="hidden h-3 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
+            <span aria-hidden className="hidden h-3.5 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
             <span className="whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500">
               {meta.join(" · ")}
             </span>

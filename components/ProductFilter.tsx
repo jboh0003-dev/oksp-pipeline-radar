@@ -25,7 +25,7 @@ export default function ProductFilter({ selected, onChange }: ProductFilterProps
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(product)}
-            className={`h-8 rounded-full px-3 text-xs font-medium transition active:scale-[0.98] sm:text-sm ${
+            className={`h-9 rounded-full px-3.5 text-xs font-semibold transition active:scale-[0.98] sm:text-sm ${
               isActive
                 ? "bg-blue-600 text-white shadow-sm hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400"
                 : "bg-slate-100 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"

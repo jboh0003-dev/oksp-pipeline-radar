@@ -17,17 +17,31 @@
 
 /*
   body 는 hydration 직전(스크립트가 .dark 를 붙이기 전)에도 깜빡이지 않도록
-  최소한의 light/dark 베이스라인만 둔다. 자세한 톤은 컴포넌트 Tailwind 클래스에서.
+  최소한의 light/dark 베이스라인만 둔다.
+
+  은은한 blue/cyan 그라데이션 + 우상단 cyan glow + 좌상단 indigo glow 로
+  단순한 회색 배경이 아닌 "엔터프라이즈 클라우드 대시보드" 톤을 만든다.
+  fixed 로 두어 스크롤해도 배경이 따라가게 한다.
 */
 body {
-  background: #f4f7fb;
+  background-color: #f4f7fb;
+  background-image:
+    radial-gradient(1100px 520px at 90% -10%, rgba(56, 189, 248, 0.18), transparent 60%),
+    radial-gradient(900px 460px at -10% -10%, rgba(99, 102, 241, 0.14), transparent 65%),
+    linear-gradient(180deg, #eef4fb 0%, #f4f7fb 320px, #f4f7fb 100%);
+  background-attachment: fixed;
   color: #0f172a;
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
 }
 
 .dark body {
-  background: #0b1120;
+  background-color: #0b1120;
+  background-image:
+    radial-gradient(1100px 520px at 90% -10%, rgba(34, 211, 238, 0.10), transparent 60%),
+    radial-gradient(900px 460px at -10% -10%, rgba(99, 102, 241, 0.12), transparent 65%),
+    linear-gradient(180deg, #0c1426 0%, #0b1120 360px, #0b1120 100%);
+  background-attachment: fixed;
   color: #f1f5f9;
 }
 

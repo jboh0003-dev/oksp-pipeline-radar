@@ -2,55 +2,141 @@ import type { DashboardSummaryCounts } from "@/lib/noticeVisibility";
 
 type SummaryCardsProps = DashboardSummaryCounts;
 
+type IconName = "pulse" | "cube" | "stack";
+
 const items: Array<{
   key: keyof DashboardSummaryCounts;
   label: string;
-  /** 라이트/다크 둘 다에서 가독성을 보장하는 dot 색. */
-  dot: string;
-  accent: string;
+  /** 라이트/다크 양쪽에서 가독성을 보장하는 accent 컬러 그룹. */
+  accentText: string;
+  iconBg: string;
+  iconText: string;
+  bar: string;
+  icon: IconName;
 }> = [
   {
     key: "activeTotal",
     label: "진행 중 공고",
-    dot: "bg-blue-500 dark:bg-blue-400",
-    accent: "text-blue-600 dark:text-blue-300",
+    accentText: "text-blue-600 dark:text-blue-300",
+    iconBg: "bg-blue-50 ring-blue-100 dark:bg-blue-500/15 dark:ring-blue-400/20",
+    iconText: "text-blue-600 dark:text-blue-300",
+    bar: "from-blue-500/70 to-blue-400/0 dark:from-blue-400/70",
+    icon: "pulse",
   },
   {
     key: "contrabass",
     label: "CONTRABASS",
-    dot: "bg-indigo-500 dark:bg-indigo-400",
-    accent: "text-indigo-600 dark:text-indigo-300",
+    accentText: "text-indigo-600 dark:text-indigo-300",
+    iconBg: "bg-indigo-50 ring-indigo-100 dark:bg-indigo-500/15 dark:ring-indigo-400/20",
+    iconText: "text-indigo-600 dark:text-indigo-300",
+    bar: "from-indigo-500/70 to-indigo-400/0 dark:from-indigo-400/70",
+    icon: "cube",
   },
   {
     key: "viola",
     label: "VIOLA",
-    dot: "bg-cyan-500 dark:bg-cyan-400",
-    accent: "text-cyan-600 dark:text-cyan-300",
+    accentText: "text-cyan-600 dark:text-cyan-300",
+    iconBg: "bg-cyan-50 ring-cyan-100 dark:bg-cyan-500/15 dark:ring-cyan-400/20",
+    iconText: "text-cyan-600 dark:text-cyan-300",
+    bar: "from-cyan-500/70 to-cyan-400/0 dark:from-cyan-400/70",
+    icon: "stack",
   },
 ];
 
 /**
- * 첫 화면에서 공고 목록 노출을 빠르게 하기 위해 큰 카드 → 가로 인라인 지표로 축소.
- * 한 줄에 3개 지표가 들어가고, 모바일에서도 같은 레이아웃을 유지한다.
+ * 한 줄 인라인 형태(너무 작음) → 다시 적당한 크기의 3-column 카드로 복원.
+ * 단, 기존만큼 거대하지 않게 padding/숫자 크기를 절제한다.
+ * 카드 좌측에 컬러 아이콘을 두어 브랜드 톤을 살린다.
  */
 export default function SummaryCards(props: SummaryCardsProps) {
   return (
-    <section
-      aria-label="요약 지표"
-      className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-4 sm:py-2.5 sm:text-[13px]"
-    >
-      {items.map((item, idx) => (
-        <div key={item.key} className="flex items-center gap-2">
-          {idx > 0 && (
-            <span aria-hidden className="hidden h-3 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
-          )}
-          <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${item.dot}`} />
-          <span className="text-slate-500 dark:text-slate-400">{item.label}</span>
-          <span className={`font-bold tabular-nums ${item.accent}`}>
-            {props[item.key]}
-          </span>
+    <section className="mb-4 grid grid-cols-3 gap-2.5 sm:gap-3">
+      {items.map((item) => (
+        <div
+          key={item.key}
+          className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm dark:hover:border-blue-400/30 sm:px-4 sm:py-3.5"
+        >
+          <div
+            aria-hidden
+            className={`pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r ${item.bar}`}
+          />
+          <div className="flex items-center gap-3">
+            <span
+              aria-hidden
+              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${item.iconBg} ${item.iconText}`}
+            >
+              <Icon name={item.icon} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:text-xs">
+                {item.label}
+              </p>
+              <p
+                className={`mt-0.5 text-xl font-bold leading-none tracking-tight tabular-nums sm:text-2xl ${item.accentText}`}
+              >
+                {props[item.key]}
+              </p>
+            </div>
+          </div>
         </div>
       ))}
     </section>
+  );
+}
+
+function Icon({ name }: { name: IconName }) {
+  if (name === "pulse") {
+    return (
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="M3 12h3l3-7 4 14 3-7h5" />
+      </svg>
+    );
+  }
+  if (name === "cube") {
+    return (
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+        <path d="m3.3 7 8.7 5 8.7-5" />
+        <path d="M12 22V12" />
+      </svg>
+    );
+  }
+  // stack
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="m12 3 9 5-9 5-9-5 9-5Z" />
+      <path d="m3 12 9 5 9-5" />
+      <path d="m3 17 9 5 9-5" />
+    </svg>
   );
 }

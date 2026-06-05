@@ -138,36 +138,36 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
             <col style={{ width: "5%" }} />
             <col style={{ width: "5%" }} />
           </colgroup>
-          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+          <thead className="bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
             <tr>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 상태
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 추천
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 제품
               </th>
-              <th scope="col" className="px-3 py-3 text-left">
+              <th scope="col" className="px-3 py-3.5 text-left">
                 공고명
               </th>
-              <th scope="col" className="px-3 py-3 text-left">
+              <th scope="col" className="px-3 py-3.5 text-left">
                 기관/고객사
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 담당본부
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 Named
               </th>
-              <th scope="col" className="px-3 py-3 text-left">
+              <th scope="col" className="px-3 py-3.5 text-left">
                 지역
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 게시일
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">
+              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 마감일
               </th>
             </tr>
