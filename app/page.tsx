@@ -352,7 +352,7 @@ export default function Home() {
   if (isLoading) {
     return (
       <div className="min-h-full bg-[#F2F4F6]">
-        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1600px]">
+        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1800px] md:px-6">
           <Header totalCount={0} filteredCount={0} />
           <DashboardLoading />
         </main>
@@ -362,7 +362,7 @@ export default function Home() {
 
   return (
     <div className="min-h-full bg-[#F2F4F6]">
-      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1600px]">
+      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10 md:max-w-[1800px] md:px-6">
         <Header totalCount={candidates.length} filteredCount={filteredNotices.length} />
 
         <div className="mb-4">

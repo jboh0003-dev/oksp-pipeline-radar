@@ -112,23 +112,37 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
 
   return (
     <div className="rounded-2xl border border-[#E5E8EB] bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[1900px] table-auto text-sm">
+      {/*
+        PC(lg+) 에서는 가로 스크롤이 없도록 table-fixed + colgroup 으로 컬럼 폭을 % 로 고정한다.
+        md~lg(768~1024) 영역에서는 너무 좁아질 수 있어 overflow-x-auto 로 안전망만 둔다.
+        모바일(<md)은 page.tsx 에서 카드 UI 로 분기되어 이 테이블이 보이지 않는다.
+      */}
+      <div className="w-full overflow-x-auto lg:overflow-x-visible">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: "7%" }} /> {/* 상태 */}
+            <col style={{ width: "7%" }} /> {/* 추천 */}
+            <col style={{ width: "8%" }} /> {/* 제품 */}
+            <col style={{ width: "28%" }} /> {/* 공고명 + 보조정보(키워드/예산/원문/관심) */}
+            <col style={{ width: "18%" }} /> {/* 기관/고객사 */}
+            <col style={{ width: "8%" }} /> {/* 담당본부 */}
+            <col style={{ width: "7%" }} /> {/* Named */}
+            <col style={{ width: "7%" }} /> {/* 지역 */}
+            <col style={{ width: "5%" }} /> {/* 게시일 */}
+            <col style={{ width: "5%" }} /> {/* 마감일 */}
+          </colgroup>
           <thead className="bg-[#F9FAFB] text-xs font-semibold uppercase tracking-wide text-[#6B7684]">
             <tr>
-              <th scope="col" className="min-w-[130px] whitespace-nowrap px-3 py-3 text-left">상태</th>
-              <th scope="col" className="min-w-[110px] whitespace-nowrap px-3 py-3 text-left">추천</th>
-              <th scope="col" className="min-w-[120px] whitespace-nowrap px-3 py-3 text-left">제품</th>
-              <th scope="col" className="min-w-[360px] px-3 py-3 text-left">공고명</th>
-              <th scope="col" className="min-w-[200px] px-3 py-3 text-left">기관/고객사</th>
-              <th scope="col" className="min-w-[140px] whitespace-nowrap px-3 py-3 text-left">담당본부</th>
-              <th scope="col" className="min-w-[100px] whitespace-nowrap px-3 py-3 text-left">Named</th>
-              <th scope="col" className="min-w-[120px] px-3 py-3 text-left">지역</th>
-              <th scope="col" className="min-w-[110px] whitespace-nowrap px-3 py-3 text-left">게시일</th>
-              <th scope="col" className="min-w-[120px] whitespace-nowrap px-3 py-3 text-left">마감일</th>
-              <th scope="col" className="min-w-[140px] whitespace-nowrap px-3 py-3 text-right">예산</th>
-              <th scope="col" className="min-w-[220px] px-3 py-3 text-left">매칭 키워드</th>
-              <th scope="col" className="min-w-[140px] whitespace-nowrap px-3 py-3 text-right">원문</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">상태</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">추천</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">제품</th>
+              <th scope="col" className="px-3 py-3 text-left">공고명</th>
+              <th scope="col" className="px-3 py-3 text-left">기관/고객사</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">담당본부</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">Named</th>
+              <th scope="col" className="px-3 py-3 text-left">지역</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">게시일</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-3 text-left">마감일</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F2F4F6]">
@@ -167,7 +181,7 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   } ${status === "마감 지남" ? "opacity-70" : ""}`}
                 >
                   {/* 1. 상태 */}
-                  <td className="min-w-[130px] whitespace-nowrap px-3 py-3 align-top">
+                  <td className="whitespace-nowrap px-3 py-3 align-top">
                     <div className="flex flex-wrap gap-1">
                       <span
                         className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${dueStatusBadge[status]}`}
@@ -183,7 +197,7 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   </td>
 
                   {/* 2. 추천등급 (점수는 보조 표시) */}
-                  <td className="min-w-[110px] whitespace-nowrap px-3 py-3 align-top">
+                  <td className="whitespace-nowrap px-3 py-3 align-top">
                     <div className="flex flex-col gap-0.5">
                       <span
                         className={`inline-flex w-fit items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${gradeStyle.badge}`}
@@ -200,7 +214,7 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   </td>
 
                   {/* 3. 제품 (배지) */}
-                  <td className="min-w-[120px] whitespace-nowrap px-3 py-3 align-top">
+                  <td className="whitespace-nowrap px-3 py-3 align-top">
                     <div className="flex flex-wrap gap-1">
                       {products.length > 0 ? (
                         products.map((product) => (
@@ -217,18 +231,87 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                     </div>
                   </td>
 
-                  {/* 4. 공고명 — 단어 단위 줄바꿈, 말줄임 없음 */}
-                  <td className="min-w-[360px] max-w-[520px] whitespace-normal break-keep px-3 py-3 align-top leading-6">
-                    <div
-                      title={notice.title}
-                      className="text-sm font-semibold text-[#191F28] group-hover:text-[#1B64DA]"
-                    >
-                      {notice.title}
+                  {/*
+                    4. 공고명 — 단어 단위 줄바꿈, 우측에 ★/원문 inline.
+                    예산·매칭 키워드는 별도 컬럼을 두지 않고 공고명 아래 보조 라인으로 통합한다.
+                  */}
+                  <td className="whitespace-normal break-keep px-3 py-3 align-top leading-6">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div
+                          title={notice.title}
+                          className="text-sm font-semibold text-[#191F28] group-hover:text-[#1B64DA]"
+                        >
+                          {notice.title}
+                        </div>
+                        {(() => {
+                          const uniqueKeywords = Array.from(
+                            new Set(
+                              (notice.keywords ?? []).filter((kw): kw is string => Boolean(kw)),
+                            ),
+                          );
+                          const budgetText = formatBudget(notice.budget);
+                          const showBudget = budgetText !== "미공개";
+                          if (uniqueKeywords.length === 0 && !showBudget) return null;
+                          return (
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                              {showBudget && (
+                                <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#FFF7E0] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[#9A6700] ring-1 ring-inset ring-[#FFE0A3]">
+                                  {budgetText}
+                                </span>
+                              )}
+                              {uniqueKeywords.slice(0, 8).map((kw, index) => (
+                                <span
+                                  key={`${kw}-${index}`}
+                                  className="whitespace-nowrap rounded-md bg-[#F2F4F6] px-1.5 py-0.5 text-[11px] text-[#4E5968]"
+                                >
+                                  {kw}
+                                </span>
+                              ))}
+                              {uniqueKeywords.length > 8 && (
+                                <span className="whitespace-nowrap text-[11px] text-[#8B95A1]">
+                                  +{uniqueKeywords.length - 8}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label={isSaved ? "관심 해제" : "관심 저장"}
+                          title={isSaved ? "관심 해제" : "관심 저장"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleSave(notice.id);
+                          }}
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-base transition ${
+                            isSaved
+                              ? "bg-[#FFF4E0] text-[#E68600] ring-1 ring-[#FFE0A3]"
+                              : "text-[#8B95A1] ring-1 ring-[#E5E8EB] hover:bg-[#F9FAFB]"
+                          }`}
+                        >
+                          {isSaved ? "★" : "☆"}
+                        </button>
+                        {hasUrl && (
+                          <a
+                            href={notice.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                            title="원문 새 창에서 보기"
+                            className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-[#3182F6] px-2 text-[11px] font-semibold text-white transition hover:bg-[#1B64DA]"
+                          >
+                            원문 ↗
+                          </a>
+                        )}
+                      </div>
                     </div>
                   </td>
 
                   {/* 5. 기관/고객사 — 단어 단위 줄바꿈 + 매칭된 고객사명 보조 표시 */}
-                  <td className="min-w-[200px] whitespace-normal break-keep px-3 py-3 align-top">
+                  <td className="whitespace-normal break-keep px-3 py-3 align-top">
                     <div title={notice.agency} className="text-xs leading-5 text-[#4E5968]">
                       {notice.agency}
                     </div>
@@ -249,7 +332,7 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   </td>
 
                   {/* 5-1. 담당본부 */}
-                  <td className="min-w-[140px] whitespace-nowrap px-3 py-3 align-top">
+                  <td className="whitespace-nowrap px-3 py-3 align-top">
                     {notice.customer?.territory ? (
                       <span className="text-xs font-semibold text-[#191F28]">
                         {notice.customer.territory}
@@ -260,7 +343,7 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   </td>
 
                   {/* 5-2. Named */}
-                  <td className="min-w-[100px] whitespace-nowrap px-3 py-3 align-top">
+                  <td className="whitespace-nowrap px-3 py-3 align-top">
                     {notice.customer ? (
                       <NamedBadge accountType={notice.customer.accountType} />
                     ) : (
@@ -269,7 +352,7 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   </td>
 
                   {/* 5-3. 지역 */}
-                  <td className="min-w-[120px] px-3 py-3 align-top">
+                  <td className="px-3 py-3 align-top">
                     {notice.customer && (notice.customer.region || notice.customer.regionGroup) ? (
                       <div className="flex flex-col gap-0.5">
                         {notice.customer.region && (
@@ -289,12 +372,12 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                   </td>
 
                   {/* 6. 게시일 */}
-                  <td className="min-w-[110px] whitespace-nowrap px-3 py-3 align-top text-xs text-[#4E5968]">
+                  <td className="whitespace-nowrap px-3 py-3 align-top text-xs text-[#4E5968]">
                     {formatNoticeDate(notice.noticeDate)}
                   </td>
 
                   {/* 7. 마감일 + D-day */}
-                  <td className="min-w-[120px] whitespace-nowrap px-3 py-3 align-top">
+                  <td className="whitespace-nowrap px-3 py-3 align-top">
                     <div
                       className={`text-xs font-semibold ${
                         imminent ? "text-[#C92A2A]" : "text-[#191F28]"
@@ -311,69 +394,6 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
                         {dday}
                       </div>
                     )}
-                  </td>
-
-                  {/* 8. 예산 — 우측 정렬, 숫자 정렬 */}
-                  <td className="min-w-[140px] whitespace-nowrap px-3 py-3 align-top text-right text-xs font-semibold tabular-nums text-[#191F28]">
-                    {formatBudget(notice.budget)}
-                  </td>
-
-                  {/* 9. 매칭 키워드 — 배지 단위 wrap, 글자는 nowrap */}
-                  <td className="min-w-[220px] px-3 py-3 align-top">
-                    <div className="flex flex-wrap gap-1">
-                      {(() => {
-                        // keywords null/undefined/중복 방어. (예: ["정보시스템", "정보시스템"])
-                        const uniqueKeywords = Array.from(
-                          new Set((notice.keywords ?? []).filter((kw): kw is string => Boolean(kw))),
-                        );
-                        if (uniqueKeywords.length === 0) {
-                          return <span className="text-xs text-[#8B95A1]">-</span>;
-                        }
-                        return uniqueKeywords.map((kw, index) => (
-                          <span
-                            key={`${kw}-${index}`}
-                            className="whitespace-nowrap rounded-md bg-[#F2F4F6] px-1.5 py-0.5 text-[11px] text-[#4E5968]"
-                          >
-                            {kw}
-                          </span>
-                        ));
-                      })()}
-                    </div>
-                  </td>
-
-                  {/* 10. 원문 + 관심 — 잘리지 않게 최소 너비 */}
-                  <td className="min-w-[140px] whitespace-nowrap px-3 py-3 align-top text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <button
-                        type="button"
-                        aria-label={isSaved ? "관심 해제" : "관심 저장"}
-                        title={isSaved ? "관심 해제" : "관심 저장"}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onToggleSave(notice.id);
-                        }}
-                        className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-base transition ${
-                          isSaved
-                            ? "bg-[#FFF4E0] text-[#E68600] ring-1 ring-[#FFE0A3]"
-                            : "text-[#8B95A1] ring-1 ring-[#E5E8EB] hover:bg-[#F9FAFB]"
-                        }`}
-                      >
-                        {isSaved ? "★" : "☆"}
-                      </button>
-                      {hasUrl ? (
-                        <a
-                          href={notice.sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(event) => event.stopPropagation()}
-                          className="inline-flex items-center justify-center whitespace-nowrap rounded-md bg-[#3182F6] px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-[#1B64DA]"
-                        >
-                          원문
-                        </a>
-                      ) : (
-                        <span className="text-xs text-[#8B95A1]">-</span>
-                      )}
-                    </div>
                   </td>
                 </tr>
               );

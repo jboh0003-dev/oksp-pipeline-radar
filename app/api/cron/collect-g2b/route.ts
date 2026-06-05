@@ -5,43 +5,72 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// 응답 스키마 버전. 클라이언트가 cron 응답 형태(ok / collectOk / targetReached 등)를
+// 응답 스키마 버전. 클라이언트가 cron 응답 형태(ok / collectOk / targetReached / slot 등)를
 // 식별할 때 사용. 응답 구조가 바뀌면 이 값도 함께 올린다.
-const CRON_RESPONSE_SCHEMA_VERSION = 2;
+const CRON_RESPONSE_SCHEMA_VERSION = 3;
+
+/**
+ * 자동수집 슬롯 정의.
+ *
+ * - morning : 한국시간 08:30 (UTC 23:30) — 1~20 페이지
+ * - noon    : 한국시간 12:30 (UTC 03:30) — 21~40 페이지
+ *
+ * 두 슬롯 모두 lookbackDays 30, targetCount 100 으로 동일 정책.
+ * 하루 2회로 페이지 범위만 분담해 누적 커버리지를 넓힌다.
+ */
+type Slot = "morning" | "noon";
+
+const SLOT_PROFILES: Record<Slot, { pageStart: number; pageEnd: number }> = {
+  morning: { pageStart: 1, pageEnd: 20 },
+  noon: { pageStart: 21, pageEnd: 40 },
+};
 
 const DEFAULTS = {
-  targetCount: 30,
+  targetCount: 100,
   lookbackDays: 30,
-  pageStart: 1,
-  pageEnd: 3,
 } as const;
 
+/**
+ * slot 결정 우선순위:
+ *  1) `?slot=morning|noon` query string (vercel.json cron 정의에서 명시)
+ *  2) UTC hour 기준 fallback (Vercel cron 디스패치가 약간 늦어지거나 query 가 빠진 경우)
+ *  3) 그 외 수동 호출 등 → "morning" 기본
+ */
+function pickSlot(request: NextRequest): { slot: Slot; reason: "query" | "utc-hour" | "default" } {
+  const url = new URL(request.url);
+  const fromQuery = url.searchParams.get("slot");
+  if (fromQuery === "morning" || fromQuery === "noon") {
+    return { slot: fromQuery, reason: "query" };
+  }
+
+  const utcHour = new Date().getUTCHours();
+  // 23:30 UTC = morning slot, 03:30 UTC = noon slot.
+  // 디스패치 지연/타임존 grace 를 위해 인접 시각도 같은 슬롯으로 매핑.
+  if (utcHour === 23 || utcHour === 0) {
+    return { slot: "morning", reason: "utc-hour" };
+  }
+  if (utcHour === 3 || utcHour === 4) {
+    return { slot: "noon", reason: "utc-hour" };
+  }
+  return { slot: "morning", reason: "default" };
+}
+
 type CronResult = {
-  /** 응답 스키마 버전. */
   schemaVersion: number;
-  /**
-   * 자동수집 "실행" 성공 여부.
-   * - 인증 통과
-   * - runCollect()가 예외 없이 끝남
-   * - 치명적 errors[] 가 비어있음
-   * 이 세 가지만 충족하면 true. savedCount/targetCount 는 영향을 주지 않는다.
-   */
+  /** 자동수집 "실행" 성공 여부. 인증 통과 + runCollect 정상 종료 + errors[] 비어있음. */
   ok: boolean;
-  /**
-   * runCollect() 내부 판정값. (errors == 0 && targetReached)
-   * 영업/품질 모니터링용. ok 와는 별개이며 dashboard 신호로는 사용하지 않는 것을 권장.
-   */
+  /** runCollect 내부 판정값. (errors == 0 && targetReached) — 영업/품질 지표용. */
   collectOk: boolean;
-  /**
-   * activeProductMatchedCount >= targetCount 충족 여부.
-   * false 라도 ok 는 true 가 될 수 있다.
-   */
+  /** activeProductMatchedCount >= targetCount 충족 여부. */
   targetReached: boolean;
   /** 사람이 읽기 위한 안내 메시지 (목표 미달성 등). */
   message: string | null;
+  /** 이번 실행에 사용된 slot. */
+  slot: Slot;
   startedAt: string;
   finishedAt: string;
   targetCount: number;
+  lookbackDays: number;
   pageStart: number;
   pageEnd: number | null;
   fetchedCount: number;
@@ -50,13 +79,7 @@ type CronResult = {
   activeProductMatchedCount: number;
   skippedExpiredCount: number;
   skippedNoProductCount: number;
-  /** 치명적 오류만. 비어있을 때 ok=true. */
   errors: string[];
-  /**
-   * 부수 경고. 수집은 되었으나 알아둘 만한 사항.
-   * 예) collection_runs 기록 실패, targetCount 미달성.
-   * 여기에만 들어가는 항목은 ok 판정에 영향을 주지 않는다.
-   */
   warnings: string[];
 };
 
@@ -79,7 +102,7 @@ type CollectionRunRow = {
 };
 
 /**
- * Authorization: Bearer <CRON_SECRET> 또는 x-cron-secret: <CRON_SECRET>
+ * Authorization: Bearer <CRON_SECRET> 또는 x-cron-secret: <CRON_SECRET>.
  * 둘 중 하나라도 일치하면 통과. 둘 다 일치하지 않으면 401.
  */
 function isAuthorized(request: NextRequest, expected: string): boolean {
@@ -101,8 +124,7 @@ function isAuthorized(request: NextRequest, expected: string): boolean {
 
 /**
  * collection_runs 테이블이 만들어져 있을 때만 기록한다.
- * 테이블이 없거나 권한 문제로 실패해도 cron 응답은 그대로 반환하며,
- * 그 사실은 warnings에만 누적시켜 ok 플래그에는 영향이 없게 한다.
+ * 실패해도 cron 응답은 그대로 반환하며, 사실은 warnings 에만 누적시켜 ok 에 영향이 없게 한다.
  */
 async function recordRun(row: CollectionRunRow): Promise<string | null> {
   const supabase = getSupabaseAdmin();
@@ -131,6 +153,8 @@ async function handleCron(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  const { slot, reason: slotReason } = pickSlot(request);
+  const profile = SLOT_PROFILES[slot];
   const startedAt = new Date().toISOString();
 
   // runCollect 가 예외를 던지더라도 cron 응답은 안정적으로 내려가도록 try/catch 로 감싼다.
@@ -140,8 +164,8 @@ async function handleCron(request: NextRequest) {
     const r = await runCollect({
       targetCount: DEFAULTS.targetCount,
       lookbackDays: DEFAULTS.lookbackDays,
-      pageStart: DEFAULTS.pageStart,
-      pageEnd: DEFAULTS.pageEnd,
+      pageStart: profile.pageStart,
+      pageEnd: profile.pageEnd,
     });
     body = r.body;
   } catch (err) {
@@ -151,8 +175,10 @@ async function handleCron(request: NextRequest) {
   const finishedAt = new Date().toISOString();
 
   const targetCount = body?.targetCount ?? DEFAULTS.targetCount;
-  const pageStart = body?.pageStart ?? DEFAULTS.pageStart;
-  const pageEnd = body?.pageEnd ?? DEFAULTS.pageEnd;
+  // CollectResponse 에는 lookbackDays 가 들어있지 않다. 우리가 호출 시 넘긴 값을 그대로 기록.
+  const lookbackDays = DEFAULTS.lookbackDays;
+  const pageStart = body?.pageStart ?? profile.pageStart;
+  const pageEnd = body?.pageEnd ?? profile.pageEnd;
   const fetchedCount = body?.fetchedCount ?? 0;
   const matchedCount = body?.matchedCount ?? 0;
   const savedCount = body?.savedCount ?? 0;
@@ -172,6 +198,11 @@ async function handleCron(request: NextRequest) {
   const ok = collectErrors.length === 0;
 
   const warnings: string[] = [];
+  // slot/range 가시성을 위해 항상 첫 줄에 실행 컨텍스트를 남긴다.
+  warnings.push(
+    `slot=${slot} · pages ${pageStart}-${pageEnd ?? "-"} · lookback ${lookbackDays}일 · target ${targetCount} (slotSource=${slotReason})`,
+  );
+
   let message: string | null = null;
   if (ok && !targetReached) {
     message = "목표 건수에는 도달하지 못했지만, 수집은 정상 실행되었습니다.";
@@ -186,9 +217,11 @@ async function handleCron(request: NextRequest) {
     collectOk,
     targetReached,
     message,
+    slot,
     startedAt,
     finishedAt,
     targetCount,
+    lookbackDays,
     pageStart,
     pageEnd,
     fetchedCount,
@@ -201,11 +234,13 @@ async function handleCron(request: NextRequest) {
     warnings,
   };
 
+  // collection_runs.source 에 slot 을 인코딩해 화면 카드가 슬롯을 식별할 수 있게 한다.
+  // (예: "cron:collect-g2b:morning"). 기존 컬럼 재사용으로 스키마 변경 불필요.
   const recordError = await recordRun({
-    source: "cron:collect-g2b",
+    source: `cron:collect-g2b:${slot}`,
     started_at: result.startedAt,
     finished_at: result.finishedAt,
-    ok: result.ok, // collection_runs 에도 "자동수집 실행 성공 여부" 를 그대로 기록.
+    ok: result.ok,
     target_count: result.targetCount,
     page_start: result.pageStart,
     page_end: result.pageEnd,
