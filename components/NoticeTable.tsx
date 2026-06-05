@@ -1,7 +1,8 @@
 "use client";
 
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
-import { formatAccountTypeLabel } from "@/lib/customerMatching";
+import { getBudgetInfo } from "@/lib/budget";
+import { formatAccountTypeLabel, formatMatchTypeLabel } from "@/lib/customerMatching";
 import { getMatchGradeStyle, toDisplayMatchGrade } from "@/lib/noticeGrades";
 import type { SortColumn, SortState } from "@/lib/noticeSorting";
 import {
@@ -46,11 +47,6 @@ function dedupeDisplayProducts(products: string[]): string[] {
   return result;
 }
 
-function formatBudget(value: string | null | undefined): string {
-  if (!value || value === "-") return "미공개";
-  return value;
-}
-
 function formatNoticeDate(value: string | null | undefined): string {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return "-";
@@ -83,6 +79,11 @@ type Props = {
   sortState?: SortState;
   /** 헤더 클릭 시 호출. 같은 컬럼이면 방향 토글, 다른 컬럼이면 자연스러운 방향으로 전환. */
   onSortChange?: (column: SortColumn) => void;
+  /**
+   * "매칭근거" 디버그 컬럼을 표시할지. 기본 false.
+   * page.tsx 의 토글에서 제어한다.
+   */
+  showMatchSource?: boolean;
 };
 
 /**
@@ -235,6 +236,7 @@ export default function NoticeTable({
   onToggleSave,
   sortState,
   onSortChange,
+  showMatchSource = false,
 }: Props) {
   if (notices.length === 0) {
     return (
@@ -261,14 +263,15 @@ export default function NoticeTable({
           <colgroup>
             <col style={{ width: "7%" }} />
             <col style={{ width: "7%" }} />
-            <col style={{ width: "8%" }} />
-            <col style={{ width: "28%" }} />
-            <col style={{ width: "18%" }} />
+            <col style={{ width: "7%" }} />
+            <col style={{ width: showMatchSource ? "25%" : "28%" }} />
+            <col style={{ width: showMatchSource ? "16%" : "18%" }} />
             <col style={{ width: "8%" }} />
             <col style={{ width: "7%" }} />
             <col style={{ width: "7%" }} />
             <col style={{ width: "5%" }} />
             <col style={{ width: "5%" }} />
+            {showMatchSource && <col style={{ width: "8%" }} />}
           </colgroup>
           <thead className="bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
             <tr>
@@ -333,6 +336,15 @@ export default function NoticeTable({
                 state={sortState}
                 onSortChange={onSortChange}
               />
+              {showMatchSource && (
+                <th
+                  scope="col"
+                  className="whitespace-nowrap px-3 py-3.5 text-left"
+                  title="기관명 → 고객사 매칭에 사용된 단계 (디버그)"
+                >
+                  매칭근거
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-white/5">
@@ -445,14 +457,17 @@ export default function NoticeTable({
                               ),
                             ),
                           );
-                          const budgetText = formatBudget(notice.budget);
-                          const showBudget = budgetText !== "미공개";
+                          const budget = getBudgetInfo(notice.budget);
+                          const showBudget = budget.amount != null;
                           if (uniqueKeywords.length === 0 && !showBudget) return null;
                           return (
                             <div className="mt-1.5 flex flex-wrap items-center gap-1">
                               {showBudget && (
-                                <span className="inline-flex items-center whitespace-nowrap rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20">
-                                  {budgetText}
+                                <span
+                                  title={budget.korean ?? undefined}
+                                  className="inline-flex items-center whitespace-nowrap rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20"
+                                >
+                                  {budget.formatted}
                                 </span>
                               )}
                               {uniqueKeywords.slice(0, 8).map((kw, index) => (
@@ -516,13 +531,7 @@ export default function NoticeTable({
                     {notice.customer &&
                       notice.customer.customerName !== notice.agency && (
                         <div
-                          title={`내부 매칭: ${notice.customer.customerName} (${
-                            notice.customer.matchType === "exact"
-                              ? "정확 일치"
-                              : notice.customer.matchType === "normalized"
-                                ? "정규화 일치"
-                                : "포함관계 일치"
-                          })`}
+                          title={`내부 매칭: ${notice.customer.customerName} (${formatMatchTypeLabel(notice.customer.matchType)})`}
                           className="mt-1 text-[11px] leading-4 text-blue-600 dark:text-blue-300"
                         >
                           ↳ {notice.customer.customerName}
@@ -605,12 +614,63 @@ export default function NoticeTable({
                       </div>
                     )}
                   </td>
+
+                  {/* 8. 매칭근거 (디버그 모드 토글 시에만 노출) */}
+                  {showMatchSource && (
+                    <td className="whitespace-nowrap px-3 py-3 align-top">
+                      <MatchSourceBadge
+                        matchType={notice.customer?.matchType ?? null}
+                        territory={notice.customer?.territory ?? null}
+                      />
+                    </td>
+                  )}
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 매칭 단계 → 디버그 배지.
+ *  - exact / normalized / alias / contains / fuzzy / unmatched(미매칭)
+ *  - territory 가 비어 있으면 "본부 미매칭" 보조 표시도 함께 노출.
+ */
+function MatchSourceBadge({
+  matchType,
+  territory,
+}: {
+  matchType: NonNullable<Notice["customer"]>["matchType"] | null;
+  territory: string | null;
+}) {
+  const tone =
+    matchType === "exact"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+      : matchType === "normalized"
+        ? "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-400/30"
+        : matchType === "alias"
+          ? "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30"
+          : matchType === "contains"
+            ? "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+            : matchType === "fuzzy"
+              ? "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30"
+              : "bg-slate-100 text-slate-500 ring-slate-200 dark:bg-slate-700/40 dark:text-slate-400 dark:ring-white/10";
+  const label = matchType ?? "unmatched";
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span
+        title={formatMatchTypeLabel(matchType ?? "unmatched")}
+        className={`inline-flex w-fit items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${tone}`}
+      >
+        {label}
+      </span>
+      {!territory && (
+        <span className="text-[10px] text-slate-400 dark:text-slate-500">본부 미매칭</span>
+      )}
     </div>
   );
 }

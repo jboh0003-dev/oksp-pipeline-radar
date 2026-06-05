@@ -22,7 +22,14 @@ export type NoticeCustomerInfo = {
   territory: string | null;
   regionGroup: string | null;
   region: string | null;
-  matchType: "exact" | "normalized" | "contains";
+  /**
+   * 매칭 단계.
+   *  - exact / normalized: 1차 정확/정규화 일치
+   *  - alias            : 수동 동의어 사전 매핑
+   *  - contains         : 정규화값의 양방향 substring 포함
+   *  - fuzzy            : Levenshtein 유사도 임계 통과 (보수적 임계)
+   */
+  matchType: "exact" | "normalized" | "alias" | "contains" | "fuzzy";
 };
 
 export type Notice = {

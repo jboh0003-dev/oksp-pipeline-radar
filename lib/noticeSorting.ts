@@ -1,4 +1,5 @@
 import type { Notice } from "@/data/sampleNotices";
+import { getBudgetSortKey } from "@/lib/budget";
 import { formatAccountTypeLabel } from "@/lib/customerMatching";
 import { isMissingDueDate } from "@/lib/noticeVisibility";
 
@@ -15,7 +16,8 @@ export type SortColumn =
   | "named" // NAMED
   | "region" // 지역
   | "noticeDate" // 게시일
-  | "deadline"; // 마감일
+  | "deadline" // 마감일
+  | "budget"; // 예산
 
 export type SortDirection = "asc" | "desc";
 
@@ -46,6 +48,7 @@ const NATURAL_DIRECTION: Record<SortColumn, SortDirection> = {
   region: "asc",
   noticeDate: "desc",
   deadline: "asc",
+  budget: "desc",
 };
 
 /**
@@ -123,6 +126,8 @@ function isEmptyForColumn(notice: Notice, column: SortColumn): boolean {
       return !noticeDateSortKey(notice.noticeDate);
     case "deadline":
       return !deadlineSortKey(notice.deadline);
+    case "budget":
+      return getBudgetSortKey(notice.budget) <= 0;
   }
 }
 
@@ -147,6 +152,8 @@ function compareByColumn(a: Notice, b: Notice, column: SortColumn): number {
       return noticeDateSortKey(a.noticeDate).localeCompare(noticeDateSortKey(b.noticeDate));
     case "deadline":
       return deadlineSortKey(a.deadline).localeCompare(deadlineSortKey(b.deadline));
+    case "budget":
+      return getBudgetSortKey(a.budget) - getBudgetSortKey(b.budget);
   }
 }
 

@@ -1,5 +1,6 @@
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
-import { formatAccountTypeLabel } from "@/lib/customerMatching";
+import { getBudgetInfo } from "@/lib/budget";
+import { formatAccountTypeLabel, formatMatchTypeLabel } from "@/lib/customerMatching";
 import { getMatchGradeStyle, toDisplayMatchGrade } from "@/lib/noticeGrades";
 import { getDueStatus, type DueStatus } from "@/lib/noticeVisibility";
 
@@ -80,13 +81,7 @@ function CustomerInline({
       ) : null}
       {showName && (
         <span
-          title={`내부 매칭: ${customer.customerName} (${
-            customer.matchType === "exact"
-              ? "정확 일치"
-              : customer.matchType === "normalized"
-                ? "정규화 일치"
-                : "포함관계 일치"
-          })`}
+          title={`내부 매칭: ${customer.customerName} (${formatMatchTypeLabel(customer.matchType)})`}
           className="text-blue-600 dark:text-blue-300"
         >
           ↳ {customer.customerName}
@@ -102,8 +97,7 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
   const dueStatus = getDueStatus(notice.deadline);
   const statusStyle = dueStatusStyles[dueStatus];
   const dueStatusLabel = dueStatusLabels[dueStatus];
-  const budgetLabel =
-    notice.budget && notice.budget !== "-" ? notice.budget : "미공개";
+  const budgetInfo = getBudgetInfo(notice.budget);
   const deadlineLabel =
     dueStatus === "마감일 확인 필요" ? "마감일 확인 필요" : notice.deadline;
   const noticeDateLabel = notice.noticeDate?.trim()
@@ -212,13 +206,24 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
       )}
 
       <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-white/5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-          <span>
-            {"예산 "}
-            <span className="font-semibold text-slate-900 dark:text-slate-100">
-              {budgetLabel}
-            </span>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+          <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            예산
           </span>
+          {budgetInfo.amount != null ? (
+            <span className="inline-flex items-center whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-sm font-bold tabular-nums text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-400/30">
+              {budgetInfo.formatted}
+            </span>
+          ) : (
+            <span className="inline-flex items-center whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-inset ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-white/10">
+              {budgetInfo.display}
+            </span>
+          )}
+          {budgetInfo.korean && (
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              ({budgetInfo.korean})
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <a

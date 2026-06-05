@@ -19,13 +19,14 @@ export type MatchedCustomer = {
    * 매칭 단계.
    *  - "exact"      : 공고 agency 와 customer_name 정확 일치
    *  - "normalized" : 공백/괄호/법인표기 제거 후 정규화 키 일치
-   *  - "contains"   : agency 정규화값 안에 customer_name_norm 전체가 substring 으로 포함
-   *                   (단, 6자 미만이거나 GENERIC_CUSTOMER_NAME_BLOCKLIST 에 있는 값은 제외)
+   *  - "alias"      : 수동 alias 사전 매핑 (예: "국회" ↔ "국회사무처")
+   *  - "contains"   : 정규화값이 한쪽 안에 substring 으로 포함되는 경우
+   *  - "fuzzy"      : Levenshtein 기반 유사도 임계 이상 (오탐 방지를 위해 보수적 임계 사용)
    *
    * 매칭 자체에 실패한 agency 는 응답 매핑에 포함되지 않으므로
    * "none" 은 의미상으로만 존재한다(타입 union 에는 포함하지 않는다).
    */
-  matchType: "exact" | "normalized" | "contains";
+  matchType: "exact" | "normalized" | "alias" | "contains" | "fuzzy";
 };
 
 /**
@@ -193,4 +194,243 @@ export function formatAccountTypeLabel(accountType: string | null | undefined): 
   if (lower === "named") return "Named";
   if (lower === "nonnamed" || lower === "non-named") return "Non Named";
   return trimmed;
+}
+
+/** 매칭 단계 → 한글 라벨 (디버그/툴팁용). */
+export function formatMatchTypeLabel(
+  matchType: MatchedCustomer["matchType"] | "unmatched" | null | undefined,
+): string {
+  switch (matchType) {
+    case "exact":
+      return "정확 일치";
+    case "normalized":
+      return "정규화 일치";
+    case "alias":
+      return "동의어 사전";
+    case "contains":
+      return "포함관계 일치";
+    case "fuzzy":
+      return "유사도 매칭";
+    default:
+      return "미매칭";
+  }
+}
+
+// ============================================================================
+// Alias / Fuzzy 매칭
+// ----------------------------------------------------------------------------
+// 1) ALIAS_GROUPS: 수동으로 관리하는 동의어 묶음.
+//    예) "국회" / "국회사무처" / "대한민국국회" 는 같은 기관으로 본다.
+//    각 그룹의 모든 멤버는 다른 멤버들을 alias 로 가진다(자동 양방향).
+// 2) findAliasCandidates(agency, lookup): agency 와 같은 그룹의 멤버 중
+//    customer_accounts 에 존재하는 row 를 반환.
+// 3) findFuzzyMatch(agencyNorm, rows): 정규화값 기반 Levenshtein 유사도가
+//    임계(LEN/LEN 비율 모두) 를 통과하는 row 만 매칭.
+// ============================================================================
+
+/**
+ * 동의어 그룹.
+ *
+ * 한 줄에 들어간 이름들은 같은 기관으로 본다. 각 멤버는 자동 양방향 alias 가 된다.
+ *
+ * 운영 중 누락 사례가 보고되면 이 배열에 추가하면 된다(코드 변경 + 배포 필요).
+ * 추후 Supabase 의 customer_accounts 에 alias 컬럼을 둘 수 있으나, 1차에서는 코드 dict 로 충분.
+ */
+const ALIAS_GROUPS: string[][] = [
+  ["국회", "국회사무처", "대한민국국회", "국회예산정책처", "국회입법조사처", "국회도서관"],
+  ["서울특별시", "서울시", "서울"],
+  ["부산광역시", "부산시", "부산"],
+  ["대구광역시", "대구시", "대구"],
+  ["인천광역시", "인천시", "인천"],
+  ["광주광역시", "광주시", "광주"],
+  ["대전광역시", "대전시", "대전"],
+  ["울산광역시", "울산시", "울산"],
+  ["세종특별자치시", "세종시", "세종"],
+  ["경기도", "경기"],
+  ["강원특별자치도", "강원도", "강원"],
+  ["충청북도", "충북"],
+  ["충청남도", "충남"],
+  ["전라북도", "전북", "전북특별자치도"],
+  ["전라남도", "전남"],
+  ["경상북도", "경북"],
+  ["경상남도", "경남"],
+  ["제주특별자치도", "제주도", "제주"],
+  ["한국교육학술정보원", "KERIS", "keris"],
+  ["한국지능정보사회진흥원", "NIA", "nia", "한국정보화진흥원"],
+  ["한국전자통신연구원", "ETRI", "etri"],
+  ["한국과학기술정보연구원", "KISTI", "kisti"],
+  ["한국인터넷진흥원", "KISA", "kisa"],
+  ["국민건강보험공단", "건강보험공단"],
+  ["한국전력공사", "한전", "KEPCO", "kepco"],
+  ["한국가스공사", "가스공사"],
+  ["한국수자원공사", "수자원공사", "K-water", "k-water"],
+  ["한국토지주택공사", "LH", "lh", "토지주택공사"],
+  ["한국도로공사", "도로공사"],
+  ["한국철도공사", "철도공사", "코레일", "korail", "KORAIL"],
+];
+
+/**
+ * customer_name_norm 단위 alias 맵.
+ *  key: 정규화된 멤버 이름 (한 줄 내의 임의 멤버)
+ *  value: 같은 그룹의 다른 멤버들의 정규화된 이름 (자기 자신 포함)
+ */
+function buildAliasNormMap(): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const group of ALIAS_GROUPS) {
+    const norms = group.map((name) => normalizeCustomerName(name)).filter((n) => n.length > 0);
+    if (norms.length < 2) continue;
+    for (const member of norms) {
+      // 같은 그룹 내 모든 정규화 이름을 후보로 둔다 (자기 자신 포함; lookup 단순화 용도)
+      const existing = map.get(member);
+      const merged = existing ? [...new Set([...existing, ...norms])] : [...norms];
+      map.set(member, merged);
+    }
+  }
+  return map;
+}
+
+const ALIAS_NORM_MAP = buildAliasNormMap();
+
+/**
+ * agency 의 정규화 이름이 alias 그룹에 속해 있을 때, 같은 그룹의 다른 정규화 이름 중
+ * lookup.byNormalized 에 존재하는 첫 row 를 반환한다.
+ */
+export function matchAliasFromAgency(
+  agency: string | null | undefined,
+  lookup: CustomerLookup,
+): MatchedCustomer | null {
+  const trimmed = (agency ?? "").trim();
+  if (!trimmed) return null;
+  const norm = normalizeCustomerName(trimmed);
+  if (!norm) return null;
+
+  const candidates = ALIAS_NORM_MAP.get(norm);
+  if (!candidates || candidates.length === 0) return null;
+
+  for (const candidateNorm of candidates) {
+    if (candidateNorm === norm) continue; // 정규화 매칭은 이미 시도됨
+    const row = lookup.byNormalized.get(candidateNorm);
+    if (row) return toMatched(row, "alias");
+  }
+  return null;
+}
+
+/**
+ * 양방향 contains 매칭 — agency 안에 customer 가 들어가거나, customer 안에 agency 가 들어가는 경우.
+ *
+ * 기존 findBestContainsMatch 는 agency 안에 customer 가 들어가는 한 방향만 허용했다.
+ * "국회사무처" → "국회" 같은 케이스는 정규화 길이가 너무 짧아 실용적이지 않으므로
+ * alias 사전이 일차적으로 처리한다. 이 함수는 두 정규화 이름이 모두 길이 임계를 넘는 경우에 한해
+ * 반대 방향(customer 안에 agency)도 허용해 매칭률을 끌어올린다.
+ *
+ * 길이/블록리스트 규칙은 동일.
+ */
+export function findBestBidirectionalContainsMatch(
+  agencyNorm: string,
+  rows: CustomerAccountRow[],
+): { row: CustomerAccountRow; direction: "customer-in-agency" | "agency-in-customer" } | null {
+  const a = (agencyNorm ?? "").trim();
+  if (a.length < CONTAINS_MIN_LEN) return null;
+
+  let best: { row: CustomerAccountRow; direction: "customer-in-agency" | "agency-in-customer" } | null = null;
+  let bestLen = 0;
+
+  for (const row of rows) {
+    const cn = (row.customer_name_norm ?? "").trim();
+    if (cn.length < CONTAINS_MIN_LEN) continue;
+    if (GENERIC_CUSTOMER_NAME_BLOCKLIST.has(cn)) continue;
+
+    if (a.includes(cn)) {
+      // customer ⊆ agency: 가장 안전한 방향. 후보 중 가장 긴 customer 우선.
+      if (cn.length > bestLen) {
+        best = { row, direction: "customer-in-agency" };
+        bestLen = cn.length;
+      }
+    } else if (cn.includes(a)) {
+      // agency ⊆ customer: 반대 방향. customer 가 agency 보다 너무 길면 의미가 약하므로
+      // 길이 차이 임계(< 4) 이내로 제한해 오탐 줄임.
+      if (cn.length - a.length <= 4 && a.length > bestLen) {
+        best = { row, direction: "agency-in-customer" };
+        bestLen = a.length;
+      }
+    }
+  }
+  return best;
+}
+
+/** 두 문자열의 Levenshtein 거리. small string (≤ 64) 가정. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  const al = a.length;
+  const bl = b.length;
+  if (al === 0) return bl;
+  if (bl === 0) return al;
+  // single-row DP
+  let prev = new Array(bl + 1);
+  for (let j = 0; j <= bl; j += 1) prev[j] = j;
+  for (let i = 1; i <= al; i += 1) {
+    const curr = new Array(bl + 1);
+    curr[0] = i;
+    const ai = a.charCodeAt(i - 1);
+    for (let j = 1; j <= bl; j += 1) {
+      const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    prev = curr;
+  }
+  return prev[bl];
+}
+
+/**
+ * 정규화 문자열 기반 유사도. 1.0 이 완전 일치, 0.0 이 전혀 다른 경우.
+ * Levenshtein 거리 / max(len) 으로 normalize.
+ */
+export function similarityScore(a: string, b: string): number {
+  if (!a && !b) return 1;
+  if (!a || !b) return 0;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  const dist = levenshtein(a, b);
+  return 1 - dist / maxLen;
+}
+
+/** Fuzzy 매칭 임계치. 짧은 이름(< 8자)은 더 보수적으로. */
+function fuzzyThresholdFor(len: number): number {
+  if (len < 6) return 0.95; // 너무 짧으면 사실상 alias 만 통과 가능
+  if (len < 10) return 0.9;
+  return 0.85;
+}
+
+/**
+ * 유사도 기반 매칭. 후보 row 중 임계치를 통과하는 가장 높은 점수의 row 반환.
+ *
+ * 오탐 방지를 위해 다음 가드 적용:
+ *  - 길이 차이 > 3 이면 후보에서 제외
+ *  - 길이 6 미만 양쪽은 매칭 금지
+ *  - 임계치는 길이별로 동적
+ */
+export function findBestFuzzyMatch(
+  agencyNorm: string,
+  rows: CustomerAccountRow[],
+): { row: CustomerAccountRow; score: number } | null {
+  const a = (agencyNorm ?? "").trim();
+  if (a.length < 6) return null;
+
+  let best: { row: CustomerAccountRow; score: number } | null = null;
+
+  for (const row of rows) {
+    const cn = (row.customer_name_norm ?? "").trim();
+    if (cn.length < 6) continue;
+    if (GENERIC_CUSTOMER_NAME_BLOCKLIST.has(cn)) continue;
+    if (Math.abs(cn.length - a.length) > 3) continue;
+
+    const score = similarityScore(a, cn);
+    const minLen = Math.min(a.length, cn.length);
+    const threshold = fuzzyThresholdFor(minLen);
+    if (score < threshold) continue;
+    if (!best || score > best.score) {
+      best = { row, score };
+    }
+  }
+  return best;
 }

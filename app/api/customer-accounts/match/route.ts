@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildCustomerLookup,
   CONTAINS_MIN_LEN,
-  findBestContainsMatch,
+  findBestBidirectionalContainsMatch,
+  findBestFuzzyMatch,
+  matchAliasFromAgency,
   matchCustomerFromAgency,
   normalizeCustomerName,
   type MatchedCustomer,
@@ -31,7 +33,7 @@ const ALL_CACHE_TTL_MS = 5 * 60 * 1000;
 /**
  * 매칭 단계. "none" 은 응답 map 에는 포함되지 않지만 의미상의 enumeration 으로 둔다.
  */
-export type MatchType = "exact" | "normalized" | "contains" | "none";
+export type MatchType = "exact" | "normalized" | "alias" | "contains" | "fuzzy" | "none";
 
 /** 클라이언트에 내려줄 매칭 결과. customerId 등 내부 식별자는 빼고 화면 표시용 필드만 노출. */
 export type CustomerMatchPayload = Pick<
@@ -45,7 +47,14 @@ export type CustomerMatchResponse = {
   meta: {
     requested: number;
     matched: number;
-    breakdown: { exact: number; normalized: number; contains: number; none: number };
+    breakdown: {
+      exact: number;
+      normalized: number;
+      alias: number;
+      contains: number;
+      fuzzy: number;
+      none: number;
+    };
   };
 };
 
@@ -155,7 +164,11 @@ export async function POST(request: NextRequest) {
   if (cleaned.length === 0) {
     const empty: CustomerMatchResponse = {
       matches: {},
-      meta: { requested: 0, matched: 0, breakdown: { exact: 0, normalized: 0, contains: 0, none: 0 } },
+      meta: {
+        requested: 0,
+        matched: 0,
+        breakdown: { exact: 0, normalized: 0, alias: 0, contains: 0, fuzzy: 0, none: 0 },
+      },
     };
     return NextResponse.json(empty);
   }
@@ -209,6 +222,7 @@ export async function POST(request: NextRequest) {
   let exactCount = 0;
   let normalizedCount = 0;
 
+  // 1단계: exact / normalized
   for (const agency of uniqueAgencies) {
     const m = matchCustomerFromAgency(agency, lookup);
     if (!m) {
@@ -220,7 +234,6 @@ export async function POST(request: NextRequest) {
     } else if (m.matchType === "normalized") {
       normalizedCount += 1;
     }
-    // matchCustomerFromAgency 가 contains 까지는 만들지 않는다. exact/normalized 만.
     matches[agency] = {
       customerName: m.customerName,
       accountType: m.accountType,
@@ -231,35 +244,96 @@ export async function POST(request: NextRequest) {
     };
   }
 
-  // 3단계: contains 매칭 — exact/normalized 에서 실패한 agency 만 대상.
+  // 2단계: alias 사전 (예: "국회" ↔ "국회사무처") — 1단계 lookup 만으로 검색
+  let aliasCount = 0;
+  if (stillMissing.length > 0) {
+    const remaining: string[] = [];
+    for (const agency of stillMissing) {
+      const m = matchAliasFromAgency(agency, lookup);
+      if (!m) {
+        remaining.push(agency);
+        continue;
+      }
+      matches[agency] = pickPayload(
+        // matchAliasFromAgency 는 row 가 아니라 MatchedCustomer 를 반환하므로
+        // pickPayload 가 row 형태를 기대하는 것을 우회: 직접 payload 로 변환.
+        {
+          id: m.customerId,
+          customer_name: m.customerName,
+          customer_name_norm: "",
+          customer_group: null,
+          account_type: m.accountType,
+          territory: m.territory,
+          region_group: m.regionGroup,
+          region: m.region,
+          address: null,
+          business_number: null,
+          source_file: null,
+          updated_at: null,
+        } as CustomerAccountRow,
+        "alias",
+      );
+      aliasCount += 1;
+      console.log(`alias match: "${agency}" -> "${m.customerName}"`);
+    }
+    stillMissing.splice(0, stillMissing.length, ...remaining);
+  }
+
+  // 3단계: contains 매칭(양방향) — alias 까지도 실패한 agency 만 대상.
   // 후보 풀로 customer_accounts 전체를 사용한다(5분 모듈 캐시).
   let containsCount = 0;
+  let fuzzyCount = 0;
   if (stillMissing.length > 0) {
     const all = await getAllCustomerRows(supabase);
     if (all.error) {
       console.warn(
-        `[/api/customer-accounts/match] contains 풀 fetch 실패, contains 단계는 건너뜀: ${all.error}`,
+        `[/api/customer-accounts/match] contains/fuzzy 풀 fetch 실패, 두 단계 모두 건너뜀: ${all.error}`,
       );
     } else {
       console.log(
-        `[/api/customer-accounts/match] contains pool=${all.rows.length} (cached=${all.cached}) missing=${stillMissing.length}`,
+        `[/api/customer-accounts/match] contains/fuzzy pool=${all.rows.length} (cached=${all.cached}) missing=${stillMissing.length}`,
       );
+      const remaining: string[] = [];
       for (const agency of stillMissing) {
         const norm = normalizeCustomerName(agency);
-        if (norm.length < CONTAINS_MIN_LEN) continue;
-        const found = findBestContainsMatch(norm, all.rows);
-        if (!found) continue;
-        matches[agency] = pickPayload(found, "contains");
+        if (norm.length < CONTAINS_MIN_LEN) {
+          remaining.push(agency);
+          continue;
+        }
+        const found = findBestBidirectionalContainsMatch(norm, all.rows);
+        if (!found) {
+          remaining.push(agency);
+          continue;
+        }
+        matches[agency] = pickPayload(found.row, "contains");
         containsCount += 1;
-        console.log(`contains match: "${agency}" -> "${found.customer_name}"`);
+        console.log(
+          `contains match (${found.direction}): "${agency}" -> "${found.row.customer_name}"`,
+        );
+      }
+      stillMissing.splice(0, stillMissing.length, ...remaining);
+
+      // 4단계: fuzzy 매칭 — 보수적 임계치 적용
+      for (const agency of stillMissing) {
+        const norm = normalizeCustomerName(agency);
+        if (norm.length < 6) continue;
+        const found = findBestFuzzyMatch(norm, all.rows);
+        if (!found) continue;
+        matches[agency] = pickPayload(found.row, "fuzzy");
+        fuzzyCount += 1;
+        console.log(
+          `fuzzy match (sim=${found.score.toFixed(3)}): "${agency}" -> "${found.row.customer_name}"`,
+        );
       }
     }
   }
 
-  const noneCount = uniqueAgencies.length - (exactCount + normalizedCount + containsCount);
+  const matchedTotal = exactCount + normalizedCount + aliasCount + containsCount + fuzzyCount;
+  const noneCount = uniqueAgencies.length - matchedTotal;
   console.log(
-    `[/api/customer-accounts/match] matched total=${exactCount + normalizedCount + containsCount} ` +
-      `(exact=${exactCount}, normalized=${normalizedCount}, contains=${containsCount}, none=${noneCount}) / ` +
+    `[/api/customer-accounts/match] matched total=${matchedTotal} ` +
+      `(exact=${exactCount}, normalized=${normalizedCount}, alias=${aliasCount}, ` +
+      `contains=${containsCount}, fuzzy=${fuzzyCount}, none=${noneCount}) / ` +
       `requested=${uniqueAgencies.length}`,
   );
 
@@ -267,11 +341,13 @@ export async function POST(request: NextRequest) {
     matches,
     meta: {
       requested: uniqueAgencies.length,
-      matched: exactCount + normalizedCount + containsCount,
+      matched: matchedTotal,
       breakdown: {
         exact: exactCount,
         normalized: normalizedCount,
+        alias: aliasCount,
         contains: containsCount,
+        fuzzy: fuzzyCount,
         none: noneCount,
       },
     },

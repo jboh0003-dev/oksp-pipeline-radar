@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import BudgetTable from "@/components/BudgetTable";
 import DashboardLoading from "@/components/DashboardLoading";
 import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
@@ -14,6 +15,7 @@ import {
   type Notice,
   type ProductFilter as ProductFilterValue,
 } from "@/data/sampleNotices";
+import { parseBudgetAmount } from "@/lib/budget";
 import { fetchLastCollectionRun } from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
@@ -35,11 +37,18 @@ import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
+/** 화면 상단 탭. "공고" 는 기본 테이블/카드, "예산" 은 예산 전용 테이블. */
+type ViewTab = "notices" | "budget";
+
+/** "본부 매칭 여부" 드롭다운 값. */
+type MatchStatusFilter = "all" | "matched" | "unmatched";
+
 function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
   const counts: DashboardSummaryCounts = {
     activeTotal: 0,
     contrabass: 0,
     viola: 0,
+    totalBudgetWon: 0,
   };
 
   for (const notice of notices) {
@@ -50,6 +59,8 @@ function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts 
     if (notice.relatedProducts.includes("VIOLA")) {
       counts.viola += 1;
     }
+    const amount = parseBudgetAmount(notice.budget);
+    if (amount && amount > 0) counts.totalBudgetWon += amount;
   }
 
   return counts;
@@ -101,6 +112,22 @@ function matchesProduct(notice: DisplayNotice, product: ProductFilterValue) {
     return notice.relatedProducts.includes("VIOLA");
   }
   return false;
+}
+
+/**
+ * 본부 매칭 상태 필터.
+ *  - "all"       : 전부 표시
+ *  - "matched"   : 담당본부(테리토리) 가 채워진 공고만
+ *  - "unmatched" : 담당본부가 비어있는 공고만 (고객사 매칭 자체가 실패한 케이스도 포함)
+ */
+function matchesMatchStatus(
+  notice: DisplayNotice,
+  status: MatchStatusFilter,
+): boolean {
+  if (status === "all") return true;
+  const territory = notice.customer?.territory?.trim() ?? "";
+  if (status === "matched") return territory.length > 0;
+  return territory.length === 0;
 }
 
 function normalizeNotice(notice: Notice): DisplayNotice {
@@ -166,9 +193,16 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
+  const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
+  const [budgetSortState, setBudgetSortState] = useState<SortState>({
+    column: "budget",
+    direction: "desc",
+  });
+  const [showMatchSource, setShowMatchSource] = useState(false);
+  const [view, setView] = useState<ViewTab>("notices");
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
@@ -221,10 +255,48 @@ export default function Home() {
     const filtered = pool.filter(
       (notice) =>
         matchesProduct(notice, selectedProduct) &&
+        matchesMatchStatus(notice, matchStatusFilter) &&
         (!showSavedOnly || savedIds.includes(notice.id)),
     );
     return sortNoticesByState(filtered, sortState);
-  }, [candidates, searchQuery, selectedProduct, showSavedOnly, savedIds, sortState]);
+  }, [
+    candidates,
+    searchQuery,
+    selectedProduct,
+    matchStatusFilter,
+    showSavedOnly,
+    savedIds,
+    sortState,
+  ]);
+
+  /**
+   * 예산 탭에서 표시할 공고 목록.
+   *  - 공고 탭과 동일한 필터(검색/제품/매칭상태/관심)를 그대로 적용한다.
+   *  - 정렬은 별도의 budgetSortState 로 관리하며 기본값은 예산 내림차순.
+   *  - 예산이 없는 공고는 budget 정렬 시 noticeSorting 의 isEmptyForColumn 처리에 의해 자동으로 맨 뒤.
+   */
+  const filteredBudgetNotices = useMemo(() => {
+    const query = searchQuery.trim();
+    let pool = candidates;
+    if (query) {
+      pool = pool.filter((notice) => matchesSearch(notice, query));
+    }
+    const filtered = pool.filter(
+      (notice) =>
+        matchesProduct(notice, selectedProduct) &&
+        matchesMatchStatus(notice, matchStatusFilter) &&
+        (!showSavedOnly || savedIds.includes(notice.id)),
+    );
+    return sortNoticesByState(filtered, budgetSortState);
+  }, [
+    candidates,
+    searchQuery,
+    selectedProduct,
+    matchStatusFilter,
+    showSavedOnly,
+    savedIds,
+    budgetSortState,
+  ]);
 
   const hasActiveSearch = searchQuery.trim().length > 0;
   const matchesExceptSearch = useMemo(
@@ -232,9 +304,10 @@ export default function Home() {
       candidates.filter(
         (notice) =>
           matchesProduct(notice, selectedProduct) &&
+          matchesMatchStatus(notice, matchStatusFilter) &&
           (!showSavedOnly || savedIds.includes(notice.id)),
       ),
-    [candidates, selectedProduct, showSavedOnly, savedIds],
+    [candidates, selectedProduct, matchStatusFilter, showSavedOnly, savedIds],
   );
 
   const handleToggleSave = (id: string) => {
@@ -251,6 +324,10 @@ export default function Home() {
 
   const handleSortChange = (column: SortColumn) => {
     setSortState((prev) => toggleSortState(prev, column));
+  };
+
+  const handleBudgetSortChange = (column: SortColumn) => {
+    setBudgetSortState((prev) => toggleSortState(prev, column));
   };
 
   if (isLoading) {
@@ -289,8 +366,24 @@ export default function Home() {
 
         <SummaryCards {...summaryCounts} />
 
+        {/* 탭: 공고 / 예산.
+            예산 탭은 예산 정렬·표시에 특화된 BudgetTable 을 보여준다.
+            모바일에서도 탭 자체는 노출하되, 예산 탭에서도 동일하게 BudgetTable 가로 스크롤 형태로 표시. */}
+        <div className="mb-3 flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:w-fit">
+          <ViewTabButton
+            active={view === "notices"}
+            onClick={() => setView("notices")}
+            label="공고"
+          />
+          <ViewTabButton
+            active={view === "budget"}
+            onClick={() => setView("budget")}
+            label="예산"
+          />
+        </div>
+
         {/*
-          검색/관심/제품 필터/새로고침은 PC 에서 한 줄, 좁은 화면에서 두 줄로 배치한다.
+          검색/관심/제품 필터/매칭 상태 필터/디버그 토글/새로고침은 PC 에서 한 줄, 좁은 화면에서 두 줄로 배치한다.
           정렬은 PC 테이블 헤더에서 처리하므로 이 영역에서는 select 를 두지 않는다.
         */}
         <section className="mb-5 min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-5 sm:py-4">
@@ -317,6 +410,43 @@ export default function Home() {
 
               <ProductFilter selected={selectedProduct} onChange={setSelectedProduct} />
 
+              {/* 본부 매칭 여부 드롭다운 */}
+              <label className="relative inline-flex items-center">
+                <span className="sr-only">매칭 상태</span>
+                <select
+                  value={matchStatusFilter}
+                  onChange={(event) =>
+                    setMatchStatusFilter(event.target.value as MatchStatusFilter)
+                  }
+                  title="기관/고객사 → 담당본부 매칭 상태로 필터"
+                  className="h-9 cursor-pointer appearance-none whitespace-nowrap rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:border-blue-400/40 dark:focus:border-blue-400 dark:focus:ring-blue-400/30 sm:text-sm"
+                >
+                  <option value="all">매칭 상태 · 전체</option>
+                  <option value="matched">본부 매칭 완료</option>
+                  <option value="unmatched">본부 매칭 안 됨</option>
+                </select>
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute right-2.5 text-[10px] text-slate-400 dark:text-slate-500"
+                >
+                  ▼
+                </span>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setShowMatchSource((prev) => !prev)}
+                aria-pressed={showMatchSource}
+                title="매칭근거(exact / alias / contains / fuzzy / unmatched) 컬럼을 표시합니다."
+                className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition sm:text-sm ${
+                  showMatchSource
+                    ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
+                }`}
+              >
+                {showMatchSource ? "매칭근거 ON" : "매칭근거"}
+              </button>
+
               <button
                 type="button"
                 onClick={handleRefresh}
@@ -339,52 +469,94 @@ export default function Home() {
             기본은 "추천 높은순" 이며 모바일에서 다른 정렬로 바꿀 수단은 두지 않는다.
           */}
           <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500 md:hidden">
-            정렬: 추천 등급 높은순
+            정렬: {view === "budget" ? "예산 큰 금액 순" : "추천 등급 높은순"}
           </p>
         </section>
 
-        {/* 모바일: 기존 카드 UI */}
-        <section className="space-y-4 sm:space-y-5 md:hidden">
-          {filteredNotices.length > 0 ? (
-            filteredNotices.map((notice) => (
-              <NoticeCard
-                key={notice.id}
-                notice={notice}
-                isSaved={savedIds.includes(notice.id)}
-                onToggleSave={handleToggleSave}
-              />
-            ))
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
-              <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                검색 결과가 없습니다
-              </p>
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                {showSavedOnly
-                  ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
-                  : hasActiveSearch && matchesExceptSearch.length > 0
-                    ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
-                    : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
-              </p>
-            </div>
-          )}
-        </section>
+        {view === "budget" ? (
+          <section>
+            <BudgetTable
+              notices={filteredBudgetNotices}
+              sortState={budgetSortState}
+              onSortChange={handleBudgetSortChange}
+            />
+            <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+              예산 합계와 카드 통계는 화면 상단 요약 영역의 “예산 합계” 카드에서 확인할 수 있습니다.
+              예산이 “미공개” 또는 “정보 없음” 인 공고는 정렬 시 항상 마지막에 표시됩니다.
+            </p>
+          </section>
+        ) : (
+          <>
+            {/* 모바일: 기존 카드 UI */}
+            <section className="space-y-4 sm:space-y-5 md:hidden">
+              {filteredNotices.length > 0 ? (
+                filteredNotices.map((notice) => (
+                  <NoticeCard
+                    key={notice.id}
+                    notice={notice}
+                    isSaved={savedIds.includes(notice.id)}
+                    onToggleSave={handleToggleSave}
+                  />
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
+                  <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                    검색 결과가 없습니다
+                  </p>
+                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                    {showSavedOnly
+                      ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
+                      : hasActiveSearch && matchesExceptSearch.length > 0
+                        ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
+                        : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
+                  </p>
+                </div>
+              )}
+            </section>
 
-        {/* PC/노트북: 테이블 UI (헤더 클릭으로 정렬) */}
-        <section className="hidden md:block">
-          <NoticeTable
-            notices={filteredNotices}
-            savedIds={savedIds}
-            onToggleSave={handleToggleSave}
-            sortState={sortState}
-            onSortChange={handleSortChange}
-          />
-        </section>
+            {/* PC/노트북: 테이블 UI (헤더 클릭으로 정렬) */}
+            <section className="hidden md:block">
+              <NoticeTable
+                notices={filteredNotices}
+                savedIds={savedIds}
+                onToggleSave={handleToggleSave}
+                sortState={sortState}
+                onSortChange={handleSortChange}
+                showMatchSource={showMatchSource}
+              />
+            </section>
+          </>
+        )}
 
         <p className="mt-8 text-center text-[11px] text-slate-400 dark:text-slate-500">
           {dataSource === "supabase" ? "Supabase · 나라장터 연동" : "샘플 데이터 기반 MVP"}
         </p>
       </main>
     </div>
+  );
+}
+
+function ViewTabButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex min-w-[64px] items-center justify-center whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-semibold transition ${
+        active
+          ? "bg-blue-600 text-white shadow-sm dark:bg-blue-500"
+          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+      }`}
+    >
+      {label}
+    </button>
   );
 }

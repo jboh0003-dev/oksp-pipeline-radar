@@ -1,4 +1,5 @@
 import type { Notice } from "@/data/sampleNotices";
+import { parseBudgetAmount } from "@/lib/budget";
 import { REOPEN_KEYWORDS } from "@/lib/g2b/constants";
 import type { MatchGrade } from "@/lib/noticeGrades";
 
@@ -168,6 +169,8 @@ export type DashboardSummaryCounts = {
   activeTotal: number;
   contrabass: number;
   viola: number;
+  /** 진행 중 + 제품 매칭된 공고들의 추정금액 합산 (원). 파싱 실패 항목은 0 으로 취급. */
+  totalBudgetWon: number;
 };
 
 const CONTRABASS_FAMILY_NAMES = new Set([
@@ -189,6 +192,7 @@ export function countDashboardSummary(notices: Notice[], now = new Date()): Dash
     activeTotal: 0,
     contrabass: 0,
     viola: 0,
+    totalBudgetWon: 0,
   };
 
   for (const notice of notices) {
@@ -198,6 +202,8 @@ export function countDashboardSummary(notices: Notice[], now = new Date()): Dash
     counts.activeTotal += 1;
     if (hasContrabassFamily(notice)) counts.contrabass += 1;
     if (hasViola(notice)) counts.viola += 1;
+    const amount = parseBudgetAmount(notice.budget);
+    if (amount && amount > 0) counts.totalBudgetWon += amount;
   }
 
   return counts;

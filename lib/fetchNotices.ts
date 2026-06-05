@@ -19,7 +19,7 @@ type CustomerMatchPayload = {
   territory: string | null;
   regionGroup: string | null;
   region: string | null;
-  matchType: "exact" | "normalized" | "contains";
+  matchType: "exact" | "normalized" | "alias" | "contains" | "fuzzy";
 };
 
 async function fetchMatchedCustomers(
