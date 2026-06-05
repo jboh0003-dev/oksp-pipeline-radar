@@ -3,6 +3,7 @@
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
 import { formatAccountTypeLabel } from "@/lib/customerMatching";
 import { getMatchGradeStyle, toDisplayMatchGrade } from "@/lib/noticeGrades";
+import type { SortColumn, SortState } from "@/lib/noticeSorting";
 import {
   getDaysUntilDeadline,
   getDueStatus,
@@ -75,7 +76,132 @@ type Props = {
   notices: Notice[];
   savedIds: string[];
   onToggleSave: (id: string) => void;
+  /**
+   * 현재 정렬 상태. 없으면 헤더 정렬 UI 를 비활성화한다(읽기 전용 테이블).
+   * 정렬 자체는 호출부(page.tsx)에서 수행하므로 이 컴포넌트는 표시만 담당.
+   */
+  sortState?: SortState;
+  /** 헤더 클릭 시 호출. 같은 컬럼이면 방향 토글, 다른 컬럼이면 자연스러운 방향으로 전환. */
+  onSortChange?: (column: SortColumn) => void;
 };
+
+/**
+ * 정렬 가능한 컬럼 헤더.
+ *
+ * - 활성 컬럼: 라벨 + 진한 화살표(▲ / ▼)
+ * - 비활성 컬럼: 라벨 + 흐린 ↕ 힌트
+ * - hover/focus 시 배경 강조 (라이트/다크 모두 처리)
+ */
+function SortableHeader({
+  column,
+  label,
+  state,
+  onSortChange,
+  align = "left",
+  whitespace,
+}: {
+  column: SortColumn;
+  label: string;
+  state?: SortState;
+  onSortChange?: (column: SortColumn) => void;
+  align?: "left" | "right" | "center";
+  whitespace?: string;
+}) {
+  const isActive = state?.column === column;
+  const direction = isActive ? state?.direction : null;
+  const ariaSort: React.AriaAttributes["aria-sort"] =
+    isActive && direction
+      ? direction === "asc"
+        ? "ascending"
+        : "descending"
+      : "none";
+
+  const handleClick = () => {
+    if (onSortChange) onSortChange(column);
+  };
+
+  const alignmentClass =
+    align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start";
+  const cellAlignClass =
+    align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left";
+  const wsClass = whitespace ?? "whitespace-nowrap";
+
+  // onSortChange 가 없으면 클릭 불가능한 일반 th 처럼 렌더 (호환용)
+  if (!onSortChange) {
+    return (
+      <th scope="col" className={`${wsClass} px-3 py-3.5 ${cellAlignClass}`}>
+        {label}
+      </th>
+    );
+  }
+
+  return (
+    <th scope="col" aria-sort={ariaSort} className={`${wsClass} px-0 py-0 ${cellAlignClass}`}>
+      <button
+        type="button"
+        onClick={handleClick}
+        className={`group inline-flex w-full ${alignmentClass} items-center gap-1 px-3 py-3.5 text-left text-xs font-semibold uppercase tracking-wide transition focus:outline-none ${
+          isActive
+            ? "text-blue-700 dark:text-blue-300"
+            : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+        } hover:bg-blue-50/60 focus-visible:bg-blue-50/80 dark:hover:bg-slate-800/80 dark:focus-visible:bg-slate-800`}
+      >
+        <span>{label}</span>
+        <SortIndicator active={isActive} direction={direction ?? null} />
+      </button>
+    </th>
+  );
+}
+
+function SortIndicator({
+  active,
+  direction,
+}: {
+  active: boolean;
+  direction: "asc" | "desc" | null;
+}) {
+  if (active && direction === "asc") {
+    return (
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        fill="currentColor"
+        aria-hidden
+        className="shrink-0"
+      >
+        <path d="M5 2.2 8.6 7H1.4z" />
+      </svg>
+    );
+  }
+  if (active && direction === "desc") {
+    return (
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        fill="currentColor"
+        aria-hidden
+        className="shrink-0"
+      >
+        <path d="M5 7.8 1.4 3h7.2z" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="currentColor"
+      aria-hidden
+      className="shrink-0 text-slate-300 transition-opacity dark:text-slate-600 group-hover:text-slate-400 dark:group-hover:text-slate-500"
+    >
+      <path d="M5 1.5 7.5 4.5h-5z" />
+      <path d="M5 8.5 2.5 5.5h5z" />
+    </svg>
+  );
+}
 
 function NamedBadge({ accountType }: { accountType: string | null | undefined }) {
   const label = formatAccountTypeLabel(accountType);
@@ -103,7 +229,13 @@ function NamedBadge({ accountType }: { accountType: string | null | undefined })
   );
 }
 
-export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) {
+export default function NoticeTable({
+  notices,
+  savedIds,
+  onToggleSave,
+  sortState,
+  onSortChange,
+}: Props) {
   if (notices.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
@@ -140,36 +272,67 @@ export default function NoticeTable({ notices, savedIds, onToggleSave }: Props) 
           </colgroup>
           <thead className="bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
             <tr>
+              {/* 상태 컬럼은 정렬 대상이 아님 (마감/임박 배지) */}
               <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
                 상태
               </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
-                추천
-              </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
-                제품
-              </th>
-              <th scope="col" className="px-3 py-3.5 text-left">
-                공고명
-              </th>
-              <th scope="col" className="px-3 py-3.5 text-left">
-                기관/고객사
-              </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
-                담당본부
-              </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
-                Named
-              </th>
-              <th scope="col" className="px-3 py-3.5 text-left">
-                지역
-              </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
-                게시일
-              </th>
-              <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left">
-                마감일
-              </th>
+              <SortableHeader
+                column="fit"
+                label="추천"
+                state={sortState}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                column="product"
+                label="제품"
+                state={sortState}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                column="title"
+                label="공고명"
+                state={sortState}
+                onSortChange={onSortChange}
+                whitespace=""
+              />
+              <SortableHeader
+                column="agency"
+                label="기관/고객사"
+                state={sortState}
+                onSortChange={onSortChange}
+                whitespace=""
+              />
+              <SortableHeader
+                column="territory"
+                label="담당본부"
+                state={sortState}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                column="named"
+                label="Named"
+                state={sortState}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                column="region"
+                label="지역"
+                state={sortState}
+                onSortChange={onSortChange}
+                whitespace=""
+              />
+              <SortableHeader
+                column="noticeDate"
+                label="게시일"
+                state={sortState}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                column="deadline"
+                label="마감일"
+                state={sortState}
+                onSortChange={onSortChange}
+              />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-white/5">

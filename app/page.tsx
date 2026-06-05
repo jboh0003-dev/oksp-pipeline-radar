@@ -19,42 +19,21 @@ import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
 import { evaluateMatchGrade } from "@/lib/noticeGrades";
 import {
+  DEFAULT_SORT_STATE,
+  sortNoticesByState,
+  toggleSortState,
+  type SortColumn,
+  type SortState,
+} from "@/lib/noticeSorting";
+import {
   getDueStatus,
   hasRealProductMatch,
-  isMissingDueDate,
   isTestNoticeUrl,
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
-
-type SortOption =
-  | "fit_desc"
-  | "fit_asc"
-  | "notice_desc"
-  | "due_asc"
-  | "due_desc";
-
-const SORT_OPTIONS: Array<{ id: SortOption; label: string }> = [
-  { id: "fit_desc", label: "적합도 높은순" },
-  { id: "fit_asc", label: "적합도 낮은순" },
-  { id: "notice_desc", label: "게시일 최신순" },
-  { id: "due_asc", label: "마감일 가까운순" },
-  { id: "due_desc", label: "마감일 먼순" },
-];
-
-function deadlineSortKey(deadline: string): string {
-  if (isMissingDueDate(deadline)) return "";
-  return deadline.includes("T") ? deadline.slice(0, 10) : deadline;
-}
-
-function noticeDateSortKey(noticeDate: string | null | undefined): string {
-  if (!noticeDate) return "";
-  const trimmed = noticeDate.trim();
-  if (!trimmed) return "";
-  return trimmed.includes("T") ? trimmed.slice(0, 10) : trimmed;
-}
 
 function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
   const counts: DashboardSummaryCounts = {
@@ -74,85 +53,6 @@ function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts 
   }
 
   return counts;
-}
-
-function partitionByDateKey(
-  notices: DisplayNotice[],
-  getKey: (notice: DisplayNotice) => string,
-): { withKey: DisplayNotice[]; withoutKey: DisplayNotice[] } {
-  const withKey: DisplayNotice[] = [];
-  const withoutKey: DisplayNotice[] = [];
-  for (const notice of notices) {
-    if (getKey(notice)) withKey.push(notice);
-    else withoutKey.push(notice);
-  }
-  return { withKey, withoutKey };
-}
-
-function sortNoticesByOption(
-  notices: DisplayNotice[],
-  option: SortOption,
-): DisplayNotice[] {
-  if (option === "fit_desc") {
-    return [...notices].sort((a, b) => {
-      if (b.fitScore !== a.fitScore) return b.fitScore - a.fitScore;
-      const aKey = deadlineSortKey(a.deadline);
-      const bKey = deadlineSortKey(b.deadline);
-      if (!aKey && !bKey) return 0;
-      if (!aKey) return 1;
-      if (!bKey) return -1;
-      return aKey.localeCompare(bKey);
-    });
-  }
-
-  if (option === "fit_asc") {
-    return [...notices].sort((a, b) => {
-      if (a.fitScore !== b.fitScore) return a.fitScore - b.fitScore;
-      const aKey = deadlineSortKey(a.deadline);
-      const bKey = deadlineSortKey(b.deadline);
-      if (!aKey && !bKey) return 0;
-      if (!aKey) return 1;
-      if (!bKey) return -1;
-      return aKey.localeCompare(bKey);
-    });
-  }
-
-  if (option === "notice_desc") {
-    const { withKey, withoutKey } = partitionByDateKey(notices, (n) =>
-      noticeDateSortKey(n.noticeDate),
-    );
-    withKey.sort((a, b) => {
-      const aKey = noticeDateSortKey(a.noticeDate);
-      const bKey = noticeDateSortKey(b.noticeDate);
-      const cmp = bKey.localeCompare(aKey);
-      if (cmp !== 0) return cmp;
-      return b.fitScore - a.fitScore;
-    });
-    return [...withKey, ...withoutKey];
-  }
-
-  if (option === "due_asc") {
-    const { withKey, withoutKey } = partitionByDateKey(notices, (n) => deadlineSortKey(n.deadline));
-    withKey.sort((a, b) => {
-      const aKey = deadlineSortKey(a.deadline);
-      const bKey = deadlineSortKey(b.deadline);
-      const cmp = aKey.localeCompare(bKey);
-      if (cmp !== 0) return cmp;
-      return b.fitScore - a.fitScore;
-    });
-    return [...withKey, ...withoutKey];
-  }
-
-  // due_desc
-  const { withKey, withoutKey } = partitionByDateKey(notices, (n) => deadlineSortKey(n.deadline));
-  withKey.sort((a, b) => {
-    const aKey = deadlineSortKey(a.deadline);
-    const bKey = deadlineSortKey(b.deadline);
-    const cmp = bKey.localeCompare(aKey);
-    if (cmp !== 0) return cmp;
-    return b.fitScore - a.fitScore;
-  });
-  return [...withKey, ...withoutKey];
 }
 
 type DisplayNotice = Notice & { rawData?: string };
@@ -268,7 +168,7 @@ export default function Home() {
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
-  const [sortOption, setSortOption] = useState<SortOption>("fit_desc");
+  const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
@@ -323,8 +223,8 @@ export default function Home() {
         matchesProduct(notice, selectedProduct) &&
         (!showSavedOnly || savedIds.includes(notice.id)),
     );
-    return sortNoticesByOption(filtered, sortOption);
-  }, [candidates, searchQuery, selectedProduct, showSavedOnly, savedIds, sortOption]);
+    return sortNoticesByState(filtered, sortState);
+  }, [candidates, searchQuery, selectedProduct, showSavedOnly, savedIds, sortState]);
 
   const hasActiveSearch = searchQuery.trim().length > 0;
   const matchesExceptSearch = useMemo(
@@ -349,11 +249,16 @@ export default function Home() {
     }
   };
 
+  const handleSortChange = (column: SortColumn) => {
+    setSortState((prev) => toggleSortState(prev, column));
+  };
+
   if (isLoading) {
+    // 첫 로딩 시 Header 까지 포함해 전체 영역을 스켈레톤으로 처리한다.
+    // 데이터가 없는 동안 빈 Header(0/0건) 가 잠깐 보이는 것을 막아 체감 속도를 개선.
     return (
       <div className="min-h-full">
         <main className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
-          <Header totalCount={0} filteredCount={0} />
           <DashboardLoading />
         </main>
       </div>
@@ -385,8 +290,8 @@ export default function Home() {
         <SummaryCards {...summaryCounts} />
 
         {/*
-          검색/정렬/관심/제품 필터/새로고침은 PC 에서 한 줄, 좁은 화면에서 두 줄로 배치한다.
-          padding 을 충분히 줘서 답답하지 않게 한다. (compact 였던 기존 px-3 py-2.5 → px-4 py-3.5)
+          검색/관심/제품 필터/새로고침은 PC 에서 한 줄, 좁은 화면에서 두 줄로 배치한다.
+          정렬은 PC 테이블 헤더에서 처리하므로 이 영역에서는 select 를 두지 않는다.
         */}
         <section className="mb-5 min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-5 sm:py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-3">
@@ -395,22 +300,6 @@ export default function Home() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="notice-sort" className="sr-only">
-                정렬
-              </label>
-              <select
-                id="notice-sort"
-                value={sortOption}
-                onChange={(event) => setSortOption(event.target.value as SortOption)}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-white/10 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-400/20 sm:text-sm"
-              >
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-
               <button
                 type="button"
                 onClick={() => setShowSavedOnly((prev) => !prev)}
@@ -444,6 +333,14 @@ export default function Home() {
               저장한 관심 공고가 없습니다.
             </p>
           )}
+
+          {/*
+            모바일에서는 PC 처럼 헤더 클릭 정렬이 없으므로 현재 정렬 상태 표시(읽기 전용).
+            기본은 "추천 높은순" 이며 모바일에서 다른 정렬로 바꿀 수단은 두지 않는다.
+          */}
+          <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500 md:hidden">
+            정렬: 추천 등급 높은순
+          </p>
         </section>
 
         {/* 모바일: 기존 카드 UI */}
@@ -473,12 +370,14 @@ export default function Home() {
           )}
         </section>
 
-        {/* PC/노트북: 테이블 UI */}
+        {/* PC/노트북: 테이블 UI (헤더 클릭으로 정렬) */}
         <section className="hidden md:block">
           <NoticeTable
             notices={filteredNotices}
             savedIds={savedIds}
             onToggleSave={handleToggleSave}
+            sortState={sortState}
+            onSortChange={handleSortChange}
           />
         </section>
 
