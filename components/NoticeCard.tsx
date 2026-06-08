@@ -1,6 +1,6 @@
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
 import { getBudgetInfo } from "@/lib/budget";
-import { formatAccountTypeLabel, formatMatchTypeLabel } from "@/lib/customerMatching";
+import { formatAccountTypeLabel } from "@/lib/customerMatching";
 import { getMatchGradeStyle, toDisplayMatchGrade } from "@/lib/noticeGrades";
 import { getDueStatus, type DueStatus } from "@/lib/noticeVisibility";
 
@@ -81,7 +81,7 @@ function CustomerInline({
       ) : null}
       {showName && (
         <span
-          title={`내부 매칭: ${customer.customerName} (${formatMatchTypeLabel(customer.matchType)})`}
+          title={`내부 매칭: ${customer.customerName}`}
           className="text-blue-600 dark:text-blue-300"
         >
           ↳ {customer.customerName}

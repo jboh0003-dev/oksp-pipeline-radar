@@ -13,21 +13,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OKSP Pipeline Radar",
-  description: "공공기관 조달 공고 자동 매핑 대시보드",
+  title: "CS-G2B · 나라장터 공고 대시보드",
+  description:
+    "공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭. OKESTRO CS-G2B.",
 };
 
 /*
   hydration 직전에 동기적으로 .dark 클래스를 붙여두는 inline script.
   - 첫 페인트에서 라이트→다크로 깜빡이는 FOUC 방지
-  - 사용자가 직접 선택한 값(localStorage 의 oksp-theme) 이 가장 우선
+  - 사용자가 직접 선택한 값이 가장 우선
   - 저장값이 없을 때만 prefers-color-scheme: dark 를 따른다.
-    (사용자가 명시적으로 선택한 값이 없으면 시스템 다크 모드 사용자 경험을 존중)
-  - 기본 (저장값 없음 + prefers light) 은 light.
+  - 키 이름:
+      - 새 이름: 'cs-g2b-theme'
+      - 구 이름: 'oksp-theme' (마이그레이션 호환용. 새 키가 비어 있으면 fallback 으로 읽음)
 */
 const themeInitScript = `(() => {
   try {
-    var theme = localStorage.getItem('oksp-theme');
+    var theme = localStorage.getItem('cs-g2b-theme') || localStorage.getItem('oksp-theme');
     var prefersDark = false;
     try {
       prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;

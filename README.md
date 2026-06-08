@@ -1,3 +1,13 @@
+# CS-G2B · 나라장터 공고 대시보드
+
+`OKESTRO CS-G2B` — 공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭하는 사내 대시보드.
+
+- 운영 도메인 (예정): `g2b-cs.okestro.com`
+- 데이터 소스: 나라장터(G2B) Open API + Supabase
+- 자동 수집: Vercel Cron (KST 08:30, 14:00) + 화면의 "지금 수집" 버튼
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react";
 
-const STORAGE_KEY = "oksp-theme";
+/**
+ * 테마 저장 localStorage 키.
+ *
+ * - 새 키: 'cs-g2b-theme'
+ * - 마이그레이션 호환: 'oksp-theme' (구버전. 새 키 비어있으면 fallback 으로 한 번 읽고 새 키로 옮긴다.)
+ */
+const STORAGE_KEY = "cs-g2b-theme";
+const LEGACY_STORAGE_KEY = "oksp-theme";
 
 type Theme = "light" | "dark";
 
@@ -10,7 +17,7 @@ type Theme = "light" | "dark";
  * Header 우측에 배치되는 라이트/다크 모드 토글.
  *
  * - 기본값은 "light".
- * - 사용자가 토글하면 그 값이 localStorage(`oksp-theme`)에 저장되고
+ * - 사용자가 토글하면 그 값이 localStorage(`cs-g2b-theme`)에 저장되고
  *   다음 접속 때도 동일하게 적용된다.
  * - 깜빡임/hydration 미스매치 방지를 위해
  *   layout.tsx 의 inline script 가 페이지 첫 렌더 전에 `<html class="dark">` 를 붙인다.
@@ -23,7 +30,15 @@ export default function ThemeToggle() {
   useEffect(() => {
     let initial: Theme = "light";
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
+      let stored = window.localStorage.getItem(STORAGE_KEY);
+      if (!stored) {
+        // 구 키에서 한 번만 읽어와 새 키로 마이그레이션.
+        const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (legacy === "dark" || legacy === "light") {
+          stored = legacy;
+          window.localStorage.setItem(STORAGE_KEY, legacy);
+        }
+      }
       if (stored === "dark") initial = "dark";
       else if (stored === "light") initial = "light";
       else if (document.documentElement.classList.contains("dark")) {

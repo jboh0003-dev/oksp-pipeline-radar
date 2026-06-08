@@ -6,7 +6,7 @@ type HeaderProps = {
 };
 
 /**
- * 좌측: OKESTRO 텍스트 워드마크 + 작은 서비스명(OKSP PIPELINE RADAR) + 메인 제목 + 설명.
+ * 좌측: OKESTRO 텍스트 워드마크 + 작은 영문 보조 타이틀(OKESTRO CS-G2B) + 메인 한글 제목 + 부제.
  * 우측: 표시 중 카운트 칩 + 라이트/다크 토글.
  *
  * 첫 화면에 공고 테이블이 보이도록 너무 키우지는 않고, 그렇다고 한 줄로 납작하게
@@ -37,13 +37,13 @@ export default function Header({ totalCount, filteredCount }: HeaderProps) {
           />
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400 sm:text-[11px]">
-              OKSP Pipeline Radar
+              OKESTRO CS-G2B
             </p>
             <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900 dark:text-slate-50 sm:text-xl">
-              조달 공고 대시보드
+              나라장터 공고 대시보드
             </h1>
             <p className="mt-0.5 hidden text-xs text-slate-500 dark:text-slate-400 sm:block">
-              공공기관 조달 공고를 제품·고객사 기준으로 자동 매핑.
+              공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭.
             </p>
           </div>
         </div>

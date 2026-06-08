@@ -35,8 +35,17 @@ import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
-/** "담당본부 매칭 여부" 드롭다운 값. */
-type TerritoryStatusFilter = "all" | "withTerritory" | "withoutTerritory";
+/**
+ * 담당본부 필터 값.
+ *
+ *  - "all"            : 전체
+ *  - MISSING_VALUE    : 미매칭 (담당본부가 비어있거나 sentinel)
+ *  - 그 외 임의 문자열 : 해당 본부값과 정확히 일치하는 공고만
+ *
+ * 옵션은 현재 공고들의 customer.territory 에서 자동 추출하며, "미매칭" 은 항상 마지막에 포함된다.
+ */
+const MISSING_TERRITORY_VALUE = "__missing__";
+type TerritoryFilter = string; // "all" | "__missing__" | actual territory string
 
 function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
   const counts: DashboardSummaryCounts = {
@@ -140,21 +149,23 @@ function isWithoutTerritory(notice: DisplayNotice): boolean {
 }
 
 /**
- * 담당본부(테리토리) 매칭 상태 필터.
- *  - "all"              : 전부 표시
- *  - "withTerritory"    : 담당본부(테리토리) 가 채워진 공고만
- *  - "withoutTerritory" : 담당본부가 비어있거나 고객사 매칭 자체가 실패한 공고만
+ * 담당본부 필터.
+ *  - "all"               : 전부 표시
+ *  - MISSING_TERRITORY_VALUE : 담당본부가 비어있거나 매칭되지 않은 공고만
+ *  - 그 외 문자열         : 해당 담당본부와 정확히 일치하는 공고만
  *
  * 여기서 "매칭"은 제품 매칭이 아니라 기관/고객사 → 담당본부 매칭을 의미한다.
  */
 function matchesTerritoryStatus(
   notice: DisplayNotice,
-  status: TerritoryStatusFilter,
+  filter: TerritoryFilter,
 ): boolean {
-  if (status === "all") return true;
+  if (filter === "all") return true;
   const empty = isWithoutTerritory(notice);
-  if (status === "withTerritory") return !empty;
-  return empty;
+  if (filter === MISSING_TERRITORY_VALUE) return empty;
+  if (empty) return false;
+  const territory = notice.customer?.territory?.trim() ?? "";
+  return territory === filter;
 }
 
 function normalizeNotice(notice: Notice): DisplayNotice {
@@ -220,12 +231,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
-  const [territoryFilter, setTerritoryFilter] =
-    useState<TerritoryStatusFilter>("all");
+  const [territoryFilter, setTerritoryFilter] = useState<TerritoryFilter>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
-  const [showMatchSource, setShowMatchSource] = useState(false);
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
@@ -319,19 +328,21 @@ export default function Home() {
   );
 
   /**
-   * "담당본부 없음" 건수 — territoryFilter 와는 무관하게, 현재 검색/제품/관심 필터 결과 안에서
-   * 본부 매칭이 비어있는 공고가 몇 건인지 보여준다. 클릭하면 곧장 "담당본부 없음" 필터로 토글.
-   * 이 값은 사용자가 필터를 바꿔도 다른 카운트와 분리되어 보이도록 해당 필터를 빼고 계산한다.
+   * 담당본부 드롭다운 옵션 — 현재 후보 공고들의 customer.territory 에서 자동 추출.
+   * "미매칭" 은 항상 마지막 옵션으로 포함한다(데이터에 매칭된 본부가 0건일 때도 보이도록).
    */
-  const withoutTerritoryCount = useMemo(() => {
-    const query = searchQuery.trim();
-    return candidates.reduce((acc, notice) => {
-      if (query && !matchesSearch(notice, query)) return acc;
-      if (!matchesProduct(notice, selectedProduct)) return acc;
-      if (showSavedOnly && !savedIds.includes(notice.id)) return acc;
-      return acc + (isWithoutTerritory(notice) ? 1 : 0);
-    }, 0);
-  }, [candidates, searchQuery, selectedProduct, showSavedOnly, savedIds]);
+  const territoryOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const notice of candidates) {
+      const raw = notice.customer?.territory;
+      if (raw == null) continue;
+      const trimmed = String(raw).trim();
+      if (trimmed.length === 0) continue;
+      if (EMPTY_TERRITORY_SENTINELS.has(trimmed.toLowerCase())) continue;
+      seen.add(trimmed);
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b, "ko-KR"));
+  }, [candidates]);
 
   const handleToggleSave = (id: string) => {
     setSavedIds((prev) =>
@@ -356,7 +367,7 @@ export default function Home() {
   const handleManualCollect = async () => {
     if (manualStatus === "running") return;
     setManualStatus("running");
-    setManualMessage("수집 중입니다… 60초 정도 걸릴 수 있어요.");
+    setManualMessage("나라장터 공고 수집 중... (60초 정도 걸릴 수 있어요)");
 
     type ManualResp = {
       ok: boolean;
@@ -501,20 +512,26 @@ export default function Home() {
 
               <ProductFilter selected={selectedProduct} onChange={setSelectedProduct} />
 
-              {/* 담당본부 매칭 여부 드롭다운 */}
+              {/*
+                담당본부 드롭다운.
+                현재 공고 데이터에서 자동 추출한 본부값(공공/금융/광역 등) + 항상 포함되는 "미매칭".
+                필터명은 "담당본부" 단일.
+              */}
               <label className="relative inline-flex items-center">
-                <span className="sr-only">담당본부 매칭 여부</span>
+                <span className="sr-only">담당본부</span>
                 <select
                   value={territoryFilter}
-                  onChange={(event) =>
-                    setTerritoryFilter(event.target.value as TerritoryStatusFilter)
-                  }
-                  title="기관/고객사 → 담당본부(테리토리) 매칭 상태로 필터"
+                  onChange={(event) => setTerritoryFilter(event.target.value)}
+                  title="담당본부 별로 공고를 필터링"
                   className="h-9 cursor-pointer appearance-none whitespace-nowrap rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:border-blue-400/40 dark:focus:border-blue-400 dark:focus:ring-blue-400/30 sm:text-sm"
                 >
-                  <option value="all">담당본부 매칭 · 전체 보기</option>
-                  <option value="withTerritory">담당본부 있음</option>
-                  <option value="withoutTerritory">담당본부 없음</option>
+                  <option value="all">담당본부 · 전체</option>
+                  {territoryOptions.map((territory) => (
+                    <option key={territory} value={territory}>
+                      {territory}
+                    </option>
+                  ))}
+                  <option value={MISSING_TERRITORY_VALUE}>미매칭</option>
                 </select>
                 <span
                   aria-hidden
@@ -523,45 +540,6 @@ export default function Home() {
                   ▼
                 </span>
               </label>
-
-              {/*
-                담당본부 없음 건수 chip — 한 번 클릭으로 "담당본부 없음" 필터를 토글한다.
-                현재 territoryFilter 가 이미 "withoutTerritory" 면 강조 색으로 표시.
-              */}
-              <button
-                type="button"
-                onClick={() =>
-                  setTerritoryFilter(
-                    territoryFilter === "withoutTerritory" ? "all" : "withoutTerritory",
-                  )
-                }
-                aria-pressed={territoryFilter === "withoutTerritory"}
-                title="담당본부가 비어있거나 미매칭인 공고만 빠르게 필터링"
-                className={`inline-flex h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
-                  territoryFilter === "withoutTerritory"
-                    ? "bg-rose-600 text-white shadow-sm hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-400"
-                    : withoutTerritoryCount > 0
-                      ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30 dark:hover:bg-rose-500/25"
-                      : "bg-slate-50 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-white/10"
-                }`}
-              >
-                본부 미매칭
-                <span className="tabular-nums">{withoutTerritoryCount}건</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowMatchSource((prev) => !prev)}
-                aria-pressed={showMatchSource}
-                title="매칭근거(exact / alias / contains / fuzzy / unmatched) 컬럼을 표시합니다."
-                className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition sm:text-sm ${
-                  showMatchSource
-                    ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
-                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
-                }`}
-              >
-                {showMatchSource ? "매칭근거 ON" : "매칭근거"}
-              </button>
 
               <button
                 type="button"
@@ -653,7 +631,6 @@ export default function Home() {
             onToggleSave={handleToggleSave}
             sortState={sortState}
             onSortChange={handleSortChange}
-            showMatchSource={showMatchSource}
           />
         </section>
 
