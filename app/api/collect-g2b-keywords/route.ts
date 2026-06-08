@@ -566,6 +566,10 @@ type CollectStats = {
   fetchedCount: number;
   matchedCount: number;
   savedCount: number;
+  /** 신규 저장(insert) 건수. saved_count 의 분해값. */
+  insertedCount: number;
+  /** 기존 공고 업데이트 건수. saved_count 의 분해값. */
+  updatedCount: number;
   activeProductMatchedCount: number;
   skippedExpiredCount: number;
   skippedNoProductCount: number;
@@ -584,6 +588,10 @@ type CollectResponse = {
   fetchedCount: number;
   matchedCount: number;
   savedCount: number;
+  /** 신규(insert) 건수. */
+  insertedCount: number;
+  /** 업데이트 건수. */
+  updatedCount: number;
   activeProductMatchedCount: number;
   skippedExpiredCount: number;
   skippedNoProductCount: number;
@@ -598,6 +606,8 @@ function emptyStats(): CollectStats {
     fetchedCount: 0,
     matchedCount: 0,
     savedCount: 0,
+    insertedCount: 0,
+    updatedCount: 0,
     activeProductMatchedCount: 0,
     skippedExpiredCount: 0,
     skippedNoProductCount: 0,
@@ -623,6 +633,8 @@ function buildResponseBody(
     fetchedCount: stats.fetchedCount,
     matchedCount: stats.matchedCount,
     savedCount: stats.savedCount,
+    insertedCount: stats.insertedCount,
+    updatedCount: stats.updatedCount,
     activeProductMatchedCount: stats.activeProductMatchedCount,
     skippedExpiredCount: stats.skippedExpiredCount,
     skippedNoProductCount: stats.skippedNoProductCount,
@@ -755,6 +767,37 @@ async function executeCollect(
     if (pendingRows.length === 0) return;
     const batch = pendingRows.splice(0, pendingRows.length);
 
+    // upsert 전에 같은 external_id 가 이미 있는지 조회해 신규/업데이트 카운트를 분리한다.
+    // 이 한 번의 SELECT 비용이 들지만, 화면에서 "신규 N건 / 업데이트 M건" 을 표시하는 데 필요.
+    // 실패해도 upsert 자체는 그대로 진행한다(이전과 동일한 saved_count 만 채워짐).
+    const externalIds = batch.map((r) => r.external_id);
+    let preexistingIds = new Set<string>();
+    if (externalIds.length > 0) {
+      const { data: existing, error: existingErr } = await supabase
+        .from("notices")
+        .select("external_id")
+        .in("external_id", externalIds);
+      if (existingErr) {
+        errors.push(
+          [
+            "flushPending preflight",
+            existingErr.message,
+            existingErr.code,
+            existingErr.details,
+            existingErr.hint,
+          ]
+            .filter(Boolean)
+            .join(" | "),
+        );
+      } else {
+        preexistingIds = new Set(
+          (existing ?? [])
+            .map((row) => (row as { external_id?: string | null }).external_id ?? "")
+            .filter((id): id is string => Boolean(id)),
+        );
+      }
+    }
+
     const { data, error } = await supabase
       .from("notices")
       .upsert(batch, { onConflict: "external_id" })
@@ -767,7 +810,27 @@ async function executeCollect(
       return;
     }
 
-    stats.savedCount += data?.length ?? batch.length;
+    const savedRows = data ?? [];
+    const savedExternalIds = savedRows
+      .map((row) => (row as { external_id?: string | null }).external_id ?? "")
+      .filter((id): id is string => Boolean(id));
+
+    let insertedInBatch = 0;
+    let updatedInBatch = 0;
+    if (savedExternalIds.length > 0) {
+      for (const id of savedExternalIds) {
+        if (preexistingIds.has(id)) updatedInBatch += 1;
+        else insertedInBatch += 1;
+      }
+    } else {
+      // upsert 가 select 를 반환하지 않은 fallback. batch 길이로 합산만 채운다.
+      insertedInBatch = batch.length - preexistingIds.size;
+      updatedInBatch = preexistingIds.size;
+    }
+
+    stats.savedCount += savedRows.length || batch.length;
+    stats.insertedCount += insertedInBatch;
+    stats.updatedCount += updatedInBatch;
   };
 
   /**

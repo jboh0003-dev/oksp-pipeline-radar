@@ -5,8 +5,8 @@
       "schedule": "30 23 * * *"
     },
     {
-      "path": "/api/cron/collect-g2b?slot=noon",
-      "schedule": "30 3 * * *"
+      "path": "/api/cron/collect-g2b?slot=afternoon",
+      "schedule": "0 5 * * *"
     }
   ]
 }

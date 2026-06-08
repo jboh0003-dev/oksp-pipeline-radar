@@ -36,6 +36,7 @@ function pickItems(value: string[] | null | undefined): string[] {
 function extractSlotLabel(source: string | null | undefined): string | null {
   if (!source) return null;
   if (source.endsWith(":morning")) return "morning";
+  if (source.endsWith(":afternoon")) return "afternoon";
   if (source.endsWith(":noon")) return "noon";
   return null;
 }
@@ -52,7 +53,18 @@ function formatNumber(value: number | null | undefined): string {
   return value.toLocaleString("ko-KR");
 }
 
-const CARD_TITLE = "최근 자동수집";
+/** mode 또는 source 에서 자동/수동을 판별. */
+function resolveMode(
+  mode: CollectionRunRow["mode"],
+  source: string | null | undefined,
+): "auto" | "manual" {
+  if (mode === "manual") return "manual";
+  if (mode === "auto") return "auto";
+  if (source && source.startsWith("manual:")) return "manual";
+  return "auto";
+}
+
+const CARD_TITLE = "최근 수집";
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -98,15 +110,29 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
   const warnings = pickItems(run.warnings);
   const hasMessage = Boolean(run.message);
 
-  // warnings 첫 줄 컨텍스트("slot=... · ...") 는 우측 메타에 따로 그리므로 메시지 카운트에서 제외.
-  const isContextLine = (msg: string) => /^slot=(morning|noon)\s*·/.test(msg);
+  // warnings 첫 줄 컨텍스트("slot=... · ..." 또는 "mode=manual · ...") 는 우측 메타에 따로 그리므로
+  // 메시지 카운트에서 제외.
+  const isContextLine = (msg: string) =>
+    /^slot=(morning|afternoon|noon)\s*·/.test(msg) || /^mode=(auto|manual)\s*·/.test(msg);
   const filteredWarnings = warnings.filter((m) => !isContextLine(m));
   const noticeCount = errors.length + filteredWarnings.length + (hasMessage ? 1 : 0);
 
+  const mode = resolveMode(run.mode, run.source);
   const slotLabel = extractSlotLabel(run.source);
   const pageRange = formatPageRange(run.page_start, run.page_end);
   const targetLabel = run.target_count != null ? `target ${run.target_count}` : null;
   const meta = [slotLabel, pageRange, targetLabel].filter((v): v is string => Boolean(v));
+
+  const modeBadge =
+    mode === "manual" ? (
+      <span className="inline-flex items-center whitespace-nowrap rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30">
+        수동
+      </span>
+    ) : (
+      <span className="inline-flex items-center whitespace-nowrap rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-400/30">
+        자동
+      </span>
+    );
 
   const statusBadge = run.ok ? (
     <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30">
@@ -120,6 +146,10 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
     </span>
   );
 
+  // saved_count 가 있으면 신규/업데이트 분해 표시 (둘 다 있을 때만; 마이그 전 환경 보호).
+  const showInsertedUpdated =
+    run.inserted_count != null || run.updated_count != null;
+
   return (
     <Shell>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 leading-tight">
@@ -127,6 +157,7 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
           <span aria-hidden className="text-blue-500 dark:text-blue-400">●</span>
           {CARD_TITLE}
         </span>
+        {modeBadge}
         {statusBadge}
         <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
           {formatKstShort(run.finished_at)} <span className="opacity-60">KST</span>
@@ -134,12 +165,29 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
 
         <span aria-hidden className="hidden h-3.5 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
 
-        <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
-          저장
-          <span className="ml-1 font-semibold tabular-nums text-blue-600 dark:text-blue-300">
-            {formatNumber(run.saved_count)}
+        {showInsertedUpdated ? (
+          <>
+            <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
+              신규
+              <span className="ml-1 font-semibold tabular-nums text-emerald-600 dark:text-emerald-300">
+                {formatNumber(run.inserted_count)}
+              </span>
+            </span>
+            <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
+              업데이트
+              <span className="ml-1 font-semibold tabular-nums text-blue-600 dark:text-blue-300">
+                {formatNumber(run.updated_count)}
+              </span>
+            </span>
+          </>
+        ) : (
+          <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
+            저장
+            <span className="ml-1 font-semibold tabular-nums text-blue-600 dark:text-blue-300">
+              {formatNumber(run.saved_count)}
+            </span>
           </span>
-        </span>
+        )}
         <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
           조회
           <span className="ml-1 font-semibold tabular-nums text-slate-700 dark:text-slate-200">
@@ -177,6 +225,19 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
           </span>
         )}
       </div>
+
+      {/* 실패 사유는 카드 하단에 좀 더 눈에 띄게 별도 라인으로 표시. */}
+      {!run.ok && errors.length > 0 && (
+        <p className="mt-2 break-words text-[11px] leading-5 text-rose-700 dark:text-rose-300">
+          <span className="font-semibold">실패 사유:</span>{" "}
+          <span className="font-mono">{errors[0]}</span>
+          {errors.length > 1 && (
+            <span className="ml-1 text-rose-500/80 dark:text-rose-300/70">
+              외 {errors.length - 1}건
+            </span>
+          )}
+        </p>
+      )}
     </Shell>
   );
 }

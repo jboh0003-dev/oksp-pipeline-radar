@@ -37,11 +37,13 @@ export type CustomerAccountRow = {
 
 /**
  * Supabase `collection_runs` 테이블 row.
- * 자동수집(cron) 실행 이력. 화면에서는 가장 최근 1건만 읽는다.
+ * 자동수집(cron) 또는 수동 수집 실행 이력. 화면에서는 가장 최근 1건만 읽는다.
  */
 export type CollectionRunRow = {
   id: string;
   source: string | null;
+  /** 실행 방식. 'auto' = cron 자동수집, 'manual' = 화면 버튼(지금 수집). 마이그 전 환경 대비 optional. */
+  mode?: "auto" | "manual" | string | null;
   started_at: string;
   finished_at: string | null;
   ok: boolean;
@@ -51,6 +53,10 @@ export type CollectionRunRow = {
   fetched_count: number | null;
   matched_count: number | null;
   saved_count: number | null;
+  /** 신규 저장 건수. saved_count 의 분해값. 마이그 전 환경 대비 optional. */
+  inserted_count?: number | null;
+  /** 기존 공고 업데이트 건수. saved_count 의 분해값. 마이그 전 환경 대비 optional. */
+  updated_count?: number | null;
   skipped_expired_count: number | null;
   skipped_no_product_count: number | null;
   errors: string[] | null;

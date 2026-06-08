@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import BudgetTable from "@/components/BudgetTable";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLoading from "@/components/DashboardLoading";
 import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
@@ -15,7 +14,6 @@ import {
   type Notice,
   type ProductFilter as ProductFilterValue,
 } from "@/data/sampleNotices";
-import { parseBudgetAmount } from "@/lib/budget";
 import { fetchLastCollectionRun } from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
@@ -37,18 +35,14 @@ import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
-/** 화면 상단 탭. "공고" 는 기본 테이블/카드, "예산" 은 예산 전용 테이블. */
-type ViewTab = "notices" | "budget";
-
-/** "본부 매칭 여부" 드롭다운 값. */
-type MatchStatusFilter = "all" | "matched" | "unmatched";
+/** "담당본부 매칭 여부" 드롭다운 값. */
+type TerritoryStatusFilter = "all" | "withTerritory" | "withoutTerritory";
 
 function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
   const counts: DashboardSummaryCounts = {
     activeTotal: 0,
     contrabass: 0,
     viola: 0,
-    totalBudgetWon: 0,
   };
 
   for (const notice of notices) {
@@ -59,8 +53,6 @@ function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts 
     if (notice.relatedProducts.includes("VIOLA")) {
       counts.viola += 1;
     }
-    const amount = parseBudgetAmount(notice.budget);
-    if (amount && amount > 0) counts.totalBudgetWon += amount;
   }
 
   return counts;
@@ -115,18 +107,20 @@ function matchesProduct(notice: DisplayNotice, product: ProductFilterValue) {
 }
 
 /**
- * 본부 매칭 상태 필터.
- *  - "all"       : 전부 표시
- *  - "matched"   : 담당본부(테리토리) 가 채워진 공고만
- *  - "unmatched" : 담당본부가 비어있는 공고만 (고객사 매칭 자체가 실패한 케이스도 포함)
+ * 담당본부(테리토리) 매칭 상태 필터.
+ *  - "all"              : 전부 표시
+ *  - "withTerritory"    : 담당본부(테리토리) 가 채워진 공고만
+ *  - "withoutTerritory" : 담당본부가 비어있거나 고객사 매칭 자체가 실패한 공고만
+ *
+ * 여기서 "매칭"은 제품 매칭이 아니라 기관/고객사 → 담당본부 매칭을 의미한다.
  */
-function matchesMatchStatus(
+function matchesTerritoryStatus(
   notice: DisplayNotice,
-  status: MatchStatusFilter,
+  status: TerritoryStatusFilter,
 ): boolean {
   if (status === "all") return true;
   const territory = notice.customer?.territory?.trim() ?? "";
-  if (status === "matched") return territory.length > 0;
+  if (status === "withTerritory") return territory.length > 0;
   return territory.length === 0;
 }
 
@@ -193,51 +187,61 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
-  const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>("all");
+  const [territoryFilter, setTerritoryFilter] =
+    useState<TerritoryStatusFilter>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
-  const [budgetSortState, setBudgetSortState] = useState<SortState>({
-    column: "budget",
-    direction: "desc",
-  });
   const [showMatchSource, setShowMatchSource] = useState(false);
-  const [view, setView] = useState<ViewTab>("notices");
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
 
+  // 수동 수집("지금 수집") 상태.
+  // - "idle"     : 클릭 전
+  // - "running"  : /api/collect-now 호출 중
+  // - "success"  : 가장 최근 수동 수집 완료. message 에 "신규 N건 / 업데이트 M건 / 조회 K건"
+  // - "error"    : 실패. message 에 사유.
+  type ManualCollectStatus = "idle" | "running" | "success" | "error";
+  const [manualStatus, setManualStatus] = useState<ManualCollectStatus>("idle");
+  const [manualMessage, setManualMessage] = useState<string | null>(null);
+
+  const loadNotices = useCallback(async () => {
+    const result = await fetchNotices();
+    const withRaw = await attachRawData(result.notices, result.source);
+    setNotices(withRaw);
+    setDataSource(result.source);
+    setErrorMessage(result.error);
+  }, []);
+
+  const loadLastRun = useCallback(async () => {
+    const { run, error } = await fetchLastCollectionRun();
+    setLastRun(run);
+    setLastRunError(error);
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
 
-    async function loadNotices() {
+    async function runOnce() {
       setIsLoading(true);
-      const result = await fetchNotices();
-      if (!isMounted) return;
-      const withRaw = await attachRawData(result.notices, result.source);
-      if (!isMounted) return;
-      setNotices(withRaw);
-      setDataSource(result.source);
-      setErrorMessage(result.error);
-      setIsLoading(false);
-    }
-
-    async function loadLastRun() {
       setIsLastRunLoading(true);
-      const { run, error } = await fetchLastCollectionRun();
-      if (!isMounted) return;
-      setLastRun(run);
-      setLastRunError(error);
-      setIsLastRunLoading(false);
+      try {
+        await Promise.all([loadNotices(), loadLastRun()]);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+          setIsLastRunLoading(false);
+        }
+      }
     }
 
-    void loadNotices();
-    void loadLastRun();
+    void runOnce();
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [loadNotices, loadLastRun]);
 
   const candidates = useMemo(
     () => notices.filter((notice) => isVisibleCandidate(notice)),
@@ -255,7 +259,7 @@ export default function Home() {
     const filtered = pool.filter(
       (notice) =>
         matchesProduct(notice, selectedProduct) &&
-        matchesMatchStatus(notice, matchStatusFilter) &&
+        matchesTerritoryStatus(notice, territoryFilter) &&
         (!showSavedOnly || savedIds.includes(notice.id)),
     );
     return sortNoticesByState(filtered, sortState);
@@ -263,39 +267,10 @@ export default function Home() {
     candidates,
     searchQuery,
     selectedProduct,
-    matchStatusFilter,
+    territoryFilter,
     showSavedOnly,
     savedIds,
     sortState,
-  ]);
-
-  /**
-   * 예산 탭에서 표시할 공고 목록.
-   *  - 공고 탭과 동일한 필터(검색/제품/매칭상태/관심)를 그대로 적용한다.
-   *  - 정렬은 별도의 budgetSortState 로 관리하며 기본값은 예산 내림차순.
-   *  - 예산이 없는 공고는 budget 정렬 시 noticeSorting 의 isEmptyForColumn 처리에 의해 자동으로 맨 뒤.
-   */
-  const filteredBudgetNotices = useMemo(() => {
-    const query = searchQuery.trim();
-    let pool = candidates;
-    if (query) {
-      pool = pool.filter((notice) => matchesSearch(notice, query));
-    }
-    const filtered = pool.filter(
-      (notice) =>
-        matchesProduct(notice, selectedProduct) &&
-        matchesMatchStatus(notice, matchStatusFilter) &&
-        (!showSavedOnly || savedIds.includes(notice.id)),
-    );
-    return sortNoticesByState(filtered, budgetSortState);
-  }, [
-    candidates,
-    searchQuery,
-    selectedProduct,
-    matchStatusFilter,
-    showSavedOnly,
-    savedIds,
-    budgetSortState,
   ]);
 
   const hasActiveSearch = searchQuery.trim().length > 0;
@@ -304,10 +279,10 @@ export default function Home() {
       candidates.filter(
         (notice) =>
           matchesProduct(notice, selectedProduct) &&
-          matchesMatchStatus(notice, matchStatusFilter) &&
+          matchesTerritoryStatus(notice, territoryFilter) &&
           (!showSavedOnly || savedIds.includes(notice.id)),
       ),
-    [candidates, selectedProduct, matchStatusFilter, showSavedOnly, savedIds],
+    [candidates, selectedProduct, territoryFilter, showSavedOnly, savedIds],
   );
 
   const handleToggleSave = (id: string) => {
@@ -322,12 +297,74 @@ export default function Home() {
     }
   };
 
-  const handleSortChange = (column: SortColumn) => {
-    setSortState((prev) => toggleSortState(prev, column));
+  /**
+   * "지금 수집" 버튼.
+   *  1) /api/collect-now POST 호출.
+   *  2) 응답 ok 면 신규/업데이트/조회 건수를 사용자에게 안내.
+   *  3) 성공/실패 무관하게 끝나면 공고 목록과 최근 수집 카드를 다시 읽어온다.
+   */
+  const handleManualCollect = async () => {
+    if (manualStatus === "running") return;
+    setManualStatus("running");
+    setManualMessage("수집 중입니다… 60초 정도 걸릴 수 있어요.");
+
+    type ManualResp = {
+      ok: boolean;
+      error?: string;
+      message?: string | null;
+      insertedCount?: number;
+      updatedCount?: number;
+      fetchedCount?: number;
+      matchedCount?: number;
+      activeProductMatchedCount?: number;
+      errors?: string[];
+    };
+
+    let resp: ManualResp | null = null;
+    let httpStatus = 0;
+    try {
+      const res = await fetch("/api/collect-now", { method: "POST" });
+      httpStatus = res.status;
+      resp = (await res.json()) as ManualResp;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      setManualStatus("error");
+      setManualMessage(`수집 실패: 네트워크 오류 (${reason})`);
+      return;
+    }
+
+    // 어쨌든 끝났으니 화면 데이터는 다시 읽어온다.
+    await Promise.all([loadNotices(), loadLastRun()]);
+
+    if (!resp) {
+      setManualStatus("error");
+      setManualMessage("수집 실패: 응답을 해석하지 못했습니다.");
+      return;
+    }
+
+    if (!resp.ok) {
+      const reason = resp.error ?? resp.errors?.[0] ?? `HTTP ${httpStatus}`;
+      setManualStatus("error");
+      setManualMessage(`수집 실패: ${reason}`);
+      return;
+    }
+
+    const inserted = resp.insertedCount ?? 0;
+    const updated = resp.updatedCount ?? 0;
+    const fetched = resp.fetchedCount ?? 0;
+    const matched = resp.matchedCount ?? 0;
+    const parts = [
+      `신규 ${inserted.toLocaleString("ko-KR")}건`,
+      `업데이트 ${updated.toLocaleString("ko-KR")}건`,
+      `조회 ${fetched.toLocaleString("ko-KR")}건`,
+      `매칭 ${matched.toLocaleString("ko-KR")}건`,
+    ];
+    setManualStatus("success");
+    setManualMessage(`수집 완료: ${parts.join(" / ")}`);
   };
 
-  const handleBudgetSortChange = (column: SortColumn) => {
-    setBudgetSortState((prev) => toggleSortState(prev, column));
+  const handleSortChange = (column: SortColumn) => {
+    setSortState((prev) => toggleSortState(prev, column));
   };
 
   if (isLoading) {
@@ -366,22 +403,6 @@ export default function Home() {
 
         <SummaryCards {...summaryCounts} />
 
-        {/* 탭: 공고 / 예산.
-            예산 탭은 예산 정렬·표시에 특화된 BudgetTable 을 보여준다.
-            모바일에서도 탭 자체는 노출하되, 예산 탭에서도 동일하게 BudgetTable 가로 스크롤 형태로 표시. */}
-        <div className="mb-3 flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:w-fit">
-          <ViewTabButton
-            active={view === "notices"}
-            onClick={() => setView("notices")}
-            label="공고"
-          />
-          <ViewTabButton
-            active={view === "budget"}
-            onClick={() => setView("budget")}
-            label="예산"
-          />
-        </div>
-
         {/*
           검색/관심/제품 필터/매칭 상태 필터/디버그 토글/새로고침은 PC 에서 한 줄, 좁은 화면에서 두 줄로 배치한다.
           정렬은 PC 테이블 헤더에서 처리하므로 이 영역에서는 select 를 두지 않는다.
@@ -410,20 +431,20 @@ export default function Home() {
 
               <ProductFilter selected={selectedProduct} onChange={setSelectedProduct} />
 
-              {/* 본부 매칭 여부 드롭다운 */}
+              {/* 담당본부 매칭 여부 드롭다운 */}
               <label className="relative inline-flex items-center">
-                <span className="sr-only">매칭 상태</span>
+                <span className="sr-only">담당본부 매칭 여부</span>
                 <select
-                  value={matchStatusFilter}
+                  value={territoryFilter}
                   onChange={(event) =>
-                    setMatchStatusFilter(event.target.value as MatchStatusFilter)
+                    setTerritoryFilter(event.target.value as TerritoryStatusFilter)
                   }
-                  title="기관/고객사 → 담당본부 매칭 상태로 필터"
+                  title="기관/고객사 → 담당본부(테리토리) 매칭 상태로 필터"
                   className="h-9 cursor-pointer appearance-none whitespace-nowrap rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:border-blue-400/40 dark:focus:border-blue-400 dark:focus:ring-blue-400/30 sm:text-sm"
                 >
-                  <option value="all">매칭 상태 · 전체</option>
-                  <option value="matched">본부 매칭 완료</option>
-                  <option value="unmatched">본부 매칭 안 됨</option>
+                  <option value="all">담당본부 매칭 · 전체 보기</option>
+                  <option value="withTerritory">담당본부 있음</option>
+                  <option value="withoutTerritory">담당본부 없음</option>
                 </select>
                 <span
                   aria-hidden
@@ -449,14 +470,43 @@ export default function Home() {
 
               <button
                 type="button"
+                onClick={handleManualCollect}
+                disabled={manualStatus === "running"}
+                title="나라장터에서 새 공고를 다시 수집합니다."
+                className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition sm:text-sm ${
+                  manualStatus === "running"
+                    ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
+                    : "bg-blue-600 text-white shadow-sm hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400"
+                }`}
+              >
+                {manualStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
+              </button>
+
+              <button
+                type="button"
                 onClick={handleRefresh}
-                title="화면 새로고침"
+                title="DB에 저장된 공고 목록을 다시 불러옵니다. 나라장터에서 새로 수집하지는 않습니다."
                 className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-3 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 transition hover:bg-blue-50 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 dark:hover:bg-slate-800 sm:text-sm"
               >
-                ⟳ 새로고침
+                ⟳ 화면 새로고침
               </button>
             </div>
           </div>
+
+          {manualMessage && (
+            <p
+              className={`mt-2 text-[11px] ${
+                manualStatus === "error"
+                  ? "text-rose-700 dark:text-rose-300"
+                  : manualStatus === "success"
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : "text-blue-700 dark:text-blue-300"
+              }`}
+              role="status"
+            >
+              {manualMessage}
+            </p>
+          )}
 
           {showSavedOnly && savedIds.length === 0 && (
             <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
@@ -469,94 +519,53 @@ export default function Home() {
             기본은 "추천 높은순" 이며 모바일에서 다른 정렬로 바꿀 수단은 두지 않는다.
           */}
           <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500 md:hidden">
-            정렬: {view === "budget" ? "예산 큰 금액 순" : "추천 등급 높은순"}
+            정렬: 추천 등급 높은순
           </p>
         </section>
 
-        {view === "budget" ? (
-          <section>
-            <BudgetTable
-              notices={filteredBudgetNotices}
-              sortState={budgetSortState}
-              onSortChange={handleBudgetSortChange}
-            />
-            <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
-              예산 합계와 카드 통계는 화면 상단 요약 영역의 “예산 합계” 카드에서 확인할 수 있습니다.
-              예산이 “미공개” 또는 “정보 없음” 인 공고는 정렬 시 항상 마지막에 표시됩니다.
-            </p>
-          </section>
-        ) : (
-          <>
-            {/* 모바일: 기존 카드 UI */}
-            <section className="space-y-4 sm:space-y-5 md:hidden">
-              {filteredNotices.length > 0 ? (
-                filteredNotices.map((notice) => (
-                  <NoticeCard
-                    key={notice.id}
-                    notice={notice}
-                    isSaved={savedIds.includes(notice.id)}
-                    onToggleSave={handleToggleSave}
-                  />
-                ))
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
-                  <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                    검색 결과가 없습니다
-                  </p>
-                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                    {showSavedOnly
-                      ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
-                      : hasActiveSearch && matchesExceptSearch.length > 0
-                        ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
-                        : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
-                  </p>
-                </div>
-              )}
-            </section>
-
-            {/* PC/노트북: 테이블 UI (헤더 클릭으로 정렬) */}
-            <section className="hidden md:block">
-              <NoticeTable
-                notices={filteredNotices}
-                savedIds={savedIds}
+        {/* 모바일: 기존 카드 UI */}
+        <section className="space-y-4 sm:space-y-5 md:hidden">
+          {filteredNotices.length > 0 ? (
+            filteredNotices.map((notice) => (
+              <NoticeCard
+                key={notice.id}
+                notice={notice}
+                isSaved={savedIds.includes(notice.id)}
                 onToggleSave={handleToggleSave}
-                sortState={sortState}
-                onSortChange={handleSortChange}
-                showMatchSource={showMatchSource}
               />
-            </section>
-          </>
-        )}
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
+              <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                검색 결과가 없습니다
+              </p>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                {showSavedOnly
+                  ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
+                  : hasActiveSearch && matchesExceptSearch.length > 0
+                    ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
+                    : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
+              </p>
+            </div>
+          )}
+        </section>
+
+        {/* PC/노트북: 테이블 UI (헤더 클릭으로 정렬) */}
+        <section className="hidden md:block">
+          <NoticeTable
+            notices={filteredNotices}
+            savedIds={savedIds}
+            onToggleSave={handleToggleSave}
+            sortState={sortState}
+            onSortChange={handleSortChange}
+            showMatchSource={showMatchSource}
+          />
+        </section>
 
         <p className="mt-8 text-center text-[11px] text-slate-400 dark:text-slate-500">
           {dataSource === "supabase" ? "Supabase · 나라장터 연동" : "샘플 데이터 기반 MVP"}
         </p>
       </main>
     </div>
-  );
-}
-
-function ViewTabButton({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`inline-flex min-w-[64px] items-center justify-center whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-semibold transition ${
-        active
-          ? "bg-blue-600 text-white shadow-sm dark:bg-blue-500"
-          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-      }`}
-    >
-      {label}
-    </button>
   );
 }

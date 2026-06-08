@@ -12,16 +12,19 @@ const CRON_RESPONSE_SCHEMA_VERSION = 3;
 /**
  * 자동수집 슬롯 정의.
  *
- * - morning : 한국시간 08:30 (UTC 23:30) — 1~20 페이지
- * - noon    : 한국시간 12:30 (UTC 03:30) — 21~40 페이지
+ * - morning   : 한국시간 08:30 (UTC 23:30) — 1~20 페이지
+ * - afternoon : 한국시간 14:00 (UTC 05:00) — 21~40 페이지
+ * - noon      : 한국시간 12:30 (UTC 03:30) — 21~40 페이지 (legacy 호환용. 더 이상 cron 에서 호출되지 않음)
  *
- * 두 슬롯 모두 lookbackDays 30, targetCount 100 으로 동일 정책.
+ * 모든 슬롯이 lookbackDays 30, targetCount 100 으로 동일 정책.
  * 하루 2회로 페이지 범위만 분담해 누적 커버리지를 넓힌다.
  */
-type Slot = "morning" | "noon";
+type Slot = "morning" | "afternoon" | "noon";
 
 const SLOT_PROFILES: Record<Slot, { pageStart: number; pageEnd: number }> = {
   morning: { pageStart: 1, pageEnd: 20 },
+  afternoon: { pageStart: 21, pageEnd: 40 },
+  // legacy 호환. 새 vercel.json 은 afternoon 만 사용한다.
   noon: { pageStart: 21, pageEnd: 40 },
 };
 
@@ -39,18 +42,22 @@ const DEFAULTS = {
 function pickSlot(request: NextRequest): { slot: Slot; reason: "query" | "utc-hour" | "default" } {
   const url = new URL(request.url);
   const fromQuery = url.searchParams.get("slot");
-  if (fromQuery === "morning" || fromQuery === "noon") {
+  if (fromQuery === "morning" || fromQuery === "afternoon" || fromQuery === "noon") {
     return { slot: fromQuery, reason: "query" };
   }
 
   const utcHour = new Date().getUTCHours();
-  // 23:30 UTC = morning slot, 03:30 UTC = noon slot.
+  // 23:30 UTC = morning slot, 05:00 UTC = afternoon slot.
   // 디스패치 지연/타임존 grace 를 위해 인접 시각도 같은 슬롯으로 매핑.
   if (utcHour === 23 || utcHour === 0) {
     return { slot: "morning", reason: "utc-hour" };
   }
+  if (utcHour === 5 || utcHour === 6) {
+    return { slot: "afternoon", reason: "utc-hour" };
+  }
+  // 03~04 UTC 는 legacy noon 슬롯 시간대. afternoon 와 같은 페이지 범위.
   if (utcHour === 3 || utcHour === 4) {
-    return { slot: "noon", reason: "utc-hour" };
+    return { slot: "afternoon", reason: "utc-hour" };
   }
   return { slot: "morning", reason: "default" };
 }
@@ -67,6 +74,8 @@ type CronResult = {
   message: string | null;
   /** 이번 실행에 사용된 slot. */
   slot: Slot;
+  /** 실행 방식. cron 라우트는 항상 "auto". */
+  mode: "auto";
   startedAt: string;
   finishedAt: string;
   targetCount: number;
@@ -76,6 +85,8 @@ type CronResult = {
   fetchedCount: number;
   matchedCount: number;
   savedCount: number;
+  insertedCount: number;
+  updatedCount: number;
   activeProductMatchedCount: number;
   skippedExpiredCount: number;
   skippedNoProductCount: number;
@@ -85,6 +96,7 @@ type CronResult = {
 
 type CollectionRunRow = {
   source: string;
+  mode: "auto" | "manual";
   started_at: string;
   finished_at: string;
   ok: boolean;
@@ -94,6 +106,8 @@ type CollectionRunRow = {
   fetched_count: number;
   matched_count: number;
   saved_count: number;
+  inserted_count: number;
+  updated_count: number;
   skipped_expired_count: number;
   skipped_no_product_count: number;
   errors: string[];
@@ -125,6 +139,9 @@ function isAuthorized(request: NextRequest, expected: string): boolean {
 /**
  * collection_runs 테이블이 만들어져 있을 때만 기록한다.
  * 실패해도 cron 응답은 그대로 반환하며, 사실은 warnings 에만 누적시켜 ok 에 영향이 없게 한다.
+ *
+ * 신규 환경(mode/inserted_count/updated_count 컬럼 없음)에서는 컬럼 누락 에러가 발생할 수 있으므로
+ * 1차 시도 후 실패 시 이 컬럼들을 빼고 재시도한다.
  */
 async function recordRun(row: CollectionRunRow): Promise<string | null> {
   const supabase = getSupabaseAdmin();
@@ -132,10 +149,31 @@ async function recordRun(row: CollectionRunRow): Promise<string | null> {
     return "Supabase admin client 환경변수 누락 (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)";
   }
 
-  const { error } = await supabase.from("collection_runs").insert(row as never);
+  // 1차: 신규 컬럼 포함 그대로 insert
+  const firstAttempt = await supabase.from("collection_runs").insert(row as never);
+  if (!firstAttempt.error) return null;
 
-  if (error) {
-    return [error.message, error.code, error.details, error.hint].filter(Boolean).join(" | ");
+  const isMissingColumn =
+    firstAttempt.error.message?.includes("mode") ||
+    firstAttempt.error.message?.includes("inserted_count") ||
+    firstAttempt.error.message?.includes("updated_count") ||
+    firstAttempt.error.code === "42703"; // undefined_column
+
+  if (!isMissingColumn) {
+    const e = firstAttempt.error;
+    return [e.message, e.code, e.details, e.hint].filter(Boolean).join(" | ");
+  }
+
+  // 2차: 신규 컬럼을 제거한 legacy 페이로드로 재시도. 마이그레이션 전이라도 기록은 남게.
+  const { mode: _mode, inserted_count: _ic, updated_count: _uc, ...legacyRow } = row;
+  void _mode;
+  void _ic;
+  void _uc;
+
+  const retry = await supabase.from("collection_runs").insert(legacyRow as never);
+  if (retry.error) {
+    const e = retry.error;
+    return [e.message, e.code, e.details, e.hint].filter(Boolean).join(" | ");
   }
   return null;
 }
@@ -182,6 +220,8 @@ async function handleCron(request: NextRequest) {
   const fetchedCount = body?.fetchedCount ?? 0;
   const matchedCount = body?.matchedCount ?? 0;
   const savedCount = body?.savedCount ?? 0;
+  const insertedCount = body?.insertedCount ?? 0;
+  const updatedCount = body?.updatedCount ?? 0;
   const activeProductMatchedCount = body?.activeProductMatchedCount ?? 0;
   const skippedExpiredCount = body?.skippedExpiredCount ?? 0;
   const skippedNoProductCount = body?.skippedNoProductCount ?? 0;
@@ -218,6 +258,7 @@ async function handleCron(request: NextRequest) {
     targetReached,
     message,
     slot,
+    mode: "auto",
     startedAt,
     finishedAt,
     targetCount,
@@ -227,6 +268,8 @@ async function handleCron(request: NextRequest) {
     fetchedCount,
     matchedCount,
     savedCount,
+    insertedCount,
+    updatedCount,
     activeProductMatchedCount,
     skippedExpiredCount,
     skippedNoProductCount,
@@ -238,6 +281,7 @@ async function handleCron(request: NextRequest) {
   // (예: "cron:collect-g2b:morning"). 기존 컬럼 재사용으로 스키마 변경 불필요.
   const recordError = await recordRun({
     source: `cron:collect-g2b:${slot}`,
+    mode: "auto",
     started_at: result.startedAt,
     finished_at: result.finishedAt,
     ok: result.ok,
@@ -247,6 +291,8 @@ async function handleCron(request: NextRequest) {
     fetched_count: result.fetchedCount,
     matched_count: result.matchedCount,
     saved_count: result.savedCount,
+    inserted_count: result.insertedCount,
+    updated_count: result.updatedCount,
     skipped_expired_count: result.skippedExpiredCount,
     skipped_no_product_count: result.skippedNoProductCount,
     errors: result.errors,

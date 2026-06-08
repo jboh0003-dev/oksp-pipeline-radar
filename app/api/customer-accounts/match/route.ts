@@ -244,65 +244,65 @@ export async function POST(request: NextRequest) {
     };
   }
 
-  // 2단계: alias 사전 (예: "국회" ↔ "국회사무처") — 1단계 lookup 만으로 검색
+  // 2단계: alias 사전 (예: "국회" ↔ "국회사무처") — customer_accounts 전체 풀 기준으로 매칭한다.
+  // 1단계 lookup 만으로는 "국회" 로 fetch 한 row 안에 "국회사무처" 가 들어있을 수 없어 매칭 실패.
+  // contains/fuzzy 와 동일하게 전체 풀(getAllCustomerRows)에서 alias group 멤버를 찾는다.
   let aliasCount = 0;
-  if (stillMissing.length > 0) {
-    const remaining: string[] = [];
-    for (const agency of stillMissing) {
-      const m = matchAliasFromAgency(agency, lookup);
-      if (!m) {
-        remaining.push(agency);
-        continue;
-      }
-      matches[agency] = pickPayload(
-        // matchAliasFromAgency 는 row 가 아니라 MatchedCustomer 를 반환하므로
-        // pickPayload 가 row 형태를 기대하는 것을 우회: 직접 payload 로 변환.
-        {
-          id: m.customerId,
-          customer_name: m.customerName,
-          customer_name_norm: "",
-          customer_group: null,
-          account_type: m.accountType,
-          territory: m.territory,
-          region_group: m.regionGroup,
-          region: m.region,
-          address: null,
-          business_number: null,
-          source_file: null,
-          updated_at: null,
-        } as CustomerAccountRow,
-        "alias",
-      );
-      aliasCount += 1;
-      console.log(`alias match: "${agency}" -> "${m.customerName}"`);
-    }
-    stillMissing.splice(0, stillMissing.length, ...remaining);
-  }
-
-  // 3단계: contains 매칭(양방향) — alias 까지도 실패한 agency 만 대상.
-  // 후보 풀로 customer_accounts 전체를 사용한다(5분 모듈 캐시).
   let containsCount = 0;
   let fuzzyCount = 0;
   if (stillMissing.length > 0) {
     const all = await getAllCustomerRows(supabase);
     if (all.error) {
       console.warn(
-        `[/api/customer-accounts/match] contains/fuzzy 풀 fetch 실패, 두 단계 모두 건너뜀: ${all.error}`,
+        `[/api/customer-accounts/match] alias/contains/fuzzy 풀 fetch 실패, 세 단계 모두 건너뜀: ${all.error}`,
       );
     } else {
       console.log(
-        `[/api/customer-accounts/match] contains/fuzzy pool=${all.rows.length} (cached=${all.cached}) missing=${stillMissing.length}`,
+        `[/api/customer-accounts/match] alias/contains/fuzzy pool=${all.rows.length} (cached=${all.cached}) missing=${stillMissing.length}`,
       );
-      const remaining: string[] = [];
+
+      const fullLookup = buildCustomerLookup(all.rows);
+
+      // 2-A: alias
+      const afterAlias: string[] = [];
       for (const agency of stillMissing) {
+        const m = matchAliasFromAgency(agency, fullLookup);
+        if (!m) {
+          afterAlias.push(agency);
+          continue;
+        }
+        matches[agency] = pickPayload(
+          {
+            id: m.customerId,
+            customer_name: m.customerName,
+            customer_name_norm: "",
+            customer_group: null,
+            account_type: m.accountType,
+            territory: m.territory,
+            region_group: m.regionGroup,
+            region: m.region,
+            address: null,
+            business_number: null,
+            source_file: null,
+            updated_at: null,
+          } as CustomerAccountRow,
+          "alias",
+        );
+        aliasCount += 1;
+        console.log(`alias match: "${agency}" -> "${m.customerName}"`);
+      }
+
+      // 2-B: contains (양방향)
+      const afterContains: string[] = [];
+      for (const agency of afterAlias) {
         const norm = normalizeCustomerName(agency);
         if (norm.length < CONTAINS_MIN_LEN) {
-          remaining.push(agency);
+          afterContains.push(agency);
           continue;
         }
         const found = findBestBidirectionalContainsMatch(norm, all.rows);
         if (!found) {
-          remaining.push(agency);
+          afterContains.push(agency);
           continue;
         }
         matches[agency] = pickPayload(found.row, "contains");
@@ -311,10 +311,9 @@ export async function POST(request: NextRequest) {
           `contains match (${found.direction}): "${agency}" -> "${found.row.customer_name}"`,
         );
       }
-      stillMissing.splice(0, stillMissing.length, ...remaining);
 
-      // 4단계: fuzzy 매칭 — 보수적 임계치 적용
-      for (const agency of stillMissing) {
+      // 2-C: fuzzy
+      for (const agency of afterContains) {
         const norm = normalizeCustomerName(agency);
         if (norm.length < 6) continue;
         const found = findBestFuzzyMatch(norm, all.rows);

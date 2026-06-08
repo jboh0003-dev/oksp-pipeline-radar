@@ -44,9 +44,14 @@ function pickNumber(value: unknown): number | null {
 }
 
 function normalizeRow(raw: Record<string, unknown>): CollectionRunRow {
+  const rawMode = pickString(raw.mode);
+  const mode: CollectionRunRow["mode"] =
+    rawMode === "auto" || rawMode === "manual" ? rawMode : (rawMode ?? null);
+
   return {
     id: String(raw.id ?? ""),
     source: pickString(raw.source),
+    mode,
     started_at: pickString(raw.started_at) ?? "",
     finished_at: pickString(raw.finished_at),
     ok: typeof raw.ok === "boolean" ? raw.ok : Boolean(raw.ok),
@@ -56,6 +61,8 @@ function normalizeRow(raw: Record<string, unknown>): CollectionRunRow {
     fetched_count: pickNumber(raw.fetched_count),
     matched_count: pickNumber(raw.matched_count),
     saved_count: pickNumber(raw.saved_count),
+    inserted_count: pickNumber(raw.inserted_count),
+    updated_count: pickNumber(raw.updated_count),
     skipped_expired_count: pickNumber(raw.skipped_expired_count),
     skipped_no_product_count: pickNumber(raw.skipped_no_product_count),
     errors: pickStringArray(raw.errors),

@@ -261,17 +261,19 @@ export default function NoticeTable({
       <div className="w-full overflow-x-auto lg:overflow-x-visible">
         <table className="w-full table-fixed text-sm">
           <colgroup>
+            <col style={{ width: showMatchSource ? "6%" : "7%" }} />
+            <col style={{ width: showMatchSource ? "6%" : "7%" }} />
+            <col style={{ width: "6%" }} />
+            <col style={{ width: showMatchSource ? "20%" : "22%" }} />
+            <col style={{ width: showMatchSource ? "13%" : "15%" }} />
             <col style={{ width: "7%" }} />
-            <col style={{ width: "7%" }} />
-            <col style={{ width: "7%" }} />
-            <col style={{ width: showMatchSource ? "25%" : "28%" }} />
-            <col style={{ width: showMatchSource ? "16%" : "18%" }} />
-            <col style={{ width: "8%" }} />
-            <col style={{ width: "7%" }} />
-            <col style={{ width: "7%" }} />
-            <col style={{ width: "5%" }} />
-            <col style={{ width: "5%" }} />
-            {showMatchSource && <col style={{ width: "8%" }} />}
+            <col style={{ width: "6%" }} />
+            <col style={{ width: "6%" }} />
+            <col style={{ width: "6%" }} />
+            <col style={{ width: "6%" }} />
+            {/* 예산: 공고별 금액 */}
+            <col style={{ width: showMatchSource ? "11%" : "12%" }} />
+            {showMatchSource && <col style={{ width: "7%" }} />}
           </colgroup>
           <thead className="bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
             <tr>
@@ -335,6 +337,13 @@ export default function NoticeTable({
                 label="마감일"
                 state={sortState}
                 onSortChange={onSortChange}
+              />
+              <SortableHeader
+                column="budget"
+                label="예산"
+                state={sortState}
+                onSortChange={onSortChange}
+                align="right"
               />
               {showMatchSource && (
                 <th
@@ -457,19 +466,10 @@ export default function NoticeTable({
                               ),
                             ),
                           );
-                          const budget = getBudgetInfo(notice.budget);
-                          const showBudget = budget.amount != null;
-                          if (uniqueKeywords.length === 0 && !showBudget) return null;
+                          if (uniqueKeywords.length === 0) return null;
+                          // 예산은 별도 컬럼으로 분리됨 — 여기서는 매칭 키워드만 표시.
                           return (
                             <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                              {showBudget && (
-                                <span
-                                  title={budget.korean ?? undefined}
-                                  className="inline-flex items-center whitespace-nowrap rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20"
-                                >
-                                  {budget.formatted}
-                                </span>
-                              )}
                               {uniqueKeywords.slice(0, 8).map((kw, index) => (
                                 <span
                                   key={`${kw}-${index}`}
@@ -615,7 +615,33 @@ export default function NoticeTable({
                     )}
                   </td>
 
-                  {/* 8. 매칭근거 (디버그 모드 토글 시에만 노출) */}
+                  {/* 8. 예산 — 천 단위 콤마 + 한글 보조 표시 */}
+                  <td className="px-3 py-3 align-top text-right">
+                    {(() => {
+                      const budget = getBudgetInfo(notice.budget);
+                      if (budget.amount == null) {
+                        return (
+                          <span className="whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500">
+                            금액 정보 없음
+                          </span>
+                        );
+                      }
+                      return (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="whitespace-nowrap text-xs font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                            {budget.formatted}
+                          </span>
+                          {budget.korean && (
+                            <span className="whitespace-nowrap text-[10px] text-slate-500 dark:text-slate-400">
+                              ({budget.korean})
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </td>
+
+                  {/* 9. 매칭근거 (디버그 모드 토글 시에만 노출) */}
                   {showMatchSource && (
                     <td className="whitespace-nowrap px-3 py-3 align-top">
                       <MatchSourceBadge
