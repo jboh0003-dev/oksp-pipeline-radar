@@ -140,42 +140,75 @@ function isAuthorized(request: NextRequest, expected: string): boolean {
  * collection_runs 테이블이 만들어져 있을 때만 기록한다.
  * 실패해도 cron 응답은 그대로 반환하며, 사실은 warnings 에만 누적시켜 ok 에 영향이 없게 한다.
  *
- * 신규 환경(mode/inserted_count/updated_count 컬럼 없음)에서는 컬럼 누락 에러가 발생할 수 있으므로
- * 1차 시도 후 실패 시 이 컬럼들을 빼고 재시도한다.
+ * 환경별 마이그레이션 진행 정도가 달라도 견디도록 progressive fallback 으로 시도한다:
+ *   1) full payload  (mode + inserted/updated + warnings + message)
+ *   2) drop {mode, inserted_count, updated_count}
+ *   3) drop additionally {warnings, message}
+ *   4) bare minimum (source/started_at/finished_at/ok/errors/fetched/matched/saved 만)
  */
-async function recordRun(row: CollectionRunRow): Promise<string | null> {
+async function recordRun(
+  row: CollectionRunRow,
+): Promise<{ ok: true; phase: "full" | "legacy" | "minimal" | "bare" } | { ok: false; error: string }> {
   const supabase = getSupabaseAdmin();
   if (!supabase) {
-    return "Supabase admin client 환경변수 누락 (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)";
+    return {
+      ok: false,
+      error:
+        "Supabase admin client 환경변수 누락 (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+    };
   }
 
-  // 1차: 신규 컬럼 포함 그대로 insert
-  const firstAttempt = await supabase.from("collection_runs").insert(row as never);
-  if (!firstAttempt.error) return null;
+  type AnyRecord = Record<string, unknown>;
+  const errorsLog: string[] = [];
 
-  const isMissingColumn =
-    firstAttempt.error.message?.includes("mode") ||
-    firstAttempt.error.message?.includes("inserted_count") ||
-    firstAttempt.error.message?.includes("updated_count") ||
-    firstAttempt.error.code === "42703"; // undefined_column
+  const tryInsert = async (label: string, payload: AnyRecord) => {
+    const { error } = await supabase.from("collection_runs").insert(payload as never);
+    if (!error) return null;
+    const formatted = [error.message, error.code, error.details, error.hint]
+      .filter(Boolean)
+      .join(" | ");
+    errorsLog.push(`[${label}] ${formatted}`);
+    return formatted;
+  };
 
-  if (!isMissingColumn) {
-    const e = firstAttempt.error;
-    return [e.message, e.code, e.details, e.hint].filter(Boolean).join(" | ");
-  }
+  // 1) full
+  const fullErr = await tryInsert("full", row as unknown as AnyRecord);
+  if (!fullErr) return { ok: true, phase: "full" };
 
-  // 2차: 신규 컬럼을 제거한 legacy 페이로드로 재시도. 마이그레이션 전이라도 기록은 남게.
+  // 2) drop new columns: mode / inserted_count / updated_count
   const { mode: _mode, inserted_count: _ic, updated_count: _uc, ...legacyRow } = row;
   void _mode;
   void _ic;
   void _uc;
+  const legacyErr = await tryInsert("legacy", legacyRow as unknown as AnyRecord);
+  if (!legacyErr) return { ok: true, phase: "legacy" };
 
-  const retry = await supabase.from("collection_runs").insert(legacyRow as never);
-  if (retry.error) {
-    const e = retry.error;
-    return [e.message, e.code, e.details, e.hint].filter(Boolean).join(" | ");
-  }
-  return null;
+  // 3) drop additionally warnings / message
+  const {
+    warnings: _w,
+    message: _m,
+    ...minimalRow
+  } = legacyRow as unknown as AnyRecord & { warnings?: unknown; message?: unknown };
+  void _w;
+  void _m;
+  const minimalErr = await tryInsert("minimal", minimalRow);
+  if (!minimalErr) return { ok: true, phase: "minimal" };
+
+  // 4) bare minimum
+  const bareRow: AnyRecord = {
+    source: row.source,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    ok: row.ok,
+    fetched_count: row.fetched_count,
+    matched_count: row.matched_count,
+    saved_count: row.saved_count,
+    errors: row.errors,
+  };
+  const bareErr = await tryInsert("bare", bareRow);
+  if (!bareErr) return { ok: true, phase: "bare" };
+
+  return { ok: false, error: errorsLog.join(" || ") };
 }
 
 async function handleCron(request: NextRequest) {
@@ -279,7 +312,7 @@ async function handleCron(request: NextRequest) {
 
   // collection_runs.source 에 slot 을 인코딩해 화면 카드가 슬롯을 식별할 수 있게 한다.
   // (예: "cron:collect-g2b:morning"). 기존 컬럼 재사용으로 스키마 변경 불필요.
-  const recordError = await recordRun({
+  const insertResult = await recordRun({
     source: `cron:collect-g2b:${slot}`,
     mode: "auto",
     started_at: result.startedAt,
@@ -300,8 +333,14 @@ async function handleCron(request: NextRequest) {
     message: result.message,
   });
 
-  if (recordError) {
-    result.warnings.push(`collection_runs 기록 실패: ${recordError}`);
+  if (!insertResult.ok) {
+    result.warnings.push(`collection_runs 기록 실패 (모든 fallback 실패): ${insertResult.error}`);
+    console.error("[/api/cron/collect-g2b] recordRun failed all attempts:", insertResult.error);
+  } else if (insertResult.phase !== "full") {
+    result.warnings.push(
+      `collection_runs ${insertResult.phase} fallback 으로 저장됨. ` +
+        `Supabase SQL Editor 에서 supabase/collection_runs.sql 을 실행해 mode/inserted_count/updated_count 컬럼을 추가해 주세요.`,
+    );
   }
 
   return NextResponse.json(result);

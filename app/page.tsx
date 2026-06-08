@@ -349,7 +349,9 @@ export default function Home() {
    * "지금 수집" 버튼.
    *  1) /api/collect-now POST 호출.
    *  2) 응답 ok 면 신규/업데이트/조회 건수를 사용자에게 안내.
-   *  3) 성공/실패 무관하게 끝나면 공고 목록과 최근 수집 카드를 다시 읽어온다.
+   *  3) loggedToDb=false 면 DB 로그 실패 사유를 별도로 노출 — 화면의 "최근 수집" 카드가
+   *     갱신되지 않는 이유가 사용자에게 보이도록.
+   *  4) 성공/실패 무관하게 끝나면 공고 목록과 최근 수집 카드를 다시 읽어온다.
    */
   const handleManualCollect = async () => {
     if (manualStatus === "running") return;
@@ -366,6 +368,9 @@ export default function Home() {
       matchedCount?: number;
       activeProductMatchedCount?: number;
       errors?: string[];
+      warnings?: string[];
+      loggedToDb?: boolean;
+      dbLogError?: string | null;
     };
 
     let resp: ManualResp | null = null;
@@ -381,7 +386,7 @@ export default function Home() {
       return;
     }
 
-    // 어쨌든 끝났으니 화면 데이터는 다시 읽어온다.
+    // 어쨌든 끝났으니 화면 데이터는 다시 읽어온다. (DB 로그가 안 남았더라도 notices 는 갱신됐을 수 있음)
     await Promise.all([loadNotices(), loadLastRun()]);
 
     if (!resp) {
@@ -391,6 +396,7 @@ export default function Home() {
     }
 
     if (!resp.ok) {
+      // runCollect 내부 에러 (G2B / Supabase / 환경변수 등)
       const reason = resp.error ?? resp.errors?.[0] ?? `HTTP ${httpStatus}`;
       setManualStatus("error");
       setManualMessage(`수집 실패: ${reason}`);
@@ -407,8 +413,24 @@ export default function Home() {
       `조회 ${fetched.toLocaleString("ko-KR")}건`,
       `매칭 ${matched.toLocaleString("ko-KR")}건`,
     ];
+
+    if (resp.loggedToDb === false) {
+      // 수집 자체는 성공했지만 collection_runs 가 갱신되지 않은 케이스.
+      // → 화면의 "최근 수집" 카드는 갱신되지 않는다. 사용자에게 명확히 알린다.
+      setManualStatus("error");
+      setManualMessage(
+        `수집은 완료됐지만 DB 로그 기록 실패: ${parts.join(" / ")} · 사유: ${resp.dbLogError ?? "(unknown)"}`,
+      );
+      return;
+    }
+
     setManualStatus("success");
     setManualMessage(`수집 완료: ${parts.join(" / ")}`);
+
+    // 일부 환경에서 Supabase 의 read replica 가 약간 지연될 수 있어, 1초 후 한 번 더 lastRun 을 갱신한다.
+    setTimeout(() => {
+      void loadLastRun();
+    }, 1500);
   };
 
   const handleSortChange = (column: SortColumn) => {
