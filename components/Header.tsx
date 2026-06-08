@@ -1,3 +1,4 @@
+import OkestroWordmark from "./OkestroWordmark";
 import ThemeToggle from "./ThemeToggle";
 
 type HeaderProps = {
@@ -6,84 +7,66 @@ type HeaderProps = {
 };
 
 /**
- * 좌측: OKESTRO 텍스트 워드마크 + 작은 영문 보조 타이틀(OKESTRO CS-G2B) + 메인 한글 제목 + 부제.
+ * 좌측: OKESTRO 로고(또는 텍스트 워드마크 fallback) + 영문 보조 타이틀(OKESTRO CS-G2B) +
+ *        한글 메인 타이틀(나라장터 공고 대시보드) + 부제.
  * 우측: 표시 중 카운트 칩 + 라이트/다크 토글.
  *
- * 첫 화면에 공고 테이블이 보이도록 너무 키우지는 않고, 그렇다고 한 줄로 납작하게
- * 압축하지도 않는다. (대략 px-5 sm:px-7 / py-4 sm:py-5)
+ * 디자인 노트:
+ *  - 헤더 카드 안에서만 브랜드 배경 이미지(`public/header-bg.jpg`)를 cover 로 깔고,
+ *    그 위에 어두운 파란 그라데이션 overlay 를 얹어 본문 가독성을 보장한다.
+ *  - 배경 이미지가 없을 때도 grad fallback 으로 자연스럽게 보인다.
+ *    (csg2b-header-bg 클래스는 globals.css 정의)
+ *  - 텍스트는 흰 계열로 통일, 부제는 약간 흐릿하게 보조 정보 느낌.
+ *  - 카드의 rounded-2xl / 가벼운 ring, 우상단 글로우 dot, 좌하단 indigo 글로우는 그대로 유지해
+ *    "엔터프라이즈 클라우드 대시보드" 톤을 살린다.
  */
 export default function Header({ totalCount, filteredCount }: HeaderProps) {
   return (
-    <header className="relative mb-4 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/80 px-5 py-4 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-slate-900/60 sm:px-7 sm:py-5">
+    <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
+      {/*
+        배경 이미지/그라데이션 위에 옅은 noise 같은 미세 글로우를 추가해 너무 단조롭지 않게.
+        카드 안에서만 보이도록 absolute + overflow-hidden 으로 가둠.
+      */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 -top-24 h-48 bg-gradient-to-b from-blue-100/70 via-transparent to-transparent dark:from-blue-500/15"
+        className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-cyan-300/20 blur-3xl"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 top-0 h-48 w-48 rounded-full bg-cyan-200/50 blur-3xl dark:bg-cyan-500/10"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-16 -bottom-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl dark:bg-indigo-500/10"
+        className="pointer-events-none absolute -left-20 -bottom-20 h-48 w-48 rounded-full bg-indigo-400/15 blur-3xl"
       />
 
-      <div className="relative flex flex-wrap items-center justify-between gap-x-5 gap-y-3">
+      <div className="relative flex flex-wrap items-center justify-between gap-x-5 gap-y-3 px-5 py-5 sm:px-7 sm:py-6">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <Wordmark />
+          <OkestroWordmark />
           <div
             aria-hidden
-            className="hidden h-10 w-px bg-gradient-to-b from-transparent via-slate-200 to-transparent dark:via-white/15 sm:block"
+            className="hidden h-10 w-px bg-gradient-to-b from-transparent via-white/30 to-transparent sm:block"
           />
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400 sm:text-[11px]">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90 sm:text-[11px]">
               OKESTRO CS-G2B
             </p>
-            <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900 dark:text-slate-50 sm:text-xl">
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-white drop-shadow-sm sm:text-2xl">
               나라장터 공고 대시보드
             </h1>
-            <p className="mt-0.5 hidden text-xs text-slate-500 dark:text-slate-400 sm:block">
-              공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭.
+            <p className="mt-1 hidden text-xs text-slate-200/85 sm:block">
+              공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭
             </p>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-1.5 text-xs shadow-sm dark:border-blue-400/20 dark:bg-blue-500/10 sm:text-sm">
-            <span className="text-slate-500 dark:text-slate-400">표시 중</span>
-            <span className="font-bold text-blue-600 dark:text-blue-300">
+          <div className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/15 px-3 py-1.5 text-xs text-white shadow-sm backdrop-blur-sm sm:text-sm">
+            <span className="text-slate-100/80">표시 중</span>
+            <span className="font-bold text-white">
               {filteredCount}
             </span>
-            <span className="text-slate-400 dark:text-slate-500">/ {totalCount}건</span>
+            <span className="text-slate-200/70">/ {totalCount}건</span>
           </div>
           <ThemeToggle />
         </div>
       </div>
     </header>
-  );
-}
-
-/**
- * OKESTRO 텍스트 워드마크.
- * public/ 에 로고 파일이 없어서 텍스트 + 그라데이션 + 작은 dot 으로 브랜드감만 표현한다.
- * 추후 실제 로고 SVG 가 추가되면 이 컴포넌트만 바꾸면 된다.
- */
-function Wordmark() {
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        aria-hidden
-        className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-600 shadow-md ring-1 ring-inset ring-white/20 dark:from-blue-400 dark:via-blue-500 dark:to-indigo-500"
-      >
-        <span className="text-sm font-black tracking-tight text-white">O</span>
-        <span
-          aria-hidden
-          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-cyan-300 ring-2 ring-white dark:ring-slate-900"
-        />
-      </span>
-      <span className="bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-base font-extrabold tracking-tight text-transparent dark:from-slate-50 dark:to-slate-300 sm:text-lg">
-        OKESTRO
-      </span>
-    </div>
   );
 }

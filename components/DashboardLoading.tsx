@@ -1,42 +1,50 @@
 /**
  * 첫 로딩 동안 표시되는 풀 스켈레톤.
  *
- * 구성: Header / 자동수집 / 요약 카드 / 검색 필터 / 테이블 row(8) / 모바일 카드(2)
+ * 구성: TopProgressBar / Header / 자동수집 / 요약 카드 / 검색 필터 / 테이블 row(8) / 모바일 카드(2)
  *
  * 톤은 라이트/다크 모두 무채색 + blue/cyan 포인트로 통일하고,
  * 너무 화려한 애니메이션은 피해 업무용 대시보드 느낌을 유지한다.
+ *
+ * TopProgressBar 는 animate-pulse 의 fade 효과를 받지 않도록 wrapper 밖에 배치.
  */
+import TopProgressBar from "./TopProgressBar";
+
 export default function DashboardLoading() {
   return (
-    <div className="animate-pulse" aria-busy aria-live="polite">
+    <div aria-busy aria-live="polite">
       <span className="sr-only">대시보드를 불러오는 중입니다.</span>
 
-      {/* 1. Header skeleton */}
-      <div className="relative mb-4 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/80 px-5 py-4 dark:border-white/10 dark:bg-slate-900/60 sm:px-7 sm:py-5">
+      {/* 0. 상단 얇은 진행바 — animate-pulse 밖에 두어 또렷이 흘러간다 */}
+      <TopProgressBar />
+
+      <div className="animate-pulse">
+        {/* 1. Header skeleton — 실제 Header 와 동일한 dark blue 브랜드 배경으로 시각 점프 방지 */}
+      <div className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 -top-24 h-48 bg-gradient-to-b from-blue-100/70 via-transparent to-transparent dark:from-blue-500/15"
+          className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-cyan-300/20 blur-3xl"
         />
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-24 top-0 h-48 w-48 rounded-full bg-cyan-200/40 blur-3xl dark:bg-cyan-500/10"
+          className="pointer-events-none absolute -left-20 -bottom-20 h-48 w-48 rounded-full bg-indigo-400/15 blur-3xl"
         />
-        <div className="relative flex items-center justify-between gap-3">
+        <div className="relative flex items-center justify-between gap-3 px-5 py-5 sm:px-7 sm:py-6">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-200 to-indigo-200 dark:from-blue-500/40 dark:to-indigo-500/40" />
+            <div className="h-9 w-32 rounded-md bg-white/15 sm:h-10 sm:w-36" />
             <div
               aria-hidden
-              className="hidden h-10 w-px bg-slate-200 dark:bg-white/10 sm:block"
+              className="hidden h-10 w-px bg-white/25 sm:block"
             />
             <div className="space-y-2">
-              <Bar w="w-28" />
-              <Bar w="w-44" h="h-5" />
-              <Bar w="w-56 hidden sm:block" />
+              <div className="h-3 w-28 rounded bg-cyan-200/40" />
+              <div className="h-5 w-44 rounded bg-white/30" />
+              <div className="hidden h-3 w-56 rounded bg-white/20 sm:block" />
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="h-8 w-24 rounded-xl bg-blue-100/80 dark:bg-blue-500/15" />
-            <div className="h-9 w-9 rounded-lg bg-slate-200 dark:bg-slate-700/40" />
+            <div className="h-8 w-24 rounded-xl bg-white/15 ring-1 ring-white/20" />
+            <div className="h-9 w-9 rounded-lg bg-white/15" />
           </div>
         </div>
       </div>
@@ -163,9 +171,10 @@ export default function DashboardLoading() {
         ))}
       </div>
 
-      <p className="mt-6 text-center text-[11px] text-slate-400 dark:text-slate-500">
-        공고 데이터를 불러오는 중입니다…
-      </p>
+        <p className="mt-6 text-center text-[11px] text-slate-400 dark:text-slate-500">
+          공고 데이터를 불러오는 중입니다…
+        </p>
+      </div>
     </div>
   );
 }
