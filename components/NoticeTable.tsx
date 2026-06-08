@@ -265,14 +265,14 @@ export default function NoticeTable({
             <col style={{ width: showMatchSource ? "6%" : "7%" }} />
             <col style={{ width: "6%" }} />
             <col style={{ width: showMatchSource ? "20%" : "22%" }} />
+            {/* 예산: 공고명 바로 다음 — 회의 피드백 기준 */}
+            <col style={{ width: showMatchSource ? "11%" : "12%" }} />
             <col style={{ width: showMatchSource ? "13%" : "15%" }} />
             <col style={{ width: "7%" }} />
             <col style={{ width: "6%" }} />
             <col style={{ width: "6%" }} />
             <col style={{ width: "6%" }} />
             <col style={{ width: "6%" }} />
-            {/* 예산: 공고별 금액 */}
-            <col style={{ width: showMatchSource ? "11%" : "12%" }} />
             {showMatchSource && <col style={{ width: "7%" }} />}
           </colgroup>
           <thead className="bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
@@ -299,6 +299,13 @@ export default function NoticeTable({
                 state={sortState}
                 onSortChange={onSortChange}
                 whitespace=""
+              />
+              <SortableHeader
+                column="budget"
+                label="예산"
+                state={sortState}
+                onSortChange={onSortChange}
+                align="right"
               />
               <SortableHeader
                 column="agency"
@@ -337,13 +344,6 @@ export default function NoticeTable({
                 label="마감일"
                 state={sortState}
                 onSortChange={onSortChange}
-              />
-              <SortableHeader
-                column="budget"
-                label="예산"
-                state={sortState}
-                onSortChange={onSortChange}
-                align="right"
               />
               {showMatchSource && (
                 <th
@@ -520,7 +520,33 @@ export default function NoticeTable({
                     </div>
                   </td>
 
-                  {/* 5. 기관/고객사 — 단어 단위 줄바꿈 + 매칭된 고객사명 보조 표시 */}
+                  {/* 5. 예산 — 천 단위 콤마 + 한글 보조 (공고명 바로 다음) */}
+                  <td className="px-3 py-3 align-top text-right">
+                    {(() => {
+                      const budget = getBudgetInfo(notice.budget);
+                      if (budget.amount == null) {
+                        return (
+                          <span className="whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500">
+                            금액 정보 없음
+                          </span>
+                        );
+                      }
+                      return (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                            {budget.formatted}
+                          </span>
+                          {budget.korean && (
+                            <span className="whitespace-nowrap text-[11px] text-slate-500 dark:text-slate-400">
+                              {budget.korean}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </td>
+
+                  {/* 6. 기관/고객사 — 단어 단위 줄바꿈 + 매칭된 고객사명 보조 표시 */}
                   <td className="whitespace-normal break-keep px-3 py-3 align-top">
                     <div
                       title={notice.agency}
@@ -539,7 +565,7 @@ export default function NoticeTable({
                       )}
                   </td>
 
-                  {/* 5-1. 담당본부 */}
+                  {/* 7. 담당본부 */}
                   <td className="whitespace-nowrap px-3 py-3 align-top">
                     {notice.customer?.territory ? (
                       <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
@@ -552,7 +578,7 @@ export default function NoticeTable({
                     )}
                   </td>
 
-                  {/* 5-2. Named */}
+                  {/* 8. Named */}
                   <td className="whitespace-nowrap px-3 py-3 align-top">
                     {notice.customer ? (
                       <NamedBadge accountType={notice.customer.accountType} />
@@ -563,7 +589,7 @@ export default function NoticeTable({
                     )}
                   </td>
 
-                  {/* 5-3. 지역 */}
+                  {/* 9. 지역 */}
                   <td className="px-3 py-3 align-top">
                     {notice.customer &&
                     (notice.customer.region || notice.customer.regionGroup) ? (
@@ -586,12 +612,12 @@ export default function NoticeTable({
                     )}
                   </td>
 
-                  {/* 6. 게시일 */}
+                  {/* 10. 게시일 */}
                   <td className="whitespace-nowrap px-3 py-3 align-top text-xs text-slate-600 dark:text-slate-400">
                     {formatNoticeDate(notice.noticeDate)}
                   </td>
 
-                  {/* 7. 마감일 + D-day */}
+                  {/* 11. 마감일 + D-day */}
                   <td className="whitespace-nowrap px-3 py-3 align-top">
                     <div
                       className={`text-xs font-semibold ${
@@ -615,33 +641,7 @@ export default function NoticeTable({
                     )}
                   </td>
 
-                  {/* 8. 예산 — 천 단위 콤마 + 한글 보조 표시 */}
-                  <td className="px-3 py-3 align-top text-right">
-                    {(() => {
-                      const budget = getBudgetInfo(notice.budget);
-                      if (budget.amount == null) {
-                        return (
-                          <span className="whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500">
-                            금액 정보 없음
-                          </span>
-                        );
-                      }
-                      return (
-                        <div className="flex flex-col items-end gap-0.5">
-                          <span className="whitespace-nowrap text-xs font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-                            {budget.formatted}
-                          </span>
-                          {budget.korean && (
-                            <span className="whitespace-nowrap text-[10px] text-slate-500 dark:text-slate-400">
-                              ({budget.korean})
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </td>
-
-                  {/* 9. 매칭근거 (디버그 모드 토글 시에만 노출) */}
+                  {/* 12. 매칭근거 (디버그 모드 토글 시에만 노출) */}
                   {showMatchSource && (
                     <td className="whitespace-nowrap px-3 py-3 align-top">
                       <MatchSourceBadge

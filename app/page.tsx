@@ -107,6 +107,39 @@ function matchesProduct(notice: DisplayNotice, product: ProductFilterValue) {
 }
 
 /**
+ * 담당본부(테리토리) "없음" 판정.
+ *
+ * 회의 피드백:
+ *   - null / undefined / 빈 문자열은 당연히 없음.
+ *   - 데이터 정합성 이슈로 "미매칭" / "비매칭" / "매칭 안됨" / "담당본부 없음" / "미지정" 같은
+ *     문자열 sentinel 이 들어와도 동일하게 "없음" 으로 본다.
+ */
+const EMPTY_TERRITORY_SENTINELS = new Set([
+  "",
+  "-",
+  "미매칭",
+  "비매칭",
+  "매칭 안됨",
+  "매칭안됨",
+  "담당본부 없음",
+  "본부 미매칭",
+  "미지정",
+  "없음",
+  "n/a",
+  "na",
+  "null",
+  "undefined",
+]);
+
+function isWithoutTerritory(notice: DisplayNotice): boolean {
+  const raw = notice.customer?.territory;
+  if (raw == null) return true;
+  const trimmed = String(raw).trim();
+  if (trimmed.length === 0) return true;
+  return EMPTY_TERRITORY_SENTINELS.has(trimmed.toLowerCase());
+}
+
+/**
  * 담당본부(테리토리) 매칭 상태 필터.
  *  - "all"              : 전부 표시
  *  - "withTerritory"    : 담당본부(테리토리) 가 채워진 공고만
@@ -119,9 +152,9 @@ function matchesTerritoryStatus(
   status: TerritoryStatusFilter,
 ): boolean {
   if (status === "all") return true;
-  const territory = notice.customer?.territory?.trim() ?? "";
-  if (status === "withTerritory") return territory.length > 0;
-  return territory.length === 0;
+  const empty = isWithoutTerritory(notice);
+  if (status === "withTerritory") return !empty;
+  return empty;
 }
 
 function normalizeNotice(notice: Notice): DisplayNotice {
@@ -284,6 +317,21 @@ export default function Home() {
       ),
     [candidates, selectedProduct, territoryFilter, showSavedOnly, savedIds],
   );
+
+  /**
+   * "담당본부 없음" 건수 — territoryFilter 와는 무관하게, 현재 검색/제품/관심 필터 결과 안에서
+   * 본부 매칭이 비어있는 공고가 몇 건인지 보여준다. 클릭하면 곧장 "담당본부 없음" 필터로 토글.
+   * 이 값은 사용자가 필터를 바꿔도 다른 카운트와 분리되어 보이도록 해당 필터를 빼고 계산한다.
+   */
+  const withoutTerritoryCount = useMemo(() => {
+    const query = searchQuery.trim();
+    return candidates.reduce((acc, notice) => {
+      if (query && !matchesSearch(notice, query)) return acc;
+      if (!matchesProduct(notice, selectedProduct)) return acc;
+      if (showSavedOnly && !savedIds.includes(notice.id)) return acc;
+      return acc + (isWithoutTerritory(notice) ? 1 : 0);
+    }, 0);
+  }, [candidates, searchQuery, selectedProduct, showSavedOnly, savedIds]);
 
   const handleToggleSave = (id: string) => {
     setSavedIds((prev) =>
@@ -453,6 +501,31 @@ export default function Home() {
                   ▼
                 </span>
               </label>
+
+              {/*
+                담당본부 없음 건수 chip — 한 번 클릭으로 "담당본부 없음" 필터를 토글한다.
+                현재 territoryFilter 가 이미 "withoutTerritory" 면 강조 색으로 표시.
+              */}
+              <button
+                type="button"
+                onClick={() =>
+                  setTerritoryFilter(
+                    territoryFilter === "withoutTerritory" ? "all" : "withoutTerritory",
+                  )
+                }
+                aria-pressed={territoryFilter === "withoutTerritory"}
+                title="담당본부가 비어있거나 미매칭인 공고만 빠르게 필터링"
+                className={`inline-flex h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
+                  territoryFilter === "withoutTerritory"
+                    ? "bg-rose-600 text-white shadow-sm hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-400"
+                    : withoutTerritoryCount > 0
+                      ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30 dark:hover:bg-rose-500/25"
+                      : "bg-slate-50 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-white/10"
+                }`}
+              >
+                본부 미매칭
+                <span className="tabular-nums">{withoutTerritoryCount}건</span>
+              </button>
 
               <button
                 type="button"

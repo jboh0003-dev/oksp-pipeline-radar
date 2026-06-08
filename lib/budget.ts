@@ -88,34 +88,51 @@ export function formatBudgetWon(amount: number | null | undefined): string | nul
 }
 
 /**
- * 한글 금액 표기. (3억 2천만 원, 1억 원, 875만 원, 5천 원 등)
- * 가독성을 위해 0 인 자리는 생략하고, 너무 작은 값(만 미만)은 단위를 생략한 채 "원" 만.
+ * 한글 금액 표기.
+ *
+ * 정책:
+ *  - 1억 이상   : "38억 4,359만 원" 처럼 억/만 단위까지만 표기. 만 미만은 버린다.
+ *  - 1억 미만   : "8,500만 원" 처럼 만 단위로만 표기.
+ *  - 만 원 미만 : "1,000원" 처럼 원 단위로 콤마 + "원".
+ *  - 만 단위가 0 인 경우(예: 15억) : "15억 원" 처럼 0 만 부분은 생략.
+ *
+ * 모든 숫자 부분은 toLocaleString("ko-KR") 으로 천 단위 콤마를 적용한다.
  */
 export function formatBudgetKorean(amount: number | null | undefined): string | null {
   if (amount == null || !Number.isFinite(amount) || amount <= 0) return null;
   const v = Math.round(amount);
+
+  if (v < 10_000) {
+    // 만 원 미만은 단위 없이 원 단위로만 표기.
+    return `${v.toLocaleString("ko-KR")}원`;
+  }
+
   const eok = Math.floor(v / 100_000_000);
   const remainAfterEok = v % 100_000_000;
   const man = Math.floor(remainAfterEok / 10_000);
-  const remainAfterMan = remainAfterEok % 10_000;
-  const cheon = Math.floor(remainAfterMan / 1_000);
+  // 만 미만(원 단위 잔여) 은 의도적으로 표기에서 제외 (보기 좋게 끊는다).
 
   const parts: string[] = [];
-  if (eok > 0) parts.push(`${eok}억`);
-  if (man >= 1_000) {
-    // 만 단위가 1000 이상이면 천만 단위 표기를 풀어쓰는 게 자연스럽다.
-    const cheonMan = Math.floor(man / 1_000);
-    const restMan = man % 1_000;
-    parts.push(`${cheonMan}천${restMan > 0 ? `${restMan}` : ""}만`);
-  } else if (man > 0) {
-    parts.push(`${man}만`);
-  }
-  if (eok === 0 && man === 0) {
-    if (cheon > 0) parts.push(`${cheon}천`);
-    if (parts.length === 0) parts.push(`${v}`);
+  if (eok > 0) parts.push(`${eok.toLocaleString("ko-KR")}억`);
+  if (man > 0) parts.push(`${man.toLocaleString("ko-KR")}만`);
+
+  if (parts.length === 0) {
+    // 도달하지 않을 가지(eok=0 && man=0 && v>=10000)는 방어 fallback.
+    return `${v.toLocaleString("ko-KR")}원`;
   }
   return `${parts.join(" ")} 원`;
 }
+
+/**
+ * 외부에서 자주 쓰는 별칭. 새 코드는 formatCurrency / formatKoreanCurrency 를 권장.
+ *  - formatCurrency(amount)        : "3,843,590,600원"
+ *  - formatKoreanCurrency(amount)  : "38억 4,359만 원"
+ *
+ * 0 / null / undefined 등 표시할 금액이 없는 경우 호출부에서 "금액 정보 없음" 으로 처리하기 쉽도록
+ * 동일하게 null 을 반환한다.
+ */
+export const formatCurrency = formatBudgetWon;
+export const formatKoreanCurrency = formatBudgetKorean;
 
 /**
  * 화면에 한 줄로 노출하기 좋은 통합 포맷.
