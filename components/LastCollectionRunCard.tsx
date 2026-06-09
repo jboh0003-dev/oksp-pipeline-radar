@@ -35,6 +35,7 @@ function pickItems(value: string[] | null | undefined): string[] {
 
 function extractSlotLabel(source: string | null | undefined): string | null {
   if (!source) return null;
+  if (source.endsWith(":daily")) return "daily";
   if (source.endsWith(":morning")) return "morning";
   if (source.endsWith(":afternoon")) return "afternoon";
   if (source.endsWith(":noon")) return "noon";
@@ -93,6 +94,9 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
           <span className="font-semibold text-slate-700 dark:text-slate-200">
             {CARD_TITLE}
           </span>
+          <span className="hidden text-[11px] font-normal text-slate-400 dark:text-slate-500 sm:inline">
+            (업데이트 주기 매일 08:30)
+          </span>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
             이력 없음
           </span>
@@ -113,7 +117,7 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
   // warnings 첫 줄 컨텍스트("slot=... · ..." 또는 "mode=manual · ...") 는 우측 메타에 따로 그리므로
   // 메시지 카운트에서 제외.
   const isContextLine = (msg: string) =>
-    /^slot=(morning|afternoon|noon)\s*·/.test(msg) || /^mode=(auto|manual)\s*·/.test(msg);
+    /^slot=(daily|morning|afternoon|noon)\s*·/.test(msg) || /^mode=(auto|manual)\s*·/.test(msg);
   const filteredWarnings = warnings.filter((m) => !isContextLine(m));
   const noticeCount = errors.length + filteredWarnings.length + (hasMessage ? 1 : 0);
 
@@ -156,6 +160,9 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
         <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
           <span aria-hidden className="text-blue-500 dark:text-blue-400">●</span>
           {CARD_TITLE}
+          <span className="ml-1 hidden text-[11px] font-normal text-slate-400 dark:text-slate-500 sm:inline">
+            (업데이트 주기 매일 08:30)
+          </span>
         </span>
         {modeBadge}
         {statusBadge}

@@ -1,12 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/collect-g2b?slot=morning",
+      "path": "/api/cron/collect-g2b?slot=daily",
       "schedule": "30 23 * * *"
-    },
-    {
-      "path": "/api/cron/collect-g2b?slot=afternoon",
-      "schedule": "0 5 * * *"
     }
   ]
 }

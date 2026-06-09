@@ -46,7 +46,13 @@ import {
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
 import { getPrimaryProduct, type PrimaryProduct } from "@/lib/primaryProduct";
-import { isKeyNew, recordSeenKeys, resetNewState, type SeenMap } from "@/lib/seenNotices";
+import {
+  isKeyNewInScope,
+  loadNewMap,
+  markNewItemsBySnapshot,
+  resetNewSnapshot,
+  type NewMap,
+} from "@/lib/newState";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
@@ -123,18 +129,19 @@ function buildNoticeHaystack(notice: DisplayNotice): string {
  *  - 테스트 URL 제외.
  *  - 제품 매칭(CONTRABASS / VIOLA) 이 한 번이라도 잡힌 경우만 포함.
  *
- * 회의 피드백:
- *  "조회 6,213 / 매칭 201 인데 화면에 58 만 보인다" 는 문제의 원인 중 하나가
- *  여기서 `getDueStatus === "진행 중"` 까지 강제했기 때문. 마감지난 공고를 기본으로 숨길지는
- *  화면 토글(includeExpired) 로 분리해 사용자가 명시적으로 선택하게 한다.
- *  → 이 함수는 마감 여부를 검사하지 않고 "정말 의미 없는 row" 만 걸러낸다.
+ * 마감 여부는 여기서 검사하지 않는다 — visibleCandidates 단계에서 isOpenForReview 로 제외.
  */
 function isVisibleCandidate(notice: DisplayNotice): boolean {
   if (isTestNoticeUrl(notice.sourceUrl)) return false;
   return hasRealProductMatch(notice);
 }
 
-/** 진행 중(마감 전 또는 마감일 미상) 인지 — includeExpired=false 일 때 추가로 적용. */
+/**
+ * "진행 중(=마감 전 또는 마감일 미상)" 판단.
+ *  - 기본 화면(테이블 / 카드 / 표출 카운트)은 항상 이 함수로 마감 공고를 제외한다.
+ *  - "마감 포함" 토글은 더 이상 제공하지 않는다.
+ *  - TODO(고급필터): 추후 필요 시 "마감 포함" 옵션을 별도 고급 필터 메뉴에서 다시 노출.
+ */
 function isOpenForReview(notice: DisplayNotice): boolean {
   const status = getDueStatus(notice.deadline);
   return status === "진행 중" || status === "마감일 확인 필요";
@@ -267,14 +274,16 @@ async function attachRawData(
 }
 
 /**
- * announcementKey 기준 SeenMap 을 받아 각 공고에 isNew 플래그를 부착한다.
- * (24h 이내에 처음 들어온 공고만 isNew=true)
+ * announcementKey 기반 NewMap("이번 수집에서 새로 등장한 키") 을 받아 isNew 플래그를 부착.
+ *
+ * 정의: 이전 수집 snapshot 에는 없었지만 이번 수집 snapshot 에 새로 등장한 공고이며,
+ *       등록 시각이 24시간 이내인 경우만 isNew=true.
  */
-function applyNewFlags(notices: DisplayNotice[], seenMap: SeenMap): DisplayNotice[] {
+function applyNewFlags(notices: DisplayNotice[], newMap: NewMap): DisplayNotice[] {
   const now = Date.now();
   return notices.map((n) => ({
     ...n,
-    isNew: isKeyNew(getAnnouncementKey(n), seenMap, now),
+    isNew: isKeyNewInScope("bid", getAnnouncementKey(n), newMap, now),
   }));
 }
 
@@ -292,14 +301,14 @@ export default function Home() {
   const [territoryFilter, setTerritoryFilter] = useState<TerritoryFilter>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
-  /** "신규" 필터 — 켜면 24h 이내 처음 들어온 공고만 표시. */
+  /** "신규" 필터 — 켜면 이번 수집 snapshot 에서 새로 등장한 공고만 표시. */
   const [showNewOnly, setShowNewOnly] = useState(false);
-  /**
-   * "마감 포함" 토글.
-   *  - false (기본): 진행 중 + 마감일 미상만 표시. 영업이 검토할 만한 공고만 보여 시각적 노이즈 ↓.
-   *  - true       : 마감 지난 공고까지 모두 표시. "매칭 N건이 어디에 있나?" 의문을 풀 수 있게.
+  /*
+   * 마감(deadline 지난) 공고는 항상 화면에서 제외한다.
+   *  - 기본 테이블 / 전체 카드 / 제품 카드 / 표출 수 모두 진행 중 기준.
+   *  - "마감 포함" 토글은 더 이상 제공하지 않는다.
+   *  - TODO(고급필터): 추후 "마감 포함"이 필요한 케이스가 생기면 별도 고급 필터 메뉴로 추가.
    */
-  const [includeExpired, setIncludeExpired] = useState(false);
   /** 피드백 — 영업대표가 공고/키워드/본부 매칭에 대해 남기는 의견. localStorage 1차 저장. */
   const [feedbackList, setFeedbackList] = useState<AnnouncementFeedback[]>([]);
   /** 모달 대상 공고. null 이면 닫힌 상태. */
@@ -376,11 +385,12 @@ export default function Home() {
       }));
       const deduped = dedupeByAnnouncementKey(enriched);
 
-      // 처음 보는 공고는 firstSeenAt = now 로 기록.
+      // snapshot diff — 이번 수집에 "새로 등장한" 키만 NEW 로 표시.
+      // (어제 있던 공고가 오늘도 있으면 신규 아님)
       const keys = deduped.map((n) => getAnnouncementKey(n));
-      const { newKeys, map } = recordSeenKeys(keys);
+      const { newKeys, newMap } = markNewItemsBySnapshot("bid", keys);
 
-      const flagged = applyNewFlags(deduped, map);
+      const flagged = applyNewFlags(deduped, newMap);
       setNotices(flagged);
       setDataSource(result.source);
       setErrorMessage(result.error);
@@ -417,9 +427,10 @@ export default function Home() {
         primaryProduct: getPrimaryProduct(n as DisplayNotice),
       })) as DisplayNotice[];
       const deduped = dedupeByAnnouncementKey(enriched);
-      // 캐시는 SeenMap 변경 없이 표시만. (isNew 는 새 fetch 가 끝나면 다시 계산)
-      const seenSnapshot: SeenMap = {};
-      const flagged = applyNewFlags(deduped, seenSnapshot);
+      // 캐시 페인트 시점에서도 newMap 을 읽어 isNew 를 정확히 부착한다.
+      // (저장만 하고 갱신은 하지 않음 — markNewItemsBySnapshot 호출은 fresh fetch 후에만)
+      const newMap = loadNewMap("bid");
+      const flagged = applyNewFlags(deduped, newMap);
       setNotices(flagged);
       setDataSource(cached.source);
       setIsLoading(false);
@@ -465,20 +476,40 @@ export default function Home() {
   );
 
   /**
-   * 마감 처리까지 적용한 화면 노출 후보.
-   *  - includeExpired=false : 진행 중 + 마감일 미상만 (기본).
-   *  - includeExpired=true  : 마감 지난 공고 포함 — 매칭 N건 모두를 페이지네이션으로 도달 가능.
+   * 화면 노출 후보 — 마감(deadline 지난) 공고는 항상 제외.
+   * 기본 테이블 / 전체 카드 / 제품 카드 / 표출 수 모두 이 집합 위에서 계산한다.
+   * (TODO 고급필터: 추후 필요 시 별도 토글을 둬서 마감 포함 보기를 옵션으로 제공)
    */
   const visibleCandidates = useMemo(
-    () =>
-      includeExpired
-        ? candidates
-        : candidates.filter((notice) => isOpenForReview(notice)),
-    [candidates, includeExpired],
+    () => candidates.filter((notice) => isOpenForReview(notice)),
+    [candidates],
   );
 
   const summaryCounts = useMemo(
     () => countSummaryForCards(visibleCandidates),
+    [visibleCandidates],
+  );
+
+  /**
+   * 상단 통계용 추가 지표.
+   *  - productMatchTotal : products 배열 기준 (notice, product) 매칭 관계 수. 한 공고에 두 제품이
+   *    매칭되면 +2. "제품매칭"으로 화면에 표시.
+   *  - multiMatchCount   : products 가 2개 이상인 공고 수. "복수매칭"으로 화면에 표시.
+   *  - 모두 visibleCandidates(=진행 중) 기준으로 계산해 사용자가 보는 표/카드와 일치시킨다.
+   */
+  const productMatchTotal = useMemo(
+    () =>
+      visibleCandidates.reduce(
+        (sum, n) => sum + (Array.isArray(n.relatedProducts) ? n.relatedProducts.length : 0),
+        0,
+      ),
+    [visibleCandidates],
+  );
+  const multiMatchCount = useMemo(
+    () =>
+      visibleCandidates.filter(
+        (n) => Array.isArray(n.relatedProducts) && n.relatedProducts.length >= 2,
+      ).length,
     [visibleCandidates],
   );
 
@@ -573,10 +604,13 @@ export default function Home() {
 
   /** 표출 카운트 — 페이지네이션 적용 후 화면에 실제로 보이는 건수. */
   const displayedCount = pagedNotices.length;
-  /** 매칭 모집단 — 제품 매칭이 잡힌 전체 건수. (마감 포함 여부와 무관하게 모두) */
-  const matchedTotal = candidates.length;
+  /**
+   * "진행중" 기준 unique 공고 수 — 상단 통계에서 사용자가 헷갈리지 않도록 매칭이 아닌 진행 중을 노출.
+   * (= visibleCandidates.length, 마감 제외)
+   */
+  const activeTotal = visibleCandidates.length;
 
-  // 필터/검색/페이지사이즈/마감토글이 바뀌면 1페이지로 리셋.
+  // 필터/검색/페이지사이즈가 바뀌면 1페이지로 리셋.
   useEffect(() => {
     setCurrentPage(1);
   }, [
@@ -586,7 +620,6 @@ export default function Home() {
     showSavedOnly,
     showNewOnly,
     showFeedbackOnly,
-    includeExpired,
     pageSize,
   ]);
   // currentPage 가 totalPages 를 넘기면 자동으로 마지막 페이지로.
@@ -607,15 +640,15 @@ export default function Home() {
   };
 
   /**
-   * "신규 표시 초기화" — 회의 피드백.
-   *  - 잘못된 데이터 / 첫 진입 폭주 등으로 모든 공고가 신규로 보이는 경우 사용자가 수동 복구.
-   *  - 현재 화면에 들어와있는 announcementKey 들을 전부 stale 로 시드 → NEW 즉시 사라짐.
-   *  - 다음 수집부터는 새 키만 NEW 로 표시되는 정상 흐름으로 복귀.
+   * "신규 표시 초기화".
+   *  - 현재 화면(activeItems) 의 키들을 lastSnapshotKeys 로 강제 저장.
+   *  - newMap 비우기 → 화면의 신규 0건 처리.
+   *  - 다음 수집부터는 정상 snapshot diff 로 새 키만 NEW 로 표시.
    */
   const handleResetNewState = () => {
     const keys = notices.map((n) => getAnnouncementKey(n));
-    const map = resetNewState(keys);
-    setNotices((prev) => applyNewFlags(prev, map));
+    const newMap = resetNewSnapshot("bid", keys);
+    setNotices((prev) => applyNewFlags(prev, newMap));
     setShowNewOnly(false);
     setCollectToast("신규 표시를 초기화했습니다");
   };
@@ -702,8 +735,8 @@ export default function Home() {
     setManualStatus("success");
     setManualMessage(`수집 완료: ${parts.join(" / ")}`);
 
-    // 사용자에게 즉시 보이는 신규 공고 건수를 토스트로 안내. (loadNotices 가 SeenMap 비교로
-    // 산출한 값이라 이번 수집에서 화면에 새로 등장한 공고만 잡힌다.)
+    // 사용자에게 즉시 보이는 신규 공고 건수를 토스트로 안내. (loadNotices 가 snapshot diff 로
+    // 산출한 값이라 이번 수집에서 새로 등장한 공고만 잡힌다.)
     if (newCount > 0) {
       setCollectToast(`신규 ${newCount.toLocaleString("ko-KR")}건이 추가됐어요`);
     }
@@ -734,7 +767,7 @@ export default function Home() {
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
         <Header
-          matchedCount={matchedTotal}
+          matchedCount={activeTotal}
           filteredCount={displayedCount}
           fromCache={fromCache}
         />
@@ -804,28 +837,13 @@ export default function Home() {
               </button>
 
               {/*
-                "마감 포함" 토글.
-                기본은 OFF (진행 중 + 마감일 미상만 표시) — 영업이 검토할 만한 공고에 집중.
-                ON 으로 바꾸면 매칭된 모든 공고(이미 마감된 공고 포함)를 페이지네이션으로 모두 확인할 수 있다.
-                "조회 6,213 / 매칭 201 인데 화면에 58 만 보인다" 의문을 해결하기 위한 명시적 옵션.
+                마감 공고는 기본 화면에서 항상 제외한다 — "마감 포함" 토글은 더 이상 제공하지 않는다.
+                (TODO 고급필터: 추후 필요 시 별도 메뉴로 마감 포함 보기 옵션 추가)
               */}
-              <button
-                type="button"
-                onClick={() => setIncludeExpired((prev) => !prev)}
-                aria-pressed={includeExpired}
-                title="마감 지난 공고까지 표시할지 여부"
-                className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
-                  includeExpired
-                    ? "bg-amber-500 text-white shadow-sm hover:bg-amber-600 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
-                    : "bg-slate-100 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
-                }`}
-              >
-                {includeExpired ? "마감 포함 (켜짐)" : "마감 포함"}
-              </button>
 
               {/*
-                "신규" 필터 — announcementKey 기반 SeenMap 으로 24h 이내 처음 들어온 공고만 추린다.
-                미적용 시 카운트만 안내 (예: "신규 3"), 적용 시 강조 색.
+                "신규" 필터 — snapshot diff 기준. 이전 수집에는 없었지만 이번 수집에 새로 등장한 공고만.
+                미적용 시 카운트만 안내 (예: "신규 3"), 0건이면 강조하지 않는다.
               */}
               <button
                 type="button"
@@ -974,37 +992,55 @@ export default function Home() {
 
         {/*
           상단 표출 카운트 + 페이지 사이즈 선택 + 페이지 이동 — PC/모바일 공통.
-          "조회 X / 매칭 Y / 표출 N" 의 3-tier 관계를 사용자에게 명확히 전달한다.
-            - 조회: 마지막 수집 fetched_count (없으면 미표시)
-            - 매칭: 제품 매칭이 잡힌 전체 모집단 (마감 포함)
-            - 표출: 현재 화면 필터/검색/페이지 적용 후 실제 보이는 건수
+          기준 (사용자 혼동 방지):
+            - 조회      : 마지막 수집 fetched_count (G2B 원천 조회 수, 없으면 미표시)
+            - 진행중    : 제품 매칭 + 마감 제외 후 unique 공고 수
+            - 제품매칭  : products 배열 기준 (notice, product) 매칭 관계 수 (한 공고에 두 제품이면 +2)
+            - 표출      : 현재 화면 필터/검색/페이지 적용 후 실제 보이는 건수 (1-50 / N건 형태)
+            - 복수매칭  : products 가 2개 이상인 공고 수
         */}
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
-          <p className="text-slate-600 dark:text-slate-300">
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
             {lastRun?.fetched_count != null && (
-              <>
+              <span title="G2B 원천 조회 수 (마지막 수집 기준)">
                 <span className="text-slate-500 dark:text-slate-400">조회 </span>
-                <span className="font-semibold tabular-nums">{lastRun.fetched_count.toLocaleString("ko-KR")}</span>
-                <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
-              </>
-            )}
-            <span className="text-slate-500 dark:text-slate-400">매칭 </span>
-            <span className="font-semibold tabular-nums">{matchedTotal.toLocaleString("ko-KR")}</span>
-            <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
-            <span className="text-slate-500 dark:text-slate-400">표출 </span>
-            <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-              {totalFiltered === 0
-                ? "0"
-                : pageSize === 0
-                  ? `1-${totalFiltered.toLocaleString("ko-KR")}`
-                  : `${(pageStartIndex + 1).toLocaleString("ko-KR")}-${pageEndIndex.toLocaleString("ko-KR")}`}
-            </span>
-            <span className="text-slate-500 dark:text-slate-400"> / {totalFiltered.toLocaleString("ko-KR")}건</span>
-            {!includeExpired && totalFiltered < matchedTotal && (
-              <span className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30">
-                마감 포함 켜면 {matchedTotal.toLocaleString("ko-KR")}건 모두 표시
+                <span className="font-semibold tabular-nums">
+                  {lastRun.fetched_count.toLocaleString("ko-KR")}
+                </span>
               </span>
             )}
+            <span title="제품 매칭 + 마감 제외, unique 공고 수">
+              <span className="text-slate-500 dark:text-slate-400">진행중 </span>
+              <span className="font-semibold tabular-nums">
+                {activeTotal.toLocaleString("ko-KR")}
+              </span>
+            </span>
+            <span title="products 배열 기준 매칭 관계 수 — 복수 제품 매칭 시 중복 포함">
+              <span className="text-slate-500 dark:text-slate-400">제품매칭 </span>
+              <span className="font-semibold tabular-nums">
+                {productMatchTotal.toLocaleString("ko-KR")}
+              </span>
+            </span>
+            <span title="현재 필터 + 페이지네이션 기준">
+              <span className="text-slate-500 dark:text-slate-400">표출 </span>
+              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                {totalFiltered === 0
+                  ? "0"
+                  : pageSize === 0
+                    ? `1-${totalFiltered.toLocaleString("ko-KR")}`
+                    : `${(pageStartIndex + 1).toLocaleString("ko-KR")}-${pageEndIndex.toLocaleString("ko-KR")}`}
+              </span>
+              <span className="text-slate-500 dark:text-slate-400">
+                {" "}
+                / {totalFiltered.toLocaleString("ko-KR")}건
+              </span>
+            </span>
+            <span title="products 가 2개 이상인 공고 수">
+              <span className="text-slate-500 dark:text-slate-400">복수매칭 </span>
+              <span className="font-semibold tabular-nums">
+                {multiMatchCount.toLocaleString("ko-KR")}건
+              </span>
+            </span>
           </p>
 
           <div className="flex flex-wrap items-center gap-1.5">
@@ -1071,9 +1107,7 @@ export default function Home() {
                   ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
                   : hasActiveSearch && matchesExceptSearch.length > 0
                     ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
-                    : !includeExpired && matchedTotal > 0
-                      ? "진행 중 공고가 없습니다. 상단의 '마감 포함' 토글을 켜면 마감된 공고도 볼 수 있어요."
-                      : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
+                    : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
               </p>
             </div>
           )}

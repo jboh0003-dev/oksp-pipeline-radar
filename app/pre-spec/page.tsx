@@ -15,11 +15,12 @@ import {
   savePreSpecCache,
 } from "@/lib/preSpec/cache";
 import {
-  isPreSpecKeyNew,
-  recordPreSpecSeenKeys,
-  resetPreSpecSeen,
-  type PreSpecSeenMap,
-} from "@/lib/preSpec/seen";
+  isKeyNewInScope,
+  loadNewMap,
+  markNewItemsBySnapshot,
+  resetNewSnapshot,
+  type NewMap,
+} from "@/lib/newState";
 import type {
   PreSpecAnnouncement,
   PreSpecProduct,
@@ -51,19 +52,34 @@ function saveSavedKeys(keys: string[]) {
   }
 }
 
+/**
+ * snapshot 기반 NEW 판정 (입찰공고와 동일 정의).
+ *  - 신규 = "이전 수집 snapshot 에는 없고 이번 수집 snapshot 에 새로 등장한 announcementKey"
+ *  - 신규 표시는 24시간 동안 유지 → 자동으로 사라진다.
+ */
 function applyNewFlags(
   items: PreSpecAnnouncement[],
-  seenMap: PreSpecSeenMap,
+  newMap: NewMap,
   now: number = Date.now(),
 ): PreSpecAnnouncement[] {
   return items.map((it) => {
-    const isNew = isPreSpecKeyNew(it.announcementKey, seenMap, now);
+    const isNew = isKeyNewInScope("preSpec", it.announcementKey, newMap, now);
     return {
       ...it,
       isNew,
-      newAt: seenMap[it.announcementKey] ?? null,
+      newAt: newMap[it.announcementKey] ?? null,
     };
   });
+}
+
+/**
+ * 진행 중(=마감 안 된) 사전규격공고만 통과시키는 가드.
+ *  - opinionDeadline 이 지나 status === "마감" 인 항목은 항상 화면에서 제외.
+ *  - 의견마감일 미상("확인필요") 은 일단 노출.
+ *  - TODO(고급필터): 추후 필요 시 별도 토글로 마감 포함 보기 옵션 추가.
+ */
+function isOpenPreSpec(item: PreSpecAnnouncement): boolean {
+  return item.status !== "마감";
 }
 
 type CollectResp = {
@@ -226,10 +242,11 @@ export default function PreSpecPage() {
       setInfoMessage(json.message ?? null);
 
       const next = json.items;
-      // 신규 표시 — 최초 시드는 자동으로 stale (no NEW).
+      // snapshot diff — 이전 수집에는 없었지만 이번 수집에 새로 등장한 키만 NEW.
+      // 최초 시드는 자동으로 newMap 비움 (= 신규 0건).
       const keys = next.map((n) => n.announcementKey);
-      const { newKeys, map } = recordPreSpecSeenKeys(keys);
-      const flagged = applyNewFlags(next, map);
+      const { newKeys, newMap } = markNewItemsBySnapshot("preSpec", keys);
+      const flagged = applyNewFlags(next, newMap);
 
       // 담당본부 매칭 — 시간이 걸려도 화면에는 매칭 전 데이터를 먼저 띄우고 끝나면 update.
       setItems(flagged);
@@ -265,7 +282,10 @@ export default function PreSpecPage() {
 
     const cached = loadPreSpecCache();
     if (cached && cached.items.length > 0) {
-      setItems(cached.items);
+      // 캐시 페인트 시점에서도 newMap 을 읽어 isNew 를 정확히 다시 부착한다.
+      // (snapshot 갱신은 fresh fetch 후에만 수행)
+      const newMap = loadNewMap("preSpec");
+      setItems(applyNewFlags(cached.items, newMap));
       setLastFetchAt(cached.fetchedAt);
       setIsLoading(false);
       setFromCache(true);
@@ -320,24 +340,31 @@ export default function PreSpecPage() {
 
   const handleResetNew = () => {
     const keys = items.map((it) => it.announcementKey);
-    const map = resetPreSpecSeen(keys);
-    setItems((prev) => applyNewFlags(prev, map));
+    const newMap = resetNewSnapshot("preSpec", keys);
+    setItems((prev) => applyNewFlags(prev, newMap));
     setShowNewOnly(false);
   };
 
   const territoryOptions = useMemo(() => {
     const seen = new Set<string>();
-    for (const it of items) {
+    for (const it of items.filter(isOpenPreSpec)) {
       const t = it.customer?.territory;
       if (t && t !== "미매칭") seen.add(t);
     }
     return [...seen].sort((a, b) => a.localeCompare(b, "ko-KR"));
   }, [items]);
 
+  /**
+   * 진행 중(마감 안 된) 사전규격공고만 노출 후보.
+   * 기본 테이블 / 카드 / 표출 카운트 모두 이 집합 위에서 계산한다.
+   * (TODO 고급필터: 추후 마감 포함 보기 옵션을 별도 메뉴로 추가)
+   */
+  const visibleItems = useMemo(() => items.filter(isOpenPreSpec), [items]);
+
   // 1차 필터 (검색/제품/담당본부/임박/신규/관심/피드백)
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    return items.filter((it) => {
+    return visibleItems.filter((it) => {
       if (q) {
         const hay = [
           it.title,
@@ -364,7 +391,7 @@ export default function PreSpecPage() {
       return true;
     });
   }, [
-    items,
+    visibleItems,
     debouncedSearch,
     productFilter,
     territoryFilter,
@@ -376,29 +403,48 @@ export default function PreSpecPage() {
     feedbackMap,
   ]);
 
-  // 카운트
-  const matchedTotal = useMemo(() => items.length, [items]);
-  const productMatchedTotal = useMemo(
-    () => items.filter((it) => it.products.length > 0).length,
-    [items],
+  /*
+   * 상단 통계 (입찰공고와 동일 정의):
+   *  - 진행중      : 마감 제외 unique 공고 수 (= visibleItems.length)
+   *  - 제품매칭    : products.length 합계 (한 공고에 두 제품이면 +2, "관계 수")
+   *  - 복수매칭    : products 가 2개 이상인 공고 수
+   *  - CONTRABASS / VIOLA / CMP : 각 제품이 products 에 포함된 공고 수 (관련 매칭 · 중복 포함)
+   *  - 의견마감 임박 : status === "마감임박" — 보조지표
+   *  - 신규 / 피드백 / 매칭(전체 items.length) 도 함께 표시.
+   */
+  const matchedTotal = items.length; // "조회/매칭" 모집단 (마감 포함 raw 매칭 수)
+  const activeTotal = visibleItems.length;
+  const productMatchTotal = useMemo(
+    () =>
+      visibleItems.reduce(
+        (sum, it) => sum + (Array.isArray(it.products) ? it.products.length : 0),
+        0,
+      ),
+    [visibleItems],
+  );
+  const multiMatchCount = useMemo(
+    () =>
+      visibleItems.filter((it) => Array.isArray(it.products) && it.products.length >= 2)
+        .length,
+    [visibleItems],
   );
   const imminentTotal = useMemo(
-    () => items.filter((it) => it.status === "마감임박").length,
-    [items],
+    () => visibleItems.filter((it) => it.status === "마감임박").length,
+    [visibleItems],
   );
-  const newTotal = useMemo(() => items.filter((it) => it.isNew).length, [items]);
+  const newTotal = useMemo(() => visibleItems.filter((it) => it.isNew).length, [visibleItems]);
   const feedbackTotal = feedbackList.length;
   const contrabassTotal = useMemo(
-    () => items.filter((it) => it.products.includes("CONTRABASS")).length,
-    [items],
+    () => visibleItems.filter((it) => it.products.includes("CONTRABASS")).length,
+    [visibleItems],
   );
   const violaTotal = useMemo(
-    () => items.filter((it) => it.products.includes("VIOLA")).length,
-    [items],
+    () => visibleItems.filter((it) => it.products.includes("VIOLA")).length,
+    [visibleItems],
   );
   const cmpTotal = useMemo(
-    () => items.filter((it) => it.products.includes("CMP")).length,
-    [items],
+    () => visibleItems.filter((it) => it.products.includes("CMP")).length,
+    [visibleItems],
   );
 
   // 페이지네이션
@@ -507,45 +553,86 @@ export default function PreSpecPage() {
           </div>
         )}
 
-        {/* 상단 카드 */}
-        <section className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
-          <SummaryCard label="전체 사전규격" value={matchedTotal} note="중복제거 기준" tone="blue" />
-          <SummaryCard label="제품 매칭" value={productMatchedTotal} note="키워드 매칭 기준" tone="indigo" />
+        {/*
+          상단 카드 — 입찰공고와 동일 정의.
+            - 진행중   : 마감 제외 unique 공고 수
+            - 의견마감 임박 / 신규 / 피드백 : 보조지표
+          제품별 카드 (CONTRABASS / VIOLA / CMP) 는 products.includes 기준 (중복 포함).
+        */}
+        <section className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <SummaryCard label="진행중" value={activeTotal} note="마감 제외 · 중복제거" tone="blue" />
           <SummaryCard label="의견마감 임박" value={imminentTotal} note="3일 이내" tone="rose" />
-          <SummaryCard label="신규" value={newTotal} note="최근 24h" tone="amber" />
+          <SummaryCard label="신규" value={newTotal} note="이번 수집에 새로 등장" tone="amber" />
           <SummaryCard label="피드백" value={feedbackTotal} note="등록된 의견" tone="violet" />
         </section>
 
         {/* 제품별 카드 */}
-        <section className="mb-4 grid grid-cols-3 gap-2.5">
-          <SummaryCard label="CONTRABASS" value={contrabassTotal} note="관련 매칭 기준" tone="indigo" />
-          <SummaryCard label="VIOLA" value={violaTotal} note="관련 매칭 기준" tone="cyan" />
-          <SummaryCard label="CMP" value={cmpTotal} note="관련 매칭 기준" tone="emerald" />
+        <section className="mb-1 grid grid-cols-3 gap-2.5">
+          <SummaryCard label="CONTRABASS" value={contrabassTotal} note="관련 매칭 기준 · 중복 포함" tone="indigo" />
+          <SummaryCard label="VIOLA" value={violaTotal} note="관련 매칭 기준 · 중복 포함" tone="cyan" />
+          <SummaryCard label="CMP" value={cmpTotal} note="관련 매칭 기준 · 중복 포함" tone="emerald" />
         </section>
+        <p className="mb-4 mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+          제품별 수는 복수 제품 매칭 시 중복 집계됩니다.
+        </p>
 
-        {/* 수집 정보 띠 */}
+        {/*
+          수집 정보 띠 — 입찰공고와 동일 정의.
+            - 조회      : items 전체 (마감 포함, 매칭된 raw 모집단)
+            - 진행중    : 마감 제외 unique 공고 수
+            - 제품매칭  : products 배열 기준 (notice, product) 매칭 관계 수 (중복 포함 가능)
+            - 표출      : 현재 필터/페이지 적용 후 보이는 건수
+            - 복수매칭  : products 가 2개 이상인 공고 수
+        */}
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
-          <p className="text-slate-600 dark:text-slate-300">
-            <span className="text-slate-500 dark:text-slate-400">매칭 </span>
-            <span className="font-semibold tabular-nums">{matchedTotal.toLocaleString("ko-KR")}</span>
-            <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
-            <span className="text-slate-500 dark:text-slate-400">표출 </span>
-            <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-              {totalFiltered === 0
-                ? "0"
-                : pageSize === 0
-                  ? `1-${totalFiltered.toLocaleString("ko-KR")}`
-                  : `${(pageStart + 1).toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}`}
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
+            <span title="이번 수집에서 받은 raw 매칭 모집단 (마감 포함)">
+              <span className="text-slate-500 dark:text-slate-400">조회 </span>
+              <span className="font-semibold tabular-nums">
+                {matchedTotal.toLocaleString("ko-KR")}
+              </span>
             </span>
-            <span className="text-slate-500 dark:text-slate-400"> / {totalFiltered.toLocaleString("ko-KR")}건</span>
+            <span title="마감 제외 unique 공고 수">
+              <span className="text-slate-500 dark:text-slate-400">진행중 </span>
+              <span className="font-semibold tabular-nums">
+                {activeTotal.toLocaleString("ko-KR")}
+              </span>
+            </span>
+            <span title="products 배열 기준 매칭 관계 수 — 복수 제품 매칭 시 중복 포함">
+              <span className="text-slate-500 dark:text-slate-400">제품매칭 </span>
+              <span className="font-semibold tabular-nums">
+                {productMatchTotal.toLocaleString("ko-KR")}
+              </span>
+            </span>
+            <span title="현재 필터 + 페이지네이션 기준">
+              <span className="text-slate-500 dark:text-slate-400">표출 </span>
+              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                {totalFiltered === 0
+                  ? "0"
+                  : pageSize === 0
+                    ? `1-${totalFiltered.toLocaleString("ko-KR")}`
+                    : `${(pageStart + 1).toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}`}
+              </span>
+              <span className="text-slate-500 dark:text-slate-400">
+                {" "}
+                / {totalFiltered.toLocaleString("ko-KR")}건
+              </span>
+            </span>
+            <span title="products 가 2개 이상인 공고 수">
+              <span className="text-slate-500 dark:text-slate-400">복수매칭 </span>
+              <span className="font-semibold tabular-nums">
+                {multiMatchCount.toLocaleString("ko-KR")}건
+              </span>
+            </span>
             {fromCache && (
-              <span className="ml-2 rounded-full bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-700 ring-1 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-400/30">
+              <span className="rounded-full bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-700 ring-1 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-400/30">
                 cache
               </span>
             )}
             {lastFetchAt && (
-              <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
-                · 마지막 수집 {new Date(lastFetchAt).toLocaleString("ko-KR")}
+              <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                · 업데이트 주기 매일 08:30 · 마지막 수집{" "}
+                {new Date(lastFetchAt).toLocaleString("ko-KR")}
                 {lastDurationMs && ` (${Math.round(lastDurationMs / 1000)}s)`}
               </span>
             )}

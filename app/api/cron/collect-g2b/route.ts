@@ -12,19 +12,21 @@ const CRON_RESPONSE_SCHEMA_VERSION = 3;
 /**
  * 자동수집 슬롯 정의.
  *
- * - morning   : 한국시간 08:30 (UTC 23:30) — 1~20 페이지
- * - afternoon : 한국시간 14:00 (UTC 05:00) — 21~40 페이지
- * - noon      : 한국시간 12:30 (UTC 03:30) — 21~40 페이지 (legacy 호환용. 더 이상 cron 에서 호출되지 않음)
+ *  - daily     : 한국시간 08:30 (UTC 23:30) — 1~40 페이지 (현재 운영 기준)
+ *  - morning   : (legacy) 1~20 페이지 — 과거 morning 슬롯 호출 호환
+ *  - afternoon : (legacy) 21~40 페이지 — 과거 afternoon 슬롯 호출 호환
+ *  - noon      : (legacy) 21~40 페이지 — 과거 noon 슬롯 호출 호환
  *
- * 모든 슬롯이 lookbackDays 30, targetCount 100 으로 동일 정책.
- * 하루 2회로 페이지 범위만 분담해 누적 커버리지를 넓힌다.
+ * 운영은 매일 1회(daily) 로 단순화했고, legacy 슬롯은 호출되더라도 안전하게 동작하도록 유지.
+ * 모든 슬롯이 lookbackDays 30, targetCount 100 동일.
  */
-type Slot = "morning" | "afternoon" | "noon";
+type Slot = "daily" | "morning" | "afternoon" | "noon";
 
 const SLOT_PROFILES: Record<Slot, { pageStart: number; pageEnd: number }> = {
+  daily: { pageStart: 1, pageEnd: 40 },
   morning: { pageStart: 1, pageEnd: 20 },
   afternoon: { pageStart: 21, pageEnd: 40 },
-  // legacy 호환. 새 vercel.json 은 afternoon 만 사용한다.
+  // legacy 호환.
   noon: { pageStart: 21, pageEnd: 40 },
 };
 
@@ -35,31 +37,39 @@ const DEFAULTS = {
 
 /**
  * slot 결정 우선순위:
- *  1) `?slot=morning|noon` query string (vercel.json cron 정의에서 명시)
+ *  1) `?slot=daily|morning|afternoon|noon` query string (vercel.json cron 정의에서 명시)
  *  2) UTC hour 기준 fallback (Vercel cron 디스패치가 약간 늦어지거나 query 가 빠진 경우)
- *  3) 그 외 수동 호출 등 → "morning" 기본
+ *  3) 그 외 수동 호출 등 → "daily" 기본
  */
-function pickSlot(request: NextRequest): { slot: Slot; reason: "query" | "utc-hour" | "default" } {
+function pickSlot(request: NextRequest): {
+  slot: Slot;
+  reason: "query" | "utc-hour" | "default";
+} {
   const url = new URL(request.url);
   const fromQuery = url.searchParams.get("slot");
-  if (fromQuery === "morning" || fromQuery === "afternoon" || fromQuery === "noon") {
+  if (
+    fromQuery === "daily" ||
+    fromQuery === "morning" ||
+    fromQuery === "afternoon" ||
+    fromQuery === "noon"
+  ) {
     return { slot: fromQuery, reason: "query" };
   }
 
   const utcHour = new Date().getUTCHours();
-  // 23:30 UTC = morning slot, 05:00 UTC = afternoon slot.
-  // 디스패치 지연/타임존 grace 를 위해 인접 시각도 같은 슬롯으로 매핑.
+  // 23:30 UTC = daily slot (KST 08:30).
   if (utcHour === 23 || utcHour === 0) {
-    return { slot: "morning", reason: "utc-hour" };
+    return { slot: "daily", reason: "utc-hour" };
   }
+  // 05:00 UTC = afternoon slot (legacy).
   if (utcHour === 5 || utcHour === 6) {
     return { slot: "afternoon", reason: "utc-hour" };
   }
-  // 03~04 UTC 는 legacy noon 슬롯 시간대. afternoon 와 같은 페이지 범위.
+  // 03~04 UTC = noon slot (legacy).
   if (utcHour === 3 || utcHour === 4) {
     return { slot: "afternoon", reason: "utc-hour" };
   }
-  return { slot: "morning", reason: "default" };
+  return { slot: "daily", reason: "default" };
 }
 
 type CronResult = {

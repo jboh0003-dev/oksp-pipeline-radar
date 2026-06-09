@@ -44,15 +44,11 @@ const items: Array<{
 ];
 
 /**
- * 한 줄 인라인 형태(너무 작음) → 다시 적당한 크기의 3-column 카드로 복원.
- * 단, 기존만큼 거대하지 않게 padding/숫자 크기를 절제한다.
- * 카드 좌측에 컬러 아이콘을 두어 브랜드 톤을 살린다.
- *
- * 카운트 정책 (회의 피드백 — VIOLA 11→6 축소 문제 반영):
- *  - 진행 중 공고: announcementKey 로 dedup 한 unique 공고 수.
- *  - CONTRABASS / VIOLA: relatedProducts 에 해당 제품이 들어가면 카운트
- *    ("관련 매칭 기준 · 중복 포함"). 두 제품이 모두 매칭된 공고는 양쪽에 모두 +1.
- *  - 그래서 합계가 전체보다 커질 수 있다 → 카드 하단 보조문구로 명시.
+ * 카운트 정책 (사용자 혼동 방지 — "VIOLA 11→6 으로 줄어든다" 이슈 반영):
+ *  - 진행 중 공고: 마감 제외 + announcementKey 로 dedup 한 unique 공고 수.
+ *  - CONTRABASS / VIOLA: relatedProducts.includes 기준 — 해당 제품이 매칭에 한 번이라도 잡혀있으면 +1
+ *    ("관련 매칭 기준 · 중복 포함"). 두 제품이 모두 매칭된 공고는 양쪽 카드에 모두 +1.
+ *  - 그래서 제품별 합계가 전체("진행 중 공고")보다 클 수 있다 → 섹션 하단 안내 문구로 명시.
  *
  * 예산은 별도 합계 카드로 두지 않는다. 공고별 예산은 NoticeTable 의 "예산" 컬럼에서 표시한다.
  */
@@ -87,7 +83,7 @@ export default function SummaryCards(props: SummaryCardsProps) {
                 </p>
                 <p className="mt-1 truncate text-[10px] text-slate-400 dark:text-slate-500">
                   {item.key === "activeTotal"
-                    ? "중복제거 기준"
+                    ? "진행중 기준"
                     : "관련 매칭 기준 · 중복 포함"}
                 </p>
               </div>
@@ -95,6 +91,9 @@ export default function SummaryCards(props: SummaryCardsProps) {
           </div>
         ))}
       </div>
+      <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+        제품별 수는 복수 제품 매칭 시 중복 집계됩니다.
+      </p>
     </section>
   );
 }

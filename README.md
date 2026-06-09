@@ -4,7 +4,7 @@
 
 - 운영 도메인 (예정): `csg2b.okestro.com` (`NEXT_PUBLIC_APP_URL` 환경변수로 관리)
 - 데이터 소스: 나라장터(G2B) Open API + Supabase
-- 자동 수집: Vercel Cron (KST 08:30, 14:00) + 화면의 "지금 수집" 버튼
+- 자동 수집: Vercel Cron 매일 KST 08:30 (= UTC 23:30, `30 23 * * *`) + 화면의 "지금 수집" 버튼
 - 첫 진입 가속: 마지막 수집 결과를 localStorage 에 캐시(15분 TTL)해 즉시 렌더 후 백그라운드 새로고침
 
 ## 환경 변수
