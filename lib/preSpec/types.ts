@@ -36,6 +36,8 @@ export type PreSpecAnnouncement = {
 
   /** 사전규격등록번호. */
   preSpecRegNo?: string;
+  /** 업무구분 라벨 — 일반용역/물품/공사/외자 그대로 표시. */
+  bsnsDivLabel?: string;
   /** 사전규격명/사업명/품명. */
   title: string;
   /** 별도 사업명 (있을 때). */

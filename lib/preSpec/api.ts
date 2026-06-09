@@ -1,24 +1,31 @@
 /**
  * 조달청 나라장터 사전규격정보서비스 (HrcspSsstndrdInfoService) 호출 모듈.
  *
- * 1차 수집 대상:
- *  - 용역 (getPublicPrcureThngInfoServcPPSSrch)
- *  - 물품 (getPublicPrcureThngInfoThngPPSSrch)
+ * 실제 endpoint (probe 결과 검증 완료):
+ *   base : http://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService
+ *   ⚠️ 입찰공고는 /ad/ , 사전규격은 /ao/ — 경로가 다르다.
  *
- * 이후 확장:
- *  - 공사 (getPublicPrcureThngInfoCnstwkPPSSrch)
- *  - 외자 (getPublicPrcureThngInfoFrgcptPPSSrch)
+ * Operations:
+ *   - getPublicPrcureThngInfoServcPPSSrch  (용역)
+ *   - getPublicPrcureThngInfoThngPPSSrch   (물품)
+ *   - getPublicPrcureThngInfoCnstwkPPSSrch (공사)
+ *   - getPublicPrcureThngInfoFrgcptPPSSrch (외자)
  *
- * 주의:
- *  - public data API 의 정확한 endpoint 경로는 운영 환경에서 한 번 응답을 보고 미세 조정.
- *  - response.body.items.item 이 단일 객체일 수도 배열일 수도 있어 toArray 로 normalize.
- *  - serviceKey 는 G2B_SERVICE_KEY 환경변수를 재사용.
- *  - Concurrency 는 부담을 줄이기 위해 3 으로 제한 (외부 API 안정성 우선).
+ * 필수 파라미터:
+ *   serviceKey, pageNo, numOfRows, inqryDiv, inqryEndDt
+ *
+ * 응답 구조 (실제 응답 예):
+ *   { response: { header: { resultCode, resultMsg }, body: { totalCount, pageNo, numOfRows, items: [...] } } }
+ *
+ *   items 가 단일 객체로 올 수도 있음 → toArray 로 normalize.
+ *
+ * 1차 수집 대상: 용역 + 물품 (concurrency 3)
+ * 이후 확장: 공사, 외자
  */
 
 const DEFAULT_BASE_URL =
   process.env.G2B_PRESPEC_BASE_URL ??
-  "http://apis.data.go.kr/1230000/HrcspSsstndrdInfoService";
+  "http://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService";
 
 export type PreSpecCategory = "servc" | "thng" | "cnstwk" | "frgcpt";
 
@@ -27,6 +34,13 @@ const ENDPOINT_BY_CATEGORY: Record<PreSpecCategory, string> = {
   thng: "getPublicPrcureThngInfoThngPPSSrch",
   cnstwk: "getPublicPrcureThngInfoCnstwkPPSSrch",
   frgcpt: "getPublicPrcureThngInfoFrgcptPPSSrch",
+};
+
+export const PRE_SPEC_CATEGORY_LABEL: Record<PreSpecCategory, string> = {
+  servc: "용역",
+  thng: "물품",
+  cnstwk: "공사",
+  frgcpt: "외자",
 };
 
 export const DEFAULT_PRE_SPEC_CATEGORIES: PreSpecCategory[] = ["servc", "thng"];
@@ -41,15 +55,17 @@ export type PreSpecFetchPage = {
   items: Record<string, unknown>[];
   resultCode: string | null;
   resultMsg: string | null;
+  /** 페이지 단위 수집 시간 (ms) — 디버그/성능 진단용. */
+  durationMs?: number;
   error: string | null;
 };
 
 export type PreSpecFetchOptions = {
-  /** 조회 시작일 (yyyymmdd). */
+  /** 조회 시작일 (yyyymmddHHMM, 12자리). */
   inqryBgnDt: string;
-  /** 조회 종료일 (yyyymmdd). */
+  /** 조회 종료일 (yyyymmddHHMM). */
   inqryEndDt: string;
-  /** 한 카테고리당 최대 페이지 수. (totalCount 가 더 작으면 더 일찍 멈춤) */
+  /** 한 카테고리당 최대 페이지 수. */
   maxPagesPerCategory?: number;
   /** 사용할 카테고리. 기본 ["servc","thng"]. */
   categories?: PreSpecCategory[];
@@ -61,6 +77,10 @@ export type PreSpecFetchResult = {
   items: Record<string, unknown>[];
   pages: PreSpecFetchPage[];
   totalsByCategory: Partial<Record<PreSpecCategory, number>>;
+  /** 첫 페이지의 첫 아이템 sample — 디버깅용 (운영용 응답에서는 빈 객체일 수 있음). */
+  firstItemSample: Record<string, unknown> | null;
+  /** 첫 페이지에서 본 키 목록 — 필드 매핑 확장 시 참고. */
+  firstItemKeys: string[];
   errors: string[];
 };
 
@@ -97,13 +117,14 @@ async function fetchJson(url: string): Promise<unknown> {
   });
   const text = await resp.text();
   if (!resp.ok) {
+    // public data API 가 200 이 아닌 응답을 줄 때 본문에 의미 있는 메시지가 있는 경우가 많다.
     throw new Error(`HTTP ${resp.status} · ${text.slice(0, 200)}`);
   }
-  // 어떤 환경에선 XML/HTML 이 올 수 있다 — JSON 파싱 실패 시 그대로 throw.
+  // XML 응답이 섞여 올 수 있다 — JSON 파싱 실패 시 명확한 에러로 throw.
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`JSON 파싱 실패 · 응답 일부: ${text.slice(0, 200)}`);
+    throw new Error(`사전규격공고 응답 파싱 중 오류가 발생했습니다: ${text.slice(0, 200)}`);
   }
 }
 
@@ -140,8 +161,8 @@ function readItems(parsed: unknown): Record<string, unknown>[] {
   const response = (root.response as Record<string, unknown> | undefined) ?? root;
   const body = response.body as Record<string, unknown> | undefined;
   const items = body?.items;
-  // items 가 { item: [...] } 또는 [...] 또는 단일 객체일 수 있음
   if (!items) return [];
+  // 실제 응답: items 가 곧장 배열인 경우가 많다.
   if (Array.isArray(items)) return items as Record<string, unknown>[];
   if (typeof items === "object") {
     const inner = (items as Record<string, unknown>).item;
@@ -160,6 +181,7 @@ async function fetchOnePage(
 ): Promise<PreSpecFetchPage> {
   const endpoint = ENDPOINT_BY_CATEGORY[category];
   const url = buildUrl(baseUrl, endpoint, serviceKey, pageNo, inqryBgnDt, inqryEndDt);
+  const startedAt = Date.now();
   try {
     const parsed = await fetchJson(url);
     const { resultCode, resultMsg } = readHeader(parsed);
@@ -173,6 +195,7 @@ async function fetchOnePage(
       items,
       resultCode,
       resultMsg,
+      durationMs: Date.now() - startedAt,
       error: resultCode && resultCode !== "00" ? `${resultCode} · ${resultMsg ?? ""}` : null,
     };
   } catch (err) {
@@ -184,12 +207,13 @@ async function fetchOnePage(
       items: [],
       resultCode: null,
       resultMsg: null,
+      durationMs: Date.now() - startedAt,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 }
 
-/** Promise.allSettled + concurrency 제한 — n 개씩 병렬, 작업이 끝나는 대로 다음을 시작. */
+/** Promise.all + concurrency 제한 — 작업이 끝나는 대로 다음을 시작. */
 async function runWithConcurrency<T>(
   tasks: (() => Promise<T>)[],
   concurrency: number,
@@ -199,13 +223,7 @@ async function runWithConcurrency<T>(
   async function worker() {
     while (cursor < tasks.length) {
       const idx = cursor++;
-      try {
-        results[idx] = await tasks[idx]();
-      } catch (err) {
-        // task 안에서 throw 하지 않도록 했지만, 만일을 위해 fallback.
-        // @ts-expect-error 가능한 한 호출자 타입을 그대로 유지
-        results[idx] = err;
-      }
+      results[idx] = await tasks[idx]();
     }
   }
   await Promise.all(
@@ -266,15 +284,34 @@ export async function fetchPreSpecAnnouncements(
     }
   }
 
+  const firstItemSample = allItems[0] ?? null;
+  const firstItemKeys = firstItemSample ? Object.keys(firstItemSample).slice(0, 30) : [];
+
+  // 개발 환경에서만 첫 응답 sample 을 console 에 남긴다.
+  // 운영(production) 에서는 노이즈를 줄이기 위해 stop.
+  if (process.env.NODE_ENV !== "production" && firstItemSample) {
+    // eslint-disable-next-line no-console
+    console.log("[PRE_SPEC_ITEMS_SAMPLE]", {
+      totalsByCategory,
+      firstItemKeys,
+      firstItem: firstItemSample,
+    });
+  }
+
   return {
     items: allItems,
     pages: allPages,
     totalsByCategory,
+    firstItemSample,
+    firstItemKeys,
     errors,
   };
 }
 
-/** 오늘 / 오늘-N일 의 yyyymmdd 문자열 한 쌍 반환 (KST 기준). */
+/**
+ * KST 기준 오늘 / 오늘-N일 의 yyyymmddHHMM (12자리) 한 쌍 반환.
+ * (사전규격 API 는 14자리 yyyymmddHHMMSS 도 받지만 12자리만으로 충분히 동작.)
+ */
 export function getInquiryRangeYyyymmdd(daysBack: number): {
   inqryBgnDt: string;
   inqryEndDt: string;
@@ -286,7 +323,7 @@ export function getInquiryRangeYyyymmdd(daysBack: number): {
     return `${y}${m}${dd}0000`;
   };
   const end = new Date();
-  // 한국시간 보정 (UTC+9)
+  // KST 기준으로 만들기 — UTC 에 9시간 더하면 KST 의 "지금".
   end.setHours(end.getHours() + 9);
   const start = new Date(end.getTime() - daysBack * 24 * 60 * 60 * 1000);
   return { inqryBgnDt: fmt(start), inqryEndDt: fmt(end) };

@@ -11,13 +11,24 @@ import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 /**
  * GET /api/pre-spec/collect
  *
- * 쿼리:
- *  - days       : 조회 기간 (기본 30, 옵션 7/30/90)
- *  - cats       : 콤마 구분된 PreSpecCategory ("servc,thng" 등). 기본은 servc+thng.
- *  - maxPages   : 카테고리당 최대 페이지 수 (기본 5)
+ * Query 파라미터:
+ *   days     : 1..90, 기본 30
+ *   cats     : 콤마 구분 PreSpecCategory ("servc,thng,cnstwk,frgcpt"). 기본 servc+thng.
+ *   maxPages : 카테고리당 최대 페이지 수 (기본 5, 1..50)
  *
- * 응답:
- *  - ok, items: PreSpecAnnouncement[], totalsByCategory, errors, durationMs
+ * 응답 (성공):
+ *   {
+ *     ok: true,
+ *     items: PreSpecAnnouncement[],
+ *     totalsByCategory,
+ *     errors,
+ *     inqryBgnDt, inqryEndDt, days, cats,
+ *     debug: { firstItemKeys, firstItemSample },
+ *     durationMs
+ *   }
+ *
+ * 응답 (실패):
+ *   { ok: false, error: <message>, items: [], errors: [...] }
  */
 
 export const dynamic = "force-dynamic";
@@ -47,14 +58,14 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const days = parseInt(url.searchParams.get("days"), 30, 1, 90);
   const cats = parseCats(url.searchParams.get("cats"));
-  const maxPagesPerCategory = parseInt(url.searchParams.get("maxPages"), 5, 1, 20);
+  const maxPagesPerCategory = parseInt(url.searchParams.get("maxPages"), 5, 1, 50);
 
   const serviceKey = process.env.G2B_SERVICE_KEY;
   if (!serviceKey) {
     return NextResponse.json(
       {
         ok: false,
-        error: "G2B_SERVICE_KEY 환경변수가 설정되어 있지 않습니다.",
+        error: "G2B service key가 설정되지 않았습니다.",
         items: [],
         totalsByCategory: {},
         errors: ["missing_service_key"],
@@ -89,30 +100,46 @@ export async function GET(request: Request) {
     );
   }
 
-  // 정규화 + dedup (announcementKey 기준).
+  // 정규화 + dedup (announcementKey 기준)
   const seen = new Set<string>();
   const items: PreSpecAnnouncement[] = [];
   let i = 0;
   for (const raw of result.items) {
     const fallback = `pre-spec-${i++}`;
-    const norm = normalizePreSpecItem(raw, fallback);
+    let norm: PreSpecAnnouncement;
+    try {
+      norm = normalizePreSpecItem(raw, fallback);
+    } catch (err) {
+      // 단건 정규화 실패는 errors 에 기록하고 계속.
+      result.errors.push(
+        `[normalize] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
     if (!norm.announcementKey || seen.has(norm.announcementKey)) continue;
     seen.add(norm.announcementKey);
     items.push(norm);
   }
 
   const durationMs = Date.now() - startedAt;
-  const ok = items.length > 0 || result.errors.length === 0;
+  // 데이터가 0건 + 페이지 에러도 0개면 "조건에 맞는 결과 없음" 으로 안내.
+  const noData = items.length === 0 && result.errors.length === 0;
 
   return NextResponse.json({
-    ok,
+    ok: !noData || result.errors.length === 0, // 에러가 있으면 ok=false 로 판단되도록
     items,
     totalsByCategory: result.totalsByCategory,
     errors: result.errors,
+    message: noData ? "조건에 맞는 사전규격공고가 없습니다." : undefined,
     inqryBgnDt,
     inqryEndDt,
     days,
     cats,
+    debug: {
+      firstItemKeys: result.firstItemKeys,
+      firstItemSample: result.firstItemSample,
+      pageCount: result.pages.length,
+    },
     durationMs,
   });
 }

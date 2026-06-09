@@ -70,10 +70,87 @@ type CollectResp = {
   ok: boolean;
   items?: PreSpecAnnouncement[];
   error?: string;
+  message?: string;
   totalsByCategory?: Record<string, number>;
   errors?: string[];
   durationMs?: number;
+  inqryBgnDt?: string;
+  inqryEndDt?: string;
+  days?: number;
+  cats?: string[];
+  debug?: {
+    firstItemKeys?: string[];
+    firstItemSample?: Record<string, unknown> | null;
+    pageCount?: number;
+  };
 };
+
+type CustomerMatchPayload = {
+  customerName: string;
+  accountType: string | null;
+  territory: string | null;
+  regionGroup: string | null;
+  region: string | null;
+  matchType: string;
+};
+
+/** 정규화된 PreSpec 목록에 customer-accounts 매칭을 붙여서 department/region/customer 를 채워준다. */
+async function applyCustomerMatching(
+  items: PreSpecAnnouncement[],
+): Promise<PreSpecAnnouncement[]> {
+  if (items.length === 0) return items;
+  const uniqueAgencies = Array.from(
+    new Set(
+      items
+        .flatMap((it) => [it.orgName, it.demandOrgName ?? ""])
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && s !== "(기관 미상)"),
+    ),
+  );
+  if (uniqueAgencies.length === 0) return items;
+
+  // 한 번에 1000개 상한이 있으니 청크로 나눠 호출.
+  const CHUNK = 800;
+  const matches: Record<string, CustomerMatchPayload> = {};
+  for (let i = 0; i < uniqueAgencies.length; i += CHUNK) {
+    const slice = uniqueAgencies.slice(i, i + CHUNK);
+    try {
+      const res = await fetch("/api/customer-accounts/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agencies: slice }),
+      });
+      if (!res.ok) continue;
+      const json = (await res.json()) as { matches?: Record<string, CustomerMatchPayload> };
+      Object.assign(matches, json.matches ?? {});
+    } catch {
+      // 네트워크 오류 무시 — 매칭 없이도 화면은 떠야 한다.
+    }
+  }
+
+  return items.map((it) => {
+    // 발주기관 우선, 없으면 수요기관 으로 매칭.
+    const m =
+      (it.orgName && matches[it.orgName]) ||
+      (it.demandOrgName && matches[it.demandOrgName]) ||
+      undefined;
+    if (!m) return it;
+    return {
+      ...it,
+      customer: {
+        customerName: m.customerName,
+        territory: m.territory ?? "미매칭",
+        accountType: m.accountType ?? "-",
+        region: m.region ?? null,
+        regionGroup: m.regionGroup ?? null,
+      },
+      department: m.territory && m.territory.trim() ? m.territory : "미매칭",
+      namedType:
+        m.accountType === "Named" || m.accountType === "Non Named" ? m.accountType : "-",
+      region: m.region ?? undefined,
+    };
+  });
+}
 
 /**
  * 사전규격공고 대시보드.
@@ -90,12 +167,20 @@ export default function PreSpecPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [fromCache, setFromCache] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /** API 가 명시적으로 알려주는 안내 메시지(데이터 없음 등). */
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  /** API 응답의 errors 배열 — 카테고리별 페이지 에러 등. */
+  const [apiErrors, setApiErrors] = useState<string[]>([]);
+  /** debug panel 표시 여부 (응답의 debug 정보). */
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<CollectResp["debug"]>(undefined);
   const [collectStatus, setCollectStatus] = useState<"idle" | "running" | "success" | "error">(
     "idle",
   );
   const [collectMessage, setCollectMessage] = useState<string | null>(null);
   const [lastFetchAt, setLastFetchAt] = useState<number | null>(null);
   const [lastDurationMs, setLastDurationMs] = useState<number | null>(null);
+  const [totalsByCategory, setTotalsByCategory] = useState<Record<string, number>>({});
 
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
@@ -119,24 +204,35 @@ export default function PreSpecPage() {
   const fetchInFlightRef = useRef(false);
 
   /** 사전규격 수집 — /api/pre-spec/collect 호출 → 정규화 + dedup 은 서버에서 끝났음. */
-  const refresh = useCallback(async (): Promise<{ newCount: number }> => {
-    if (fetchInFlightRef.current) return { newCount: 0 };
+  const refresh = useCallback(async (): Promise<{ newCount: number; ok: boolean }> => {
+    if (fetchInFlightRef.current) return { newCount: 0, ok: false };
     fetchInFlightRef.current = true;
     const started = Date.now();
     try {
       const res = await fetch("/api/pre-spec/collect?days=30", { method: "GET" });
       const json = (await res.json()) as CollectResp;
+
+      // 서버가 보내준 진단 정보를 항상 반영 (성공/실패 상관없이).
+      setApiErrors(json.errors ?? []);
+      setDebugInfo(json.debug);
+      setTotalsByCategory(json.totalsByCategory ?? {});
+
       if (!json.ok || !Array.isArray(json.items)) {
         setErrorMessage(json.error ?? "사전규격 수집 실패");
-        return { newCount: 0 };
+        setInfoMessage(null);
+        return { newCount: 0, ok: false };
       }
+      setErrorMessage(null);
+      setInfoMessage(json.message ?? null);
+
       const next = json.items;
       // 신규 표시 — 최초 시드는 자동으로 stale (no NEW).
       const keys = next.map((n) => n.announcementKey);
       const { newKeys, map } = recordPreSpecSeenKeys(keys);
       const flagged = applyNewFlags(next, map);
+
+      // 담당본부 매칭 — 시간이 걸려도 화면에는 매칭 전 데이터를 먼저 띄우고 끝나면 update.
       setItems(flagged);
-      setErrorMessage(null);
       const now = Date.now();
       const duration = now - started;
       savePreSpecCache(flagged, now);
@@ -144,10 +240,17 @@ export default function PreSpecPage() {
       setLastFetchAt(now);
       setLastDurationMs(duration);
       setFromCache(false);
-      return { newCount: newKeys.length };
+
+      // 비동기 매칭 — Promise 끝나면 items 갱신 + cache 도 다시 저장.
+      void applyCustomerMatching(flagged).then((withCustomer) => {
+        setItems(withCustomer);
+        savePreSpecCache(withCustomer, Date.now());
+      });
+
+      return { newCount: newKeys.length, ok: true };
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
-      return { newCount: 0 };
+      return { newCount: 0, ok: false };
     } finally {
       fetchInFlightRef.current = false;
     }
@@ -191,10 +294,10 @@ export default function PreSpecPage() {
     if (collectStatus === "running") return;
     setCollectStatus("running");
     setCollectMessage("사전규격공고 수집 중... (수십 초 걸릴 수 있어요)");
-    const { newCount } = await refresh();
-    if (errorMessage) {
+    const { newCount, ok } = await refresh();
+    if (!ok) {
       setCollectStatus("error");
-      setCollectMessage(`수집 실패: ${errorMessage}`);
+      setCollectMessage(`수집 실패: ${errorMessage ?? "알 수 없는 오류"}`);
       return;
     }
     setCollectStatus("success");
@@ -337,6 +440,70 @@ export default function PreSpecPage() {
             <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
               {errorMessage}
             </p>
+            {apiErrors.length > 0 && (
+              <details className="mt-2 text-[11px]">
+                <summary className="cursor-pointer select-none font-semibold">
+                  세부 페이지 오류 {apiErrors.length}건
+                </summary>
+                <ul className="mt-1 max-h-40 list-disc overflow-y-auto rounded-md bg-white/80 px-3 py-1.5 pl-5 dark:bg-slate-900/60">
+                  {apiErrors.map((e, i) => (
+                    <li key={i} className="font-mono">
+                      {e}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+
+        {!errorMessage && infoMessage && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-200">
+            {infoMessage}
+          </div>
+        )}
+
+        {(apiErrors.length > 0 || debugInfo) && !errorMessage && (
+          <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400">
+            <button
+              type="button"
+              onClick={() => setShowDebug((p) => !p)}
+              className="font-semibold text-blue-600 underline-offset-2 hover:underline dark:text-blue-300"
+            >
+              {showDebug ? "▾ 디버그 정보 숨기기" : "▸ 디버그 정보 보기"}
+            </button>
+            {showDebug && (
+              <div className="mt-2 space-y-1.5">
+                {Object.keys(totalsByCategory).length > 0 && (
+                  <p>
+                    <span className="font-semibold">카테고리 totalCount</span>:{" "}
+                    {Object.entries(totalsByCategory)
+                      .map(([k, v]) => `${k}=${(v as number).toLocaleString("ko-KR")}`)
+                      .join(", ")}
+                  </p>
+                )}
+                {debugInfo?.firstItemKeys && debugInfo.firstItemKeys.length > 0 && (
+                  <p>
+                    <span className="font-semibold">first item keys</span>:{" "}
+                    <span className="font-mono">{debugInfo.firstItemKeys.join(", ")}</span>
+                  </p>
+                )}
+                {apiErrors.length > 0 && (
+                  <details>
+                    <summary className="cursor-pointer select-none font-semibold">
+                      페이지 오류 {apiErrors.length}건
+                    </summary>
+                    <ul className="mt-1 max-h-40 list-disc overflow-y-auto rounded-md bg-slate-50 px-3 py-1.5 pl-5 dark:bg-slate-800/40">
+                      {apiErrors.map((e, i) => (
+                        <li key={i} className="font-mono">
+                          {e}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
           </div>
         )}
 

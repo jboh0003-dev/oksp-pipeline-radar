@@ -148,6 +148,23 @@ export default function PreSpecTable({
                           )}
                           {item.title}
                         </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          {item.bsnsDivLabel && (
+                            <span className="whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+                              {item.bsnsDivLabel}
+                            </span>
+                          )}
+                          {item.preSpecRegNo && (
+                            <span className="whitespace-nowrap rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-mono text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-400 dark:ring-white/10">
+                              {item.preSpecRegNo}
+                            </span>
+                          )}
+                          {item.linkedBidNo && (
+                            <span className="whitespace-nowrap rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30">
+                              입찰연결 · {item.linkedBidNo}
+                            </span>
+                          )}
+                        </div>
                         {item.matchedKeywords.length > 0 && (
                           <div className="mt-1.5 flex flex-wrap gap-1">
                             {item.matchedKeywords.slice(0, 8).map((kw, i) => (
@@ -192,16 +209,20 @@ export default function PreSpecTable({
                         >
                           {hasFeedback ? "피드백 ✓" : "피드백"}
                         </button>
-                        {item.sourceUrl && (
+                        {item.sourceUrl ? (
                           <a
                             href={item.sourceUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            title="원문"
+                            title="나라장터 사전규격 검색"
                             className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-blue-600 px-2 text-[11px] font-semibold text-white transition hover:bg-blue-700 dark:bg-blue-500"
                           >
                             원문 ↗
                           </a>
+                        ) : (
+                          <span className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+                            원문없음
+                          </span>
                         )}
                       </div>
                     </div>
@@ -265,7 +286,9 @@ export default function PreSpecTable({
                         규격서 ↗
                       </a>
                     ) : (
-                      <span className="text-[11px] text-slate-400 dark:text-slate-500">-</span>
+                      <span className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                        파일없음
+                      </span>
                     )}
                   </td>
                 </tr>

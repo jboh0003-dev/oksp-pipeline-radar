@@ -8,83 +8,219 @@ import type {
 /**
  * G2B 사전규격 raw item → PreSpecAnnouncement 정규화.
  *
- * 사전규격 API 응답은 endpoint(물품/용역/공사/외자) 별로 필드명이 약간 다르고,
- * 같은 endpoint 안에서도 항목 누락이 잦다. 따라서 여러 후보 필드를 ?? 로 차례대로 시도하고,
- * 알 수 없는 값은 비워둔다.
+ * 실제 응답 필드 (probe 검증 결과):
+ *   bsnsDivNm           : 업무 구분명 (일반용역/물품/공사/외자)
+ *   refNo               : 참조번호
+ *   prdctClsfcNoNm      : 사전규격명/사업명/품명 ★ 대표 제목
+ *   orderInsttNm        : 발주기관명
+ *   rlDminsttNm         : 실수요기관명 (= demand)
+ *   asignBdgtAmt        : 배정예산액
+ *   rcptDt              : 접수일시 (= 공개일)
+ *   opninRgstClseDt     : 의견등록마감일시 ★
+ *   ofclTelNo, ofclNm   : 담당자
+ *   swBizObjYn          : SW 사업 대상 여부 (Y/N)
+ *   dlvrTmlmtDt         : 납품기한
+ *   bfSpecRgstNo        : 사전규격등록번호 ★ unique key
+ *   specDocFileUrl1~5   : 규격서 다운로드 URL ★
+ *   prdctDtlList        : 품목 상세 ([1^코드^품명] 형태)
+ *   bidNtceNoList       : 연결된 입찰공고번호(콤마 구분) ★ linkedBidNo
+ *   rgstDt, chgDt       : 등록/변경일시
+ *
+ * 다른 사이트에서 사용된 다양한 필드명도 fallback 후보로 같이 둔다.
  */
 
 export const PRE_SPEC_NEW_TTL_MS = 24 * 60 * 60 * 1000;
 
-function readString(item: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const k of keys) {
-    const v = item[k];
+/** value 가 의미 있는(빈 문자열 아닌) 값일 때만 첫 매칭 후보 반환. */
+function pickFirst(
+  obj: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const v = obj[key];
+    if (v == null) continue;
+    if (typeof v === "number") return String(v);
     if (typeof v === "string") {
       const s = v.trim();
       if (s.length > 0) return s;
     }
-    if (typeof v === "number") return String(v);
   }
   return undefined;
 }
 
-function readBudget(item: Record<string, unknown>): number {
-  const candidates = [
-    "asignBdgtAmt",
-    "presmptPrce",
-    "presmptAmt",
-    "budget",
-    "allocatedBudget",
-    "bdgtAmt",
-  ];
-  for (const k of candidates) {
-    const v = item[k];
-    if (v == null) continue;
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string") {
-      // 1,234,567 / "12억 3천" / 숫자만 → 숫자만 추출
-      const digits = v.replace(/[^\d]/g, "");
-      if (digits.length > 0) {
-        const n = Number(digits);
-        if (Number.isFinite(n)) return n;
-      }
+/** 콤마 / 비숫자 문자가 섞인 문자열을 안전하게 정수 변환. 실패 시 0. */
+function parseAmount(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
+  if (typeof value !== "string") return 0;
+  const s = value.trim();
+  if (!s) return 0;
+  // 외자처럼 소수점이 들어오는 경우(예: "116992.05") 도 안전하게 처리.
+  // 숫자/소수점만 남기고, 정수부만 사용.
+  const cleaned = s.replace(/[^\d.]/g, "");
+  if (!cleaned) return 0;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+
+/**
+ * 다양한 형태의 일시를 ISO yyyy-mm-dd 로 변환.
+ *  - "20260609"
+ *  - "2026-06-09"
+ *  - "2026/06/09"
+ *  - "2026-06-09 18:00"
+ *  - "2026-06-09 18:00:00"
+ *  - "2026-06-09T18:00:00"
+ * 실패하거나 빈 값이면 undefined.
+ */
+export function parseG2bDate(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  // 처음 8자리 숫자만 취해 yyyy-mm-dd 로 변환 시도.
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (digits.length >= 8) {
+    const y = digits.slice(0, 4);
+    const m = digits.slice(4, 6);
+    const d = digits.slice(6, 8);
+    if (
+      Number(y) >= 1900 &&
+      Number(m) >= 1 &&
+      Number(m) <= 12 &&
+      Number(d) >= 1 &&
+      Number(d) <= 31
+    ) {
+      return `${y}-${m}-${d}`;
     }
   }
-  return 0;
+  return undefined;
 }
 
-/** 다양한 형태의 일자(yyyymmdd / yyyy-mm-dd / yyyy.mm.dd / "yyyy-MM-dd HH:mm:ss") → "yyyy-mm-dd". */
-function normalizeDate(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const s = value.trim();
-  if (!s) return undefined;
-  const digits = s.replace(/[^0-9]/g, "");
-  if (digits.length >= 8) {
-    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+const TITLE_KEYS = [
+  "prdctClsfcNoNm",
+  "bidNtceNm",
+  "bsnsNm",
+  "preSpecNm",
+  "bfSpecNm",
+  "specNm",
+  "title",
+] as const;
+
+const BUSINESS_KEYS = ["bsnsNm", "bidNtceNm", "prdctClsfcNoNm", "preSpecNm"] as const;
+
+const ORG_KEYS = [
+  "orderInsttNm",
+  "dminsttNm",
+  "ntceInsttNm",
+  "dmndInsttNm",
+  "rlDminsttNm",
+  "orgName",
+] as const;
+
+const DEMAND_KEYS = ["rlDminsttNm", "dminsttNm", "dmndInsttNm", "demandOrgName"] as const;
+
+const BUDGET_KEYS = [
+  "asignBdgtAmt",
+  "bdgtAmt",
+  "budget",
+  "presmptPrce",
+  "presmptAmt",
+  "allocatedBudget",
+] as const;
+
+const OPEN_DATE_KEYS = [
+  "rcptDt",
+  "rlsDt",
+  "opninRgstDt",
+  "ntceDt",
+  "rgstDt",
+  "openDate",
+] as const;
+
+const OPINION_DEADLINE_KEYS = [
+  "opninRgstClseDt",
+  "opninEndDt",
+  "rlsEndDt",
+  "opnnAcptdEdate",
+  "rcptEdate",
+  "clseDt",
+  "deadline",
+  "opinionDeadline",
+] as const;
+
+const REG_NO_KEYS = ["bfSpecRgstNo", "preSpecRegNo", "spcfctRgstNo", "specRgstNo", "rgstNo"] as const;
+
+/** 규격서 후보 키 — specDocFileUrl1~5 + 일반 fileUrl 후보. */
+const SPEC_FILE_KEYS = [
+  "specDocFileUrl1",
+  "specDocFileUrl2",
+  "specDocFileUrl3",
+  "specDocFileUrl4",
+  "specDocFileUrl5",
+  "specDocFileUrl",
+  "atchFileUrl",
+  "rqstFileUrl",
+  "fileUrl",
+  "ntceSpecDocUrl",
+] as const;
+
+/** http(s) URL 인지 검증. */
+function isValidHttpUrl(url: string | undefined): url is string {
+  if (!url) return false;
+  return /^https?:\/\//i.test(url.trim());
+}
+
+/** specDocFileUrl1~5 중 첫 번째로 채워진 http URL 반환. */
+function pickSpecFileUrl(item: Record<string, unknown>): string | undefined {
+  for (const key of SPEC_FILE_KEYS) {
+    const v = item[key];
+    if (typeof v === "string" && isValidHttpUrl(v)) return v.trim();
   }
   return undefined;
+}
+
+/** bidNtceNoList 가 있을 때 첫 번째 입찰공고번호만 추출 (linkedBidNo). */
+function pickLinkedBidNo(item: Record<string, unknown>): string | undefined {
+  const raw = item.bidNtceNoList ?? item.linkedBidNo;
+  if (typeof raw !== "string") return undefined;
+  const first = raw.split(",").map((s) => s.trim()).filter(Boolean)[0];
+  return first || undefined;
+}
+
+/** 사전규격 원문 페이지 URL — bfSpecRgstNo 가 있으면 G2B 사이트 fallback. */
+function buildSourceUrl(bfSpecRgstNo: string | undefined): string | undefined {
+  if (!bfSpecRgstNo) return undefined;
+  // 나라장터 사전규격 검색 결과 페이지 — 등록번호로 직접 접근.
+  // (정확한 상세 URL 패턴이 시기별로 바뀌므로 검색 페이지로 안전하게 fallback.)
+  return `https://www.g2b.go.kr/pn/pnz/pnza/PNZAPreStdtSearch.do?searchPreStdRegNo=${encodeURIComponent(
+    bfSpecRgstNo,
+  )}`;
 }
 
 function getAnnouncementKey(item: Record<string, unknown>, fallback: string): string {
-  const reg = readString(item, "bfSpecRgstNo", "preSpecRegNo", "spcfctRgstNo", "rgstNo");
+  const reg = pickFirst(item, REG_NO_KEYS);
   if (reg) return reg;
-  const name = readString(item, "prdctClsfcNoNm", "bsnsNm", "preSpecNm", "bidNtceNm", "title");
-  const org = readString(item, "dminsttNm", "ntceInsttNm", "orderInsttNm", "orgName");
-  const due = readString(item, "opnnAcptdEdate", "rcptDt", "rgstDt");
+  const name = pickFirst(item, TITLE_KEYS);
+  const org = pickFirst(item, ORG_KEYS);
+  const due = pickFirst(item, OPINION_DEADLINE_KEYS);
   return [name, org, due].filter(Boolean).join("|") || fallback;
 }
 
 /**
- * 의견마감일 + 오늘 날짜 비교로 status 결정.
- *  - 마감 지남 → "마감"
- *  - 3일 이내 → "마감임박"
- *  - 그 외     → "진행중"
+ * 의견마감일 + 오늘 기준으로 status 결정.
  *  - 마감일 없음 → "확인필요"
+ *  - 오늘 < 마감일 - 3일 → 진행중
+ *  - 0~3일 이내 → 마감임박
+ *  - 마감 지남 → 마감
  */
 function getStatus(opinionDeadline: string | undefined, today: Date): PreSpecStatus {
   if (!opinionDeadline) return "확인필요";
+  // 의견마감일은 보통 23:59 까지로 본다.
   const due = new Date(`${opinionDeadline}T23:59:59+09:00`);
   if (Number.isNaN(due.getTime())) return "확인필요";
-  const diffDays = Math.floor((due.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  const todayMs = today.getTime();
+  const diffDays = Math.floor((due.getTime() - todayMs) / (24 * 60 * 60 * 1000));
   if (diffDays < 0) return "마감";
   if (diffDays <= 3) return "마감임박";
   return "진행중";
@@ -93,11 +229,11 @@ function getStatus(opinionDeadline: string | undefined, today: Date): PreSpecSta
 /**
  * 추천 등급 결정 — 사전규격 전용 룰.
  *  - 점수 합 ≥ 6 + 진행중/마감임박 → 핵심검토
- *  - 점수 합 ≥ 3 + 진행중           → 의견제출검토 (사전규격 단계에서 우리 의견 넣을 만함)
+ *  - 점수 합 ≥ 3 + 진행중           → 의견제출검토
  *  - 점수 합 ≥ 1                     → 영업확인필요
- *  - 점수 0 + 키워드 매칭 0          → 제외
+ *  - 점수 0 + 매칭 키워드 0          → 제외
  *  - 그 외                          → 참고
- *  - 부정 신호(하드웨어 납품) 누적이 크면 한 단계 다운그레이드
+ *  - 부정 신호 누적 시 한 단계 다운그레이드.
  */
 function getRecommendation(
   scoreSum: number,
@@ -117,8 +253,6 @@ function getRecommendation(
   } else {
     base = "참고";
   }
-
-  // 부정 신호 다운그레이드.
   if (negativeWeight >= 2) {
     if (base === "핵심검토") return "영업확인필요";
     if (base === "의견제출검토") return "참고";
@@ -140,34 +274,37 @@ export function normalizePreSpecItem(
   const now = opts.now ?? new Date();
   const announcementKey = getAnnouncementKey(raw, fallbackKey);
 
-  const title =
-    readString(raw, "prdctClsfcNoNm", "bsnsNm", "preSpecNm", "bidNtceNm", "title") ?? "(제목 없음)";
-  const businessName = readString(raw, "bsnsNm", "businessName");
+  const title = pickFirst(raw, TITLE_KEYS) ?? "(제목 없음)";
+  const businessName = pickFirst(raw, BUSINESS_KEYS);
 
-  const orgName =
-    readString(raw, "ntceInsttNm", "dminsttNm", "orderInsttNm", "orgName") ?? "(기관 미상)";
-  const demandOrgName = readString(raw, "dminsttNm", "demandOrgName");
+  const orgName = pickFirst(raw, ORG_KEYS) ?? "(기관 미상)";
+  const demandOrgName = pickFirst(raw, DEMAND_KEYS);
 
-  const budget = readBudget(raw);
+  const budget = parseAmount(pickFirst(raw, BUDGET_KEYS));
 
-  const openDate = normalizeDate(readString(raw, "rgstDt", "opnNtceDt", "registDt", "openDate"));
-  const opinionDeadline = normalizeDate(
-    readString(raw, "opnnAcptdEdate", "opinionDeadline", "rcptEdate", "opnnEndDt"),
-  );
+  const openDate = parseG2bDate(pickFirst(raw, OPEN_DATE_KEYS));
+  const opinionDeadline = parseG2bDate(pickFirst(raw, OPINION_DEADLINE_KEYS));
 
-  const fileName = readString(raw, "atchFileNm", "specDocFileNm", "fileName");
-  const fileUrl = readString(
-    raw,
-    "atchFileUrl",
-    "specDocFileUrl",
-    "rqstFileUrl",
-    "fileUrl",
-  );
-  const specFileUrl = readString(raw, "specDocFileUrl", "specFileUrl", "atchFileUrl");
-  const sourceUrl = readString(raw, "linkUrl", "sourceUrl", "ntceUrl");
+  const preSpecRegNo = pickFirst(raw, REG_NO_KEYS);
+  const specFileUrl = pickSpecFileUrl(raw);
+  const fileUrl = specFileUrl;
+  const sourceUrl = buildSourceUrl(preSpecRegNo);
 
-  const summaryText = readString(raw, "prdctClsfcNoNm", "bsnsNm", "preSpecNm", "ntceMthdNm") ?? "";
-  const matchBody = `${summaryText}\n${title}\n${orgName}`;
+  const linkedBidNo = pickLinkedBidNo(raw);
+
+  // 매칭 텍스트는 제목/사업명/기관명/품목상세/참조번호까지 합쳐 키워드 누락을 줄인다.
+  const matchBody = [
+    title,
+    businessName,
+    orgName,
+    demandOrgName,
+    pickFirst(raw, ["prdctDtlList"]),
+    pickFirst(raw, ["refNo"]),
+    pickFirst(raw, ["bsnsDivNm"]),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   const m = matchPreSpec(title, matchBody);
 
   const status = getStatus(opinionDeadline, now);
@@ -182,7 +319,8 @@ export function normalizePreSpecItem(
   return {
     sourceType: "PRE_SPEC",
     announcementKey,
-    preSpecRegNo: readString(raw, "bfSpecRgstNo", "preSpecRegNo", "spcfctRgstNo"),
+    preSpecRegNo,
+    bsnsDivLabel: pickFirst(raw, ["bsnsDivNm"]),
     title,
     businessName,
     orgName,
@@ -190,7 +328,7 @@ export function normalizePreSpecItem(
     budget,
     openDate,
     opinionDeadline,
-    fileName,
+    fileName: undefined,
     fileUrl,
     specFileUrl,
     sourceUrl,
@@ -209,5 +347,10 @@ export function normalizePreSpecItem(
     newAt: null,
     feedbackCount: 0,
     customer: null,
+    // 사전규격 → 입찰공고 연결: 이미 연결된 경우 bidNtceNoList 에서 첫 번째 추출.
+    // TODO: linkedStatus 는 추후 입찰공고 DB 와 join 해서 채울 수 있다.
+    linkedBidNo,
+    linkedBidTitle: undefined,
+    linkedStatus: linkedBidNo ? "입찰공고등록" : undefined,
   };
 }
