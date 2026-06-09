@@ -58,8 +58,8 @@ export type FetchNoticesResult = {
 /** 화면에 표시할 source_type: g2b, g2b_keyword, g2b_active_core, null·빈 문자열 */
 const DISPLAY_SOURCE_TYPES = new Set(["g2b", "g2b_keyword", "g2b_active_core"]);
 
-/** Supabase에서 가져올 최대 건수 (화면 필터 후에도 100건 이상 노출 가능하도록 여유) */
-export const DISPLAY_FETCH_LIMIT = 250;
+/** Supabase 에서 가져올 최대 건수. 매칭된 공고를 모두 화면 페이지네이션으로 도달 가능하도록 넉넉히. */
+export const DISPLAY_FETCH_LIMIT = 1000;
 
 const DISPLAY_SOURCE_OR_FILTER =
   "source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.eq.g2b_active_core,source_type.is.null,source_type.eq.";

@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import {
+  APP_DESCRIPTION,
+  APP_FULL_NAME,
+  APP_NAME,
+  APP_TITLE,
+  APP_URL,
+} from "@/lib/appConfig";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,9 +20,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CS-G2B · 나라장터 공고 대시보드",
-  description:
-    "공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭. OKESTRO CS-G2B.",
+  metadataBase: new URL(APP_URL),
+  title: `${APP_NAME} · ${APP_TITLE}`,
+  description: `${APP_DESCRIPTION} · ${APP_FULL_NAME}`,
+  applicationName: APP_NAME,
+  openGraph: {
+    title: `${APP_NAME} · ${APP_TITLE}`,
+    description: APP_DESCRIPTION,
+    siteName: APP_FULL_NAME,
+    locale: "ko_KR",
+    type: "website",
+  },
 };
 
 /*

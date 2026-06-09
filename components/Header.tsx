@@ -2,25 +2,29 @@ import OkestroWordmark from "./OkestroWordmark";
 import ThemeToggle from "./ThemeToggle";
 
 type HeaderProps = {
-  totalCount: number;
+  /** 매칭된 전체 공고 수 (제품 매칭은 통과한 모집단). */
+  matchedCount: number;
+  /** 현재 화면 필터/검색 적용 후 페이지에서 보고 있는 건수. */
   filteredCount: number;
+  /** 캐시 hit 여부 — true 면 우상단에 작은 "캐시" 표시. */
+  fromCache?: boolean;
 };
 
 /**
  * 좌측: OKESTRO 로고(또는 텍스트 워드마크 fallback) + 영문 보조 타이틀(OKESTRO CS-G2B) +
  *        한글 메인 타이틀(나라장터 공고 대시보드) + 부제.
- * 우측: 표시 중 카운트 칩 + 라이트/다크 토글.
+ * 우측: 표시 중 / 매칭 카운트 칩 + 라이트/다크 토글.
  *
  * 디자인 노트:
- *  - 헤더 카드 안에서만 브랜드 배경 이미지(`public/header-bg.jpg`)를 cover 로 깔고,
- *    그 위에 어두운 파란 그라데이션 overlay 를 얹어 본문 가독성을 보장한다.
- *  - 배경 이미지가 없을 때도 grad fallback 으로 자연스럽게 보인다.
+ *  - 헤더 카드 안에서만 브랜드 배경 이미지(`public/assets/okestro-building.jpg`)를 cover 로
+ *    깔고, 그 위에 좌측이 진한 navy → 우측으로 옅어지는 그라데이션 overlay 를 얹어
+ *    좌측 텍스트 가독성을 보장한다. 사진이 없을 때도 grad fallback 으로 자연스럽게 보인다.
  *    (csg2b-header-bg 클래스는 globals.css 정의)
  *  - 텍스트는 흰 계열로 통일, 부제는 약간 흐릿하게 보조 정보 느낌.
  *  - 카드의 rounded-2xl / 가벼운 ring, 우상단 글로우 dot, 좌하단 indigo 글로우는 그대로 유지해
  *    "엔터프라이즈 클라우드 대시보드" 톤을 살린다.
  */
-export default function Header({ totalCount, filteredCount }: HeaderProps) {
+export default function Header({ matchedCount, filteredCount, fromCache }: HeaderProps) {
   return (
     <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
       {/*
@@ -51,18 +55,22 @@ export default function Header({ totalCount, filteredCount }: HeaderProps) {
               나라장터 공고 대시보드
             </h1>
             <p className="mt-1 hidden text-xs text-slate-200/85 sm:block">
-              공공기관 조달 공고를 제품·고객사·담당본부 기준으로 자동 매칭
+              공공기관 조달 공고 조회 · 고객사·담당본부 기준 자동 매칭
             </p>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/15 px-3 py-1.5 text-xs text-white shadow-sm backdrop-blur-sm sm:text-sm">
-            <span className="text-slate-100/80">표시 중</span>
-            <span className="font-bold text-white">
-              {filteredCount}
-            </span>
-            <span className="text-slate-200/70">/ {totalCount}건</span>
+          <div className="inline-flex flex-col items-end gap-0.5 rounded-xl border border-white/20 bg-white/15 px-3 py-1.5 text-white shadow-sm backdrop-blur-sm">
+            <div className="flex items-center gap-1.5 text-xs sm:text-sm">
+              <span className="text-slate-100/80">표출</span>
+              <span className="font-bold tabular-nums text-white">{filteredCount.toLocaleString("ko-KR")}</span>
+              <span className="text-slate-200/70">/ 매칭 {matchedCount.toLocaleString("ko-KR")}건</span>
+            </div>
+            <p className="hidden text-[10px] text-slate-200/70 sm:block">
+              현재 필터·페이지 기준
+              {fromCache && <span className="ml-1.5 rounded-full bg-cyan-400/30 px-1.5 py-0.5 font-semibold uppercase tracking-wide text-cyan-50">cache</span>}
+            </p>
           </div>
           <ThemeToggle />
         </div>

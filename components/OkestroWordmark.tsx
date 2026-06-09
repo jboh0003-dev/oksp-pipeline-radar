@@ -5,22 +5,39 @@ import { useState } from "react";
 /**
  * 헤더 좌측에 들어가는 OKESTRO 워드마크.
  *
- * - 1순위: `public/okestro-logo.svg` 또는 `public/okestro-logo.png` 의 실제 회사 로고.
- *   파일이 존재하면 이걸 그대로 보여주고, 배경 박스 없이 헤더 위에 자연스럽게 올라간다.
- *   (배경 투명 PNG/SVG 권장. 이미지 자체가 투명 배경이면 별도 처리가 필요 없다.)
+ * - 1순위: `public/assets/okestro-logo.png` (회사 공식 로고. 권장 위치).
+ * - 2순위: `public/assets/okestro-logo.svg` (벡터판이 있으면 사용).
+ * - 3순위: 구버전 호환 — `public/okestro-logo.svg` / `public/okestro-logo.png`.
+ * - 마지막 fallback: 텍스트 워드마크 (이미지가 하나도 없을 때).
  *
- * - 2순위(fallback): 로고 파일이 아직 없거나 404 일 때를 대비한 텍스트 워드마크.
- *   파란색 박스 + O 글자 + OKESTRO 라는 기존 디자인을 유지하되, 어두운 헤더 배경 위에서
- *   가독성이 좋도록 색을 손봤다.
+ * 모두 onError 단계로 자동 전환되므로 사용자는 자산 파일만 교체하면 별도 코드 변경 없이 반영된다.
  *
  * 컴포넌트는 client component 로 두어 <img onError> 로 fallback 전환을 처리한다.
+ * 다크 배경(헤더) 위에 자연스럽게 올라가도록 height 36~40px(h-9 sm:h-10) + object-contain.
  */
 export default function OkestroWordmark() {
-  // 우선 SVG 시도 → 실패하면 PNG 시도 → 그래도 실패하면 텍스트 워드마크.
-  const [stage, setStage] = useState<"svg" | "png" | "fallback">("svg");
+  type Stage = "asset-png" | "asset-svg" | "legacy-svg" | "legacy-png" | "fallback";
+  const [stage, setStage] = useState<Stage>("asset-png");
 
   if (stage !== "fallback") {
-    const src = stage === "svg" ? "/okestro-logo.svg" : "/okestro-logo.png";
+    const src =
+      stage === "asset-png"
+        ? "/assets/okestro-logo.png"
+        : stage === "asset-svg"
+          ? "/assets/okestro-logo.svg"
+          : stage === "legacy-svg"
+            ? "/okestro-logo.svg"
+            : "/okestro-logo.png";
+
+    const next: Stage =
+      stage === "asset-png"
+        ? "asset-svg"
+        : stage === "asset-svg"
+          ? "legacy-svg"
+          : stage === "legacy-svg"
+            ? "legacy-png"
+            : "fallback";
+
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
@@ -28,7 +45,7 @@ export default function OkestroWordmark() {
         alt="OKESTRO"
         className="h-9 w-auto select-none object-contain drop-shadow-sm sm:h-10"
         draggable={false}
-        onError={() => setStage(stage === "svg" ? "png" : "fallback")}
+        onError={() => setStage(next)}
       />
     );
   }

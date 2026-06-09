@@ -98,33 +98,37 @@ body {
 
 /*
   ─── 브랜드 헤더 배경 ────────────────────────────────────────────────────────
-  - public/header-bg.jpg 가 있으면 그 이미지가 cover 로 깔리고
-  - 없으면 (404) 아래의 그라데이션만 자연스럽게 보인다.
-  - 이미지 위에 어두운 파란 overlay 를 얹어 본문 가독성을 보장.
-  - dark 모드에서는 더 어둡게 가서 본문 흰 글씨가 또렷이 보이게 한다.
+  - public/assets/okestro-building.jpg 가 있으면 그 사진이 cover 로 깔리고,
+    구 경로(public/header-bg.jpg) 도 fallback 으로 시도한다.
+  - 둘 다 없으면 (404) 아래의 그라데이션만 자연스럽게 보인다.
+  - 사진 위에 어두운 navy overlay (좌측은 진하고 우측으로 갈수록 옅게) 를 깔아
+    좌측 텍스트 가독성을 보장하고, 우측은 사진이 살짝 비치도록 했다.
+  - background-position center 42% — 건물 사진의 가운데 약간 위쪽이 헤더 중심에 오도록.
 */
 .csg2b-header-bg {
-  background-color: #0b3a8c;
+  background-color: #0a1538;
   background-image:
-    linear-gradient(120deg, rgba(7, 25, 64, 0.78) 0%, rgba(15, 60, 130, 0.52) 60%, rgba(8, 145, 178, 0.42) 100%),
-    radial-gradient(700px 320px at 85% -20%, rgba(56, 189, 248, 0.45), transparent 60%),
-    radial-gradient(620px 320px at -10% 110%, rgba(99, 102, 241, 0.4), transparent 65%),
+    linear-gradient(90deg, rgba(4, 10, 28, 0.96) 0%, rgba(8, 20, 50, 0.88) 45%, rgba(8, 20, 50, 0.62) 100%),
+    radial-gradient(700px 320px at 85% -20%, rgba(56, 189, 248, 0.32), transparent 60%),
+    radial-gradient(620px 320px at -10% 110%, rgba(99, 102, 241, 0.28), transparent 65%),
+    url("/assets/okestro-building.jpg"),
     url("/header-bg.jpg"),
-    linear-gradient(135deg, #0b3a8c 0%, #1d4ed8 55%, #0e7490 100%);
-  background-size: auto, auto, auto, cover, auto;
-  background-position: center, center, center, center, center;
-  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+    linear-gradient(135deg, #0a1538 0%, #1d4ed8 55%, #0e7490 100%);
+  background-size: auto, auto, auto, cover, cover, auto;
+  background-position: center, center, center, center 42%, center 42%, center;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
 }
 
 .dark .csg2b-header-bg {
-  background-color: #051026;
+  background-color: #050b1f;
   background-image:
-    linear-gradient(120deg, rgba(2, 8, 26, 0.85) 0%, rgba(8, 30, 78, 0.7) 60%, rgba(8, 47, 73, 0.6) 100%),
-    radial-gradient(700px 320px at 85% -20%, rgba(34, 211, 238, 0.28), transparent 60%),
-    radial-gradient(620px 320px at -10% 110%, rgba(79, 70, 229, 0.32), transparent 65%),
+    linear-gradient(90deg, rgba(2, 6, 20, 0.97) 0%, rgba(4, 12, 36, 0.92) 45%, rgba(4, 12, 36, 0.7) 100%),
+    radial-gradient(700px 320px at 85% -20%, rgba(34, 211, 238, 0.22), transparent 60%),
+    radial-gradient(620px 320px at -10% 110%, rgba(79, 70, 229, 0.25), transparent 65%),
+    url("/assets/okestro-building.jpg"),
     url("/header-bg.jpg"),
-    linear-gradient(135deg, #061434 0%, #0f3a8c 55%, #0c4a6e 100%);
-  background-size: auto, auto, auto, cover, auto;
-  background-position: center, center, center, center, center;
-  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+    linear-gradient(135deg, #050b1f 0%, #0f3a8c 55%, #0c4a6e 100%);
+  background-size: auto, auto, auto, cover, cover, auto;
+  background-position: center, center, center, center 42%, center 42%, center;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
 }

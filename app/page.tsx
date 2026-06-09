@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DashboardLoading from "@/components/DashboardLoading";
 import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
@@ -20,6 +20,10 @@ import {
 } from "@/lib/announcementKey";
 import { fetchLastCollectionRun } from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
+import {
+  loadNoticesCache,
+  saveNoticesCache,
+} from "@/lib/noticeCache";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
 import { evaluateMatchGrade } from "@/lib/noticeGrades";
 import {
@@ -38,6 +42,7 @@ import {
 import { getPrimaryProduct, type PrimaryProduct } from "@/lib/primaryProduct";
 import { isKeyNew, recordSeenKeys, type SeenMap } from "@/lib/seenNotices";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
@@ -104,19 +109,26 @@ function buildNoticeHaystack(notice: DisplayNotice): string {
 }
 
 /**
- * 화면 노출 조건.
- *  - 마감 공고 기본 제외: 한국시간 기준 deadline >= today 인 공고만 노출.
- *    (getDueStatus === "진행 중" 이 정확히 이 조건을 보장한다.)
- *  - 제품 매칭: CONTRABASS / VIOLA 중 하나라도 매칭되어야 함.
- *  - 테스트 URL 제외.
+ * 화면에 노출할 수 있는 후보 공고인지 — 가장 기본적인 검사.
  *
- * Supabase 에서는 마감 공고도 그대로 보존되고 (delete 금지), 화면에서만 숨긴다.
- * 추후 "마감 포함" 토글이 필요해지면 이 함수에 옵션을 추가한다.
+ *  - 테스트 URL 제외.
+ *  - 제품 매칭(CONTRABASS / VIOLA) 이 한 번이라도 잡힌 경우만 포함.
+ *
+ * 회의 피드백:
+ *  "조회 6,213 / 매칭 201 인데 화면에 58 만 보인다" 는 문제의 원인 중 하나가
+ *  여기서 `getDueStatus === "진행 중"` 까지 강제했기 때문. 마감지난 공고를 기본으로 숨길지는
+ *  화면 토글(includeExpired) 로 분리해 사용자가 명시적으로 선택하게 한다.
+ *  → 이 함수는 마감 여부를 검사하지 않고 "정말 의미 없는 row" 만 걸러낸다.
  */
 function isVisibleCandidate(notice: DisplayNotice): boolean {
   if (isTestNoticeUrl(notice.sourceUrl)) return false;
-  if (getDueStatus(notice.deadline) !== "진행 중") return false;
   return hasRealProductMatch(notice);
+}
+
+/** 진행 중(마감 전 또는 마감일 미상) 인지 — includeExpired=false 일 때 추가로 적용. */
+function isOpenForReview(notice: DisplayNotice): boolean {
+  const status = getDueStatus(notice.deadline);
+  return status === "진행 중" || status === "마감일 확인 필요";
 }
 
 function matchesSearch(notice: DisplayNotice, query: string): boolean {
@@ -262,17 +274,35 @@ export default function Home() {
   const [dataSource, setDataSource] = useState<NoticeDataSource>("sample");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  /** 첫 페인트가 캐시에서 즉시 그려졌는지 — Header 우상단에 cache 배지로 표시. */
+  const [fromCache, setFromCache] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  /** 키 입력마다 filteredNotices 재계산을 막기 위해 250ms debounce. */
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
   const [territoryFilter, setTerritoryFilter] = useState<TerritoryFilter>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   /** "신규" 필터 — 켜면 24h 이내 처음 들어온 공고만 표시. */
   const [showNewOnly, setShowNewOnly] = useState(false);
+  /**
+   * "마감 포함" 토글.
+   *  - false (기본): 진행 중 + 마감일 미상만 표시. 영업이 검토할 만한 공고만 보여 시각적 노이즈 ↓.
+   *  - true       : 마감 지난 공고까지 모두 표시. "매칭 N건이 어디에 있나?" 의문을 풀 수 있게.
+   */
+  const [includeExpired, setIncludeExpired] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
+
+  /**
+   * 페이지네이션 — 페이지당 50/100/200/전체.
+   *  - 0 == 전체. 매칭이 많아도 한 번에 다 그리지 않도록 기본은 50.
+   *  - 검색/필터 변경 시 자동으로 1페이지로 리셋(아래 useEffect).
+   */
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   /**
    * 수집 직후 짧게 띄우는 "신규 N건 추가됨" toast.
@@ -295,34 +325,56 @@ export default function Home() {
   const [manualMessage, setManualMessage] = useState<string | null>(null);
 
   /**
+   * 동시에 같은 fetchNotices 호출이 두 번 일어나는 것을 막는 mutex.
+   * - React StrictMode 의 useEffect 2회 실행
+   * - 사용자가 빠르게 새로고침 / 지금 수집 / 진입을 연쇄적으로 트리거하는 경우
+   * 모두 여기서 흡수해 Supabase / 매칭 API 가 중복 호출되지 않도록 한다.
+   */
+  const fetchInFlightRef = useRef(false);
+
+  /**
    * 공고 목록 갱신 — Supabase / 샘플에서 가져온 뒤
    *  1) negativeWeight 보정 + rawData 부착 (기존)
    *  2) primaryProduct 계산 (CONTRABASS / VIOLA 카드 카운트가 중복되지 않게)
    *  3) announcementKey 기준 dedup
    *  4) seenNotices 와 비교해 isNew 표시
+   *  5) 결과를 localStorage 캐시(15분 TTL) 에 저장 — 다음 진입 시 즉시 표시.
    *
    * 반환값: 이번 갱신에서 "처음 본" 공고 수 — 수집 직후 toast 메시지에 사용.
+   * 동시에 두 번 호출되면 두 번째 호출은 즉시 { newCount: 0 } 으로 무시한다.
    */
   const loadNotices = useCallback(async (): Promise<{ newCount: number }> => {
-    const result = await fetchNotices();
-    const withRaw = await attachRawData(result.notices, result.source);
+    if (fetchInFlightRef.current) {
+      return { newCount: 0 };
+    }
+    fetchInFlightRef.current = true;
+    try {
+      const result = await fetchNotices();
+      const withRaw = await attachRawData(result.notices, result.source);
 
-    // primaryProduct 부착 + dedup
-    const enriched: DisplayNotice[] = withRaw.map((n) => ({
-      ...n,
-      primaryProduct: getPrimaryProduct(n),
-    }));
-    const deduped = dedupeByAnnouncementKey(enriched);
+      // primaryProduct 부착 + dedup (한 입찰의 같은 차수는 1건)
+      const enriched: DisplayNotice[] = withRaw.map((n) => ({
+        ...n,
+        primaryProduct: getPrimaryProduct(n),
+      }));
+      const deduped = dedupeByAnnouncementKey(enriched);
 
-    // 처음 보는 공고는 firstSeenAt = now 로 기록.
-    const keys = deduped.map((n) => getAnnouncementKey(n));
-    const { newKeys, map } = recordSeenKeys(keys);
+      // 처음 보는 공고는 firstSeenAt = now 로 기록.
+      const keys = deduped.map((n) => getAnnouncementKey(n));
+      const { newKeys, map } = recordSeenKeys(keys);
 
-    const flagged = applyNewFlags(deduped, map);
-    setNotices(flagged);
-    setDataSource(result.source);
-    setErrorMessage(result.error);
-    return { newCount: newKeys.length };
+      const flagged = applyNewFlags(deduped, map);
+      setNotices(flagged);
+      setDataSource(result.source);
+      setErrorMessage(result.error);
+      // 캐시 저장은 enrich 이전의 원본 Notice[] 만으로 충분하다 — primaryProduct/isNew 는 화면에서 다시 계산.
+      saveNoticesCache(result.notices, result.source);
+      // 백그라운드 fetch 가 끝났으니 이후로는 cache 표시를 끈다.
+      setFromCache(false);
+      return { newCount: newKeys.length };
+    } finally {
+      fetchInFlightRef.current = false;
+    }
   }, []);
 
   const loadLastRun = useCallback(async () => {
@@ -331,11 +383,36 @@ export default function Home() {
     setLastRunError(error);
   }, []);
 
+  /**
+   * 첫 진입 흐름 — 캐시가 있으면 즉시 화면에 보여주고, 백그라운드에서 최신 데이터를 받아온다.
+   *  1) localStorage 에서 csg2b:notices 읽기 → 즉시 setNotices (skeleton 미표시)
+   *  2) 백그라운드 fetchNotices() / fetchLastCollectionRun() 병렬 실행
+   *  3) 응답이 도착하면 화면 갱신 + 새 캐시 저장
+   */
   useEffect(() => {
     let isMounted = true;
 
-    async function runOnce() {
-      setIsLoading(true);
+    // (1) 캐시 즉시 페인트
+    const cached = loadNoticesCache();
+    if (cached && cached.notices.length > 0) {
+      const enriched = cached.notices.map((n) => ({
+        ...n,
+        primaryProduct: getPrimaryProduct(n as DisplayNotice),
+      })) as DisplayNotice[];
+      const deduped = dedupeByAnnouncementKey(enriched);
+      // 캐시는 SeenMap 변경 없이 표시만. (isNew 는 새 fetch 가 끝나면 다시 계산)
+      const seenSnapshot: SeenMap = {};
+      const flagged = applyNewFlags(deduped, seenSnapshot);
+      setNotices(flagged);
+      setDataSource(cached.source);
+      setIsLoading(false);
+      setFromCache(true);
+    }
+
+    // (2) 백그라운드 최신화
+    async function refresh() {
+      // 캐시 hit 이 아니면 일반 로딩 스켈레톤을 그대로 보여준다.
+      if (!cached) setIsLoading(true);
       setIsLastRunLoading(true);
       try {
         await Promise.all([loadNotices(), loadLastRun()]);
@@ -347,7 +424,7 @@ export default function Home() {
       }
     }
 
-    void runOnce();
+    void refresh();
 
     return () => {
       isMounted = false;
@@ -359,11 +436,27 @@ export default function Home() {
     [notices],
   );
 
-  const summaryCounts = useMemo(() => countSummaryForCards(candidates), [candidates]);
+  /**
+   * 마감 처리까지 적용한 화면 노출 후보.
+   *  - includeExpired=false : 진행 중 + 마감일 미상만 (기본).
+   *  - includeExpired=true  : 마감 지난 공고 포함 — 매칭 N건 모두를 페이지네이션으로 도달 가능.
+   */
+  const visibleCandidates = useMemo(
+    () =>
+      includeExpired
+        ? candidates
+        : candidates.filter((notice) => isOpenForReview(notice)),
+    [candidates, includeExpired],
+  );
+
+  const summaryCounts = useMemo(
+    () => countSummaryForCards(visibleCandidates),
+    [visibleCandidates],
+  );
 
   const filteredNotices = useMemo(() => {
-    const query = searchQuery.trim();
-    let pool = candidates;
+    const query = debouncedSearchQuery.trim();
+    let pool = visibleCandidates;
     if (query) {
       pool = pool.filter((notice) => matchesSearch(notice, query));
     }
@@ -376,8 +469,8 @@ export default function Home() {
     );
     return sortNoticesByState(filtered, sortState);
   }, [
-    candidates,
-    searchQuery,
+    visibleCandidates,
+    debouncedSearchQuery,
     selectedProduct,
     territoryFilter,
     showSavedOnly,
@@ -386,23 +479,23 @@ export default function Home() {
     sortState,
   ]);
 
-  const hasActiveSearch = searchQuery.trim().length > 0;
+  const hasActiveSearch = debouncedSearchQuery.trim().length > 0;
   const matchesExceptSearch = useMemo(
     () =>
-      candidates.filter(
+      visibleCandidates.filter(
         (notice) =>
           matchesProduct(notice, selectedProduct) &&
           matchesTerritoryStatus(notice, territoryFilter) &&
           (!showSavedOnly || savedIds.includes(notice.id)) &&
           (!showNewOnly || notice.isNew === true),
       ),
-    [candidates, selectedProduct, territoryFilter, showSavedOnly, showNewOnly, savedIds],
+    [visibleCandidates, selectedProduct, territoryFilter, showSavedOnly, showNewOnly, savedIds],
   );
 
   /** 현재 후보 안의 신규(isNew=true) 건수 — 신규 필터 버튼 라벨에 표시. */
   const newCandidateCount = useMemo(
-    () => candidates.filter((n) => n.isNew === true).length,
-    [candidates],
+    () => visibleCandidates.filter((n) => n.isNew === true).length,
+    [visibleCandidates],
   );
 
   /**
@@ -411,7 +504,7 @@ export default function Home() {
    */
   const territoryOptions = useMemo(() => {
     const seen = new Set<string>();
-    for (const notice of candidates) {
+    for (const notice of visibleCandidates) {
       const raw = notice.customer?.territory;
       if (raw == null) continue;
       const trimmed = String(raw).trim();
@@ -420,7 +513,44 @@ export default function Home() {
       seen.add(trimmed);
     }
     return [...seen].sort((a, b) => a.localeCompare(b, "ko-KR"));
-  }, [candidates]);
+  }, [visibleCandidates]);
+
+  /**
+   * 페이지네이션 계산.
+   *  - pageSize === 0 → 전체.
+   *  - 필터/검색이 변하면 currentPage 가 totalPages 보다 커질 수 있으므로 below 에서 보정.
+   */
+  const totalFiltered = filteredNotices.length;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalFiltered / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStartIndex = pageSize === 0 ? 0 : (safePage - 1) * pageSize;
+  const pageEndIndex = pageSize === 0 ? totalFiltered : Math.min(totalFiltered, pageStartIndex + pageSize);
+  const pagedNotices = useMemo(
+    () => (pageSize === 0 ? filteredNotices : filteredNotices.slice(pageStartIndex, pageEndIndex)),
+    [filteredNotices, pageSize, pageStartIndex, pageEndIndex],
+  );
+
+  /** 표출 카운트 — 페이지네이션 적용 후 화면에 실제로 보이는 건수. */
+  const displayedCount = pagedNotices.length;
+  /** 매칭 모집단 — 제품 매칭이 잡힌 전체 건수. (마감 포함 여부와 무관하게 모두) */
+  const matchedTotal = candidates.length;
+
+  // 필터/검색/페이지사이즈/마감토글이 바뀌면 1페이지로 리셋.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    debouncedSearchQuery,
+    selectedProduct,
+    territoryFilter,
+    showSavedOnly,
+    showNewOnly,
+    includeExpired,
+    pageSize,
+  ]);
+  // currentPage 가 totalPages 를 넘기면 자동으로 마지막 페이지로.
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
 
   const handleToggleSave = (id: string) => {
     setSavedIds((prev) =>
@@ -547,7 +677,11 @@ export default function Home() {
   return (
     <div className="min-h-full">
       <main className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
-        <Header totalCount={candidates.length} filteredCount={filteredNotices.length} />
+        <Header
+          matchedCount={matchedTotal}
+          filteredCount={displayedCount}
+          fromCache={fromCache}
+        />
 
         {/*
           수집 직후 짧게 보이는 토스트.
@@ -611,6 +745,26 @@ export default function Home() {
                 }`}
               >
                 {showSavedOnly ? "★ 관심만 (켜짐)" : "☆ 관심만"}
+              </button>
+
+              {/*
+                "마감 포함" 토글.
+                기본은 OFF (진행 중 + 마감일 미상만 표시) — 영업이 검토할 만한 공고에 집중.
+                ON 으로 바꾸면 매칭된 모든 공고(이미 마감된 공고 포함)를 페이지네이션으로 모두 확인할 수 있다.
+                "조회 6,213 / 매칭 201 인데 화면에 58 만 보인다" 의문을 해결하기 위한 명시적 옵션.
+              */}
+              <button
+                type="button"
+                onClick={() => setIncludeExpired((prev) => !prev)}
+                aria-pressed={includeExpired}
+                title="마감 지난 공고까지 표시할지 여부"
+                className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
+                  includeExpired
+                    ? "bg-amber-500 text-white shadow-sm hover:bg-amber-600 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
+                    : "bg-slate-100 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
+                }`}
+              >
+                {includeExpired ? "마감 포함 (켜짐)" : "마감 포함"}
               </button>
 
               {/*
@@ -724,10 +878,86 @@ export default function Home() {
           </p>
         </section>
 
+        {/*
+          상단 표출 카운트 + 페이지 사이즈 선택 + 페이지 이동 — PC/모바일 공통.
+          "조회 X / 매칭 Y / 표출 N" 의 3-tier 관계를 사용자에게 명확히 전달한다.
+            - 조회: 마지막 수집 fetched_count (없으면 미표시)
+            - 매칭: 제품 매칭이 잡힌 전체 모집단 (마감 포함)
+            - 표출: 현재 화면 필터/검색/페이지 적용 후 실제 보이는 건수
+        */}
+        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
+          <p className="text-slate-600 dark:text-slate-300">
+            {lastRun?.fetched_count != null && (
+              <>
+                <span className="text-slate-500 dark:text-slate-400">조회 </span>
+                <span className="font-semibold tabular-nums">{lastRun.fetched_count.toLocaleString("ko-KR")}</span>
+                <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
+              </>
+            )}
+            <span className="text-slate-500 dark:text-slate-400">매칭 </span>
+            <span className="font-semibold tabular-nums">{matchedTotal.toLocaleString("ko-KR")}</span>
+            <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
+            <span className="text-slate-500 dark:text-slate-400">표출 </span>
+            <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+              {totalFiltered === 0
+                ? "0"
+                : pageSize === 0
+                  ? `1-${totalFiltered.toLocaleString("ko-KR")}`
+                  : `${(pageStartIndex + 1).toLocaleString("ko-KR")}-${pageEndIndex.toLocaleString("ko-KR")}`}
+            </span>
+            <span className="text-slate-500 dark:text-slate-400"> / {totalFiltered.toLocaleString("ko-KR")}건</span>
+            {!includeExpired && totalFiltered < matchedTotal && (
+              <span className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30">
+                마감 포함 켜면 {matchedTotal.toLocaleString("ko-KR")}건 모두 표시
+              </span>
+            )}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <label className="inline-flex items-center gap-1.5">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 sm:text-xs">페이지당</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="h-8 cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-2 pr-6 text-xs font-semibold text-slate-700 shadow-sm hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:border-blue-400/40 dark:focus:border-blue-400 dark:focus:ring-blue-400/30"
+              >
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={0}>전체</option>
+              </select>
+            </label>
+
+            {pageSize !== 0 && totalPages > 1 && (
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  ← 이전
+                </button>
+                <span className="px-1 text-[11px] tabular-nums text-slate-500 dark:text-slate-400 sm:text-xs">
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  다음 →
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* 모바일: 기존 카드 UI */}
         <section className="space-y-4 sm:space-y-5 md:hidden">
-          {filteredNotices.length > 0 ? (
-            filteredNotices.map((notice) => (
+          {pagedNotices.length > 0 ? (
+            pagedNotices.map((notice) => (
               <NoticeCard
                 key={notice.id}
                 notice={notice}
@@ -745,7 +975,9 @@ export default function Home() {
                   ? "관심 저장한 공고가 없거나 필터 조건에 맞지 않습니다."
                   : hasActiveSearch && matchesExceptSearch.length > 0
                     ? "현재 진행 중 공고 중 해당 키워드가 없습니다."
-                    : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
+                    : !includeExpired && matchedTotal > 0
+                      ? "진행 중 공고가 없습니다. 상단의 '마감 포함' 토글을 켜면 마감된 공고도 볼 수 있어요."
+                      : "검색어나 제품 필터를 변경해 다시 시도해 보세요."}
               </p>
             </div>
           )}
@@ -754,13 +986,38 @@ export default function Home() {
         {/* PC/노트북: 테이블 UI (헤더 클릭으로 정렬) */}
         <section className="hidden md:block">
           <NoticeTable
-            notices={filteredNotices}
+            notices={pagedNotices}
             savedIds={savedIds}
             onToggleSave={handleToggleSave}
             sortState={sortState}
             onSortChange={handleSortChange}
           />
         </section>
+
+        {/* 하단 페이지네이션 — 표가 길 때 다시 한번 노출 */}
+        {pageSize !== 0 && totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-center gap-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-3 font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              ← 이전
+            </button>
+            <span className="px-2 tabular-nums text-slate-500 dark:text-slate-400">
+              {safePage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-3 font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              다음 →
+            </button>
+          </div>
+        )}
 
         <p className="mt-8 text-center text-[11px] text-slate-400 dark:text-slate-500">
           {dataSource === "supabase" ? "Supabase · 나라장터 연동" : "샘플 데이터 기반 MVP"}
