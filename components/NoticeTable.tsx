@@ -1,8 +1,10 @@
 "use client";
 
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
+import { getAnnouncementKey } from "@/lib/announcementKey";
 import { getBudgetInfo } from "@/lib/budget";
 import { formatAccountTypeLabel } from "@/lib/customerMatching";
+import type { AnnouncementFeedback } from "@/lib/feedback";
 import { getMatchGradeStyle, toDisplayMatchGrade } from "@/lib/noticeGrades";
 import type { SortColumn, SortState } from "@/lib/noticeSorting";
 import {
@@ -79,6 +81,10 @@ type Props = {
   sortState?: SortState;
   /** 헤더 클릭 시 호출. 같은 컬럼이면 방향 토글, 다른 컬럼이면 자연스러운 방향으로 전환. */
   onSortChange?: (column: SortColumn) => void;
+  /** announcementKey → 피드백 인덱스. 행 버튼에 "있음" 표시 토글 용도. */
+  feedbackMap?: Map<string, AnnouncementFeedback>;
+  /** "피드백" 버튼 클릭 시 호출. 부모가 announcementKey 를 알아내어 모달 열기. */
+  onOpenFeedback?: (notice: Notice) => void;
 };
 
 /**
@@ -231,6 +237,8 @@ export default function NoticeTable({
   onToggleSave,
   sortState,
   onSortChange,
+  feedbackMap,
+  onOpenFeedback,
 }: Props) {
   if (notices.length === 0) {
     return (
@@ -372,9 +380,18 @@ export default function NoticeTable({
                   tabIndex={hasUrl ? 0 : -1}
                   onClick={handleRowClick}
                   onKeyDown={handleRowKeyDown}
-                  className={`group transition hover:bg-blue-50/50 focus:bg-blue-50 focus:outline-none dark:hover:bg-slate-800/60 dark:focus:bg-slate-800 ${
+                  className={`group relative transition focus:outline-none ${
                     hasUrl ? "cursor-pointer" : ""
-                  } ${status === "마감 지남" ? "opacity-70" : ""}`}
+                  } ${status === "마감 지남" ? "opacity-70" : ""} ${
+                    notice.isNew
+                      ? "bg-amber-50/40 hover:bg-amber-50 focus:bg-amber-50 dark:bg-amber-400/10 dark:hover:bg-amber-400/15 dark:focus:bg-amber-400/15"
+                      : "hover:bg-blue-50/50 focus:bg-blue-50 dark:hover:bg-slate-800/60 dark:focus:bg-slate-800"
+                  }`}
+                  style={
+                    notice.isNew
+                      ? { boxShadow: "inset 4px 0 0 0 #f59e0b" }
+                      : undefined
+                  }
                 >
                   {/* 1. 상태 */}
                   <td className="whitespace-nowrap px-3 py-3 align-top">
@@ -443,9 +460,10 @@ export default function NoticeTable({
                           {notice.isNew && (
                             <span
                               title="최근 24시간 안에 처음 들어온 공고"
-                              className="mr-1.5 inline-flex items-center whitespace-nowrap rounded-md bg-emerald-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+                              className="mr-1.5 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-400/20 px-2 py-0.5 align-middle text-[11px] font-extrabold text-amber-700 ring-1 ring-inset ring-amber-400/60 dark:bg-amber-400/20 dark:text-amber-200 dark:ring-amber-300/60"
                             >
-                              신규
+                              <span aria-hidden>★</span>
+                              <span>신규</span>
                             </span>
                           )}
                           {notice.title}
@@ -496,6 +514,33 @@ export default function NoticeTable({
                         >
                           {isSaved ? "★" : "☆"}
                         </button>
+                        {/*
+                          피드백 버튼 — 등록된 피드백이 있으면 보라색으로 강조.
+                          행 클릭(원문 열기)와 충돌하지 않도록 stopPropagation.
+                        */}
+                        {onOpenFeedback && (() => {
+                          const hasFeedback = feedbackMap?.has(
+                            getAnnouncementKey(notice),
+                          );
+                          return (
+                            <button
+                              type="button"
+                              aria-label={hasFeedback ? "피드백 보기/수정" : "피드백 작성"}
+                              title={hasFeedback ? "피드백 보기/수정" : "피드백 작성"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpenFeedback(notice);
+                              }}
+                              className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2 text-[11px] font-semibold transition ${
+                                hasFeedback
+                                  ? "bg-violet-600 text-white ring-1 ring-violet-500 hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
+                                  : "bg-violet-50 text-violet-700 ring-1 ring-violet-200 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30 dark:hover:bg-violet-500/25"
+                              }`}
+                            >
+                              {hasFeedback ? "피드백 ✓" : "피드백"}
+                            </button>
+                          );
+                        })()}
                         {hasUrl && (
                           <a
                             href={notice.sourceUrl}

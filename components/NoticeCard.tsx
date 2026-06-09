@@ -52,6 +52,10 @@ type NoticeCardProps = {
   notice: Notice;
   isSaved: boolean;
   onToggleSave: (id: string) => void;
+  /** 피드백이 등록되어 있는지 — 버튼 색 강조용. */
+  hasFeedback?: boolean;
+  /** 피드백 모달 열기. 부모가 announcementKey 를 알아내어 처리. */
+  onOpenFeedback?: () => void;
 };
 
 function CustomerInline({
@@ -91,7 +95,13 @@ function CustomerInline({
   );
 }
 
-export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCardProps) {
+export default function NoticeCard({
+  notice,
+  isSaved,
+  onToggleSave,
+  hasFeedback,
+  onOpenFeedback,
+}: NoticeCardProps) {
   const displayGrade = toDisplayMatchGrade(notice.matchGrade);
   const gradeStyle = getMatchGradeStyle(displayGrade);
   const dueStatus = getDueStatus(notice.deadline);
@@ -108,17 +118,25 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
 
   return (
     <article
-      className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm dark:hover:border-blue-400/30 sm:p-6 ${
-        dueStatus === "마감 지남" ? "opacity-90" : ""
-      }`}
+      className={`relative rounded-2xl border bg-white p-5 shadow-sm transition hover:shadow-md dark:bg-slate-900/70 dark:backdrop-blur-sm sm:p-6 ${
+        notice.isNew
+          ? "border-amber-300 ring-1 ring-amber-200/70 hover:border-amber-400 dark:border-amber-300/40 dark:ring-amber-400/20 dark:hover:border-amber-300/60"
+          : "border-slate-200 hover:border-blue-200 dark:border-white/10 dark:hover:border-blue-400/30"
+      } ${dueStatus === "마감 지남" ? "opacity-90" : ""}`}
+      style={
+        notice.isNew
+          ? { boxShadow: "inset 4px 0 0 0 #f59e0b" }
+          : undefined
+      }
     >
       <div className="flex flex-wrap items-center gap-2">
         {notice.isNew && (
           <span
             title="최근 24시간 안에 처음 들어온 공고"
-            className="inline-flex items-center whitespace-nowrap rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-400/20 px-2.5 py-1 text-xs font-extrabold text-amber-800 ring-1 ring-inset ring-amber-400/60 dark:bg-amber-400/20 dark:text-amber-100 dark:ring-amber-300/60"
           >
-            ● 신규
+            <span aria-hidden>★</span>
+            <span>신규</span>
           </span>
         )}
         <span
@@ -242,6 +260,19 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
           >
             공고 보기
           </a>
+          {onOpenFeedback && (
+            <button
+              type="button"
+              onClick={onOpenFeedback}
+              className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] ${
+                hasFeedback
+                  ? "bg-violet-600 text-white hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
+                  : "bg-violet-50 text-violet-700 ring-1 ring-violet-200 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30 dark:hover:bg-violet-500/25"
+              }`}
+            >
+              {hasFeedback ? "피드백 ✓" : "피드백"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onToggleSave(notice.id)}

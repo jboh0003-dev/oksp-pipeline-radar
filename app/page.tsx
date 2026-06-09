@@ -24,6 +24,12 @@ import {
   loadNoticesCache,
   saveNoticesCache,
 } from "@/lib/noticeCache";
+import {
+  buildFeedbackMap,
+  loadAllFeedbacks,
+  type AnnouncementFeedback,
+} from "@/lib/feedback";
+import FeedbackModal from "@/components/FeedbackModal";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
 import { evaluateMatchGrade } from "@/lib/noticeGrades";
 import {
@@ -40,7 +46,7 @@ import {
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
 import { getPrimaryProduct, type PrimaryProduct } from "@/lib/primaryProduct";
-import { isKeyNew, recordSeenKeys, type SeenMap } from "@/lib/seenNotices";
+import { isKeyNew, recordSeenKeys, resetNewState, type SeenMap } from "@/lib/seenNotices";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
@@ -59,11 +65,14 @@ const MISSING_TERRITORY_VALUE = "__missing__";
 type TerritoryFilter = string; // "all" | "__missing__" | actual territory string
 
 /**
- * 화면 카드(상단 요약) 카운트 — 한 공고가 두 카드에 동시에 +1 되지 않도록
- * announcementKey 로 dedup 하고, 제품별은 primaryProduct 기준 한 카드에만 +1.
- *  → "전체 진행 중 공고 = CONTRABASS + VIOLA" 처럼 보이지는 않더라도 (둘 다 매칭되지
- *    않은 공고도 활성 상태일 수 있으므로 같지는 않음), 적어도 합계가 전체보다 커지는
- *    부조리는 사라진다.
+ * 화면 카드(상단 요약) 카운트 — 회의 피드백 (VIOLA 11→6 으로 줄던 문제) 반영.
+ *
+ *  - 진행 중 공고: announcementKey 로 dedup 한 unique 공고 수.
+ *  - CONTRABASS / VIOLA: relatedProducts 에 해당 제품군이 한 번이라도 들어가면 +1
+ *    ("관련 매칭 기준 · 중복 포함"). primaryProduct 한 개만 보면 두 제품이 모두 매칭된
+ *    공고가 한쪽에서만 카운트되어 실제 매칭 건수보다 적게 보이는 부작용이 있어 변경.
+ *  - 결과적으로 카드 합계가 전체보다 커질 수 있다 → SummaryCards 하단에 "관련 매칭 기준 ·
+ *    중복 포함" 보조문구를 작게 표시해 사용자 혼동을 방지한다.
  */
 function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
   const counts: DashboardSummaryCounts = {
@@ -79,9 +88,9 @@ function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts 
     seenKeys.add(key);
 
     counts.activeTotal += 1;
-    const primary = notice.primaryProduct;
-    if (primary === "CONTRABASS") counts.contrabass += 1;
-    else if (primary === "VIOLA") counts.viola += 1;
+    const related = notice.relatedProducts ?? [];
+    if (related.some((p) => CONTRABASS_FAMILY_SET.has(p))) counts.contrabass += 1;
+    if (related.includes("VIOLA")) counts.viola += 1;
   }
 
   return counts;
@@ -291,6 +300,14 @@ export default function Home() {
    *  - true       : 마감 지난 공고까지 모두 표시. "매칭 N건이 어디에 있나?" 의문을 풀 수 있게.
    */
   const [includeExpired, setIncludeExpired] = useState(false);
+  /** 피드백 — 영업대표가 공고/키워드/본부 매칭에 대해 남기는 의견. localStorage 1차 저장. */
+  const [feedbackList, setFeedbackList] = useState<AnnouncementFeedback[]>([]);
+  /** 모달 대상 공고. null 이면 닫힌 상태. */
+  const [feedbackTarget, setFeedbackTarget] = useState<DisplayNotice | null>(
+    null,
+  );
+  /** "피드백 있음" 필터 — 사용자가 관리하는 의견이 있는 공고만 추리기. */
+  const [showFeedbackOnly, setShowFeedbackOnly] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
@@ -431,6 +448,17 @@ export default function Home() {
     };
   }, [loadNotices, loadLastRun]);
 
+  /** 첫 마운트에 localStorage 에서 피드백 목록 읽어 메모리에 캐싱. */
+  useEffect(() => {
+    setFeedbackList(loadAllFeedbacks());
+  }, []);
+
+  /** announcementKey → AnnouncementFeedback 인덱스. 테이블 행 lookup 에 사용. */
+  const feedbackMap = useMemo(
+    () => buildFeedbackMap(feedbackList),
+    [feedbackList],
+  );
+
   const candidates = useMemo(
     () => notices.filter((notice) => isVisibleCandidate(notice)),
     [notices],
@@ -465,7 +493,8 @@ export default function Home() {
         matchesProduct(notice, selectedProduct) &&
         matchesTerritoryStatus(notice, territoryFilter) &&
         (!showSavedOnly || savedIds.includes(notice.id)) &&
-        (!showNewOnly || notice.isNew === true),
+        (!showNewOnly || notice.isNew === true) &&
+        (!showFeedbackOnly || feedbackMap.has(getAnnouncementKey(notice))),
     );
     return sortNoticesByState(filtered, sortState);
   }, [
@@ -475,6 +504,8 @@ export default function Home() {
     territoryFilter,
     showSavedOnly,
     showNewOnly,
+    showFeedbackOnly,
+    feedbackMap,
     savedIds,
     sortState,
   ]);
@@ -487,9 +518,19 @@ export default function Home() {
           matchesProduct(notice, selectedProduct) &&
           matchesTerritoryStatus(notice, territoryFilter) &&
           (!showSavedOnly || savedIds.includes(notice.id)) &&
-          (!showNewOnly || notice.isNew === true),
+          (!showNewOnly || notice.isNew === true) &&
+          (!showFeedbackOnly || feedbackMap.has(getAnnouncementKey(notice))),
       ),
-    [visibleCandidates, selectedProduct, territoryFilter, showSavedOnly, showNewOnly, savedIds],
+    [
+      visibleCandidates,
+      selectedProduct,
+      territoryFilter,
+      showSavedOnly,
+      showNewOnly,
+      showFeedbackOnly,
+      feedbackMap,
+      savedIds,
+    ],
   );
 
   /** 현재 후보 안의 신규(isNew=true) 건수 — 신규 필터 버튼 라벨에 표시. */
@@ -544,6 +585,7 @@ export default function Home() {
     territoryFilter,
     showSavedOnly,
     showNewOnly,
+    showFeedbackOnly,
     includeExpired,
     pageSize,
   ]);
@@ -562,6 +604,20 @@ export default function Home() {
     if (typeof window !== "undefined") {
       window.location.reload();
     }
+  };
+
+  /**
+   * "신규 표시 초기화" — 회의 피드백.
+   *  - 잘못된 데이터 / 첫 진입 폭주 등으로 모든 공고가 신규로 보이는 경우 사용자가 수동 복구.
+   *  - 현재 화면에 들어와있는 announcementKey 들을 전부 stale 로 시드 → NEW 즉시 사라짐.
+   *  - 다음 수집부터는 새 키만 NEW 로 표시되는 정상 흐름으로 복귀.
+   */
+  const handleResetNewState = () => {
+    const keys = notices.map((n) => getAnnouncementKey(n));
+    const map = resetNewState(keys);
+    setNotices((prev) => applyNewFlags(prev, map));
+    setShowNewOnly(false);
+    setCollectToast("신규 표시를 초기화했습니다");
   };
 
   /**
@@ -790,6 +846,44 @@ export default function Home() {
                 <span className="tabular-nums">{newCandidateCount}</span>
               </button>
 
+              {/*
+                "신규 표시 초기화" — 화면이 한 번에 신규로 폭발한 경우 수동 복구용.
+                자주 누를 버튼은 아니므로 작은 텍스트 링크 톤.
+              */}
+              {newCandidateCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleResetNewState}
+                  title="현재 보이는 공고를 모두 '이미 본 것'으로 표시해 신규 표시를 끕니다"
+                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap text-[11px] font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200 sm:text-xs"
+                >
+                  신규 표시 초기화
+                </button>
+              )}
+
+              {/*
+                "피드백 있음" 필터 — 영업 의견이 등록된 공고만 다시 보고싶을 때 사용.
+                feedbackList 가 비어있으면 disable 톤.
+              */}
+              <button
+                type="button"
+                onClick={() => setShowFeedbackOnly((prev) => !prev)}
+                aria-pressed={showFeedbackOnly}
+                title="피드백이 등록된 공고만 표시"
+                disabled={feedbackList.length === 0 && !showFeedbackOnly}
+                className={`inline-flex h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
+                  showFeedbackOnly
+                    ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400"
+                    : feedbackList.length > 0
+                      ? "bg-violet-50 text-violet-700 ring-1 ring-violet-200 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30 dark:hover:bg-violet-500/25"
+                      : "cursor-not-allowed bg-slate-50 text-slate-400 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-500 dark:ring-white/10"
+                }`}
+              >
+                <span aria-hidden>💬</span>
+                <span>피드백</span>
+                <span className="tabular-nums">{feedbackList.length}</span>
+              </button>
+
               <span aria-hidden className="hidden h-6 w-px bg-slate-200 dark:bg-white/10 lg:inline-block" />
 
               <ProductFilter selected={selectedProduct} onChange={setSelectedProduct} />
@@ -963,6 +1057,8 @@ export default function Home() {
                 notice={notice}
                 isSaved={savedIds.includes(notice.id)}
                 onToggleSave={handleToggleSave}
+                hasFeedback={feedbackMap.has(getAnnouncementKey(notice))}
+                onOpenFeedback={() => setFeedbackTarget(notice)}
               />
             ))
           ) : (
@@ -991,6 +1087,8 @@ export default function Home() {
             onToggleSave={handleToggleSave}
             sortState={sortState}
             onSortChange={handleSortChange}
+            feedbackMap={feedbackMap}
+            onOpenFeedback={(notice) => setFeedbackTarget(notice)}
           />
         </section>
 
@@ -1023,6 +1121,21 @@ export default function Home() {
           {dataSource === "supabase" ? "Supabase · 나라장터 연동" : "샘플 데이터 기반 MVP"}
         </p>
       </main>
+
+      {/*
+        피드백 모달 — feedbackTarget 이 set 되면 모달이 열린다.
+        existing 은 announcementKey 기준으로 기존 피드백을 찾아 폼 초기값으로 사용.
+      */}
+      {feedbackTarget && (
+        <FeedbackModal
+          open
+          notice={feedbackTarget}
+          announcementKey={getAnnouncementKey(feedbackTarget)}
+          existing={feedbackMap.get(getAnnouncementKey(feedbackTarget))}
+          onSaved={(list) => setFeedbackList(list)}
+          onClose={() => setFeedbackTarget(null)}
+        />
+      )}
     </div>
   );
 }
