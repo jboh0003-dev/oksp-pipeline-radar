@@ -34,6 +34,11 @@ export type NoticeCustomerInfo = {
 
 export type Notice = {
   id: string;
+  /**
+   * Supabase 에 들어 있는 G2B 식별자(bidNtceNo 기반). 화면에서는 announcementKey 계산에만 쓴다.
+   * 샘플 데이터 / 구버전 row 에서는 비어 있을 수 있어 optional.
+   */
+  externalId?: string | null;
   title: string;
   agency: string;
   deadline: string;
@@ -47,6 +52,11 @@ export type Notice = {
   sourceUrl: string;
   /** customer_accounts 와 매칭된 경우만 채워진다. */
   customer?: NoticeCustomerInfo;
+  /**
+   * 화면 단계에서 부착되는 "신규" 표시. announcementKey 가 24h 이내에 처음 들어왔다면 true.
+   * fetchNotices 단계에서는 항상 undefined. (page.tsx 에서 SeenMap 비교 후 부착)
+   */
+  isNew?: boolean;
 };
 
 function withGrade(notice: Omit<Notice, "matchGrade"> & { matchGrade?: MatchGrade }): Notice {

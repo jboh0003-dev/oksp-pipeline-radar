@@ -113,6 +113,14 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
       }`}
     >
       <div className="flex flex-wrap items-center gap-2">
+        {notice.isNew && (
+          <span
+            title="최근 24시간 안에 처음 들어온 공고"
+            className="inline-flex items-center whitespace-nowrap rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+          >
+            ● 신규
+          </span>
+        )}
         <span
           className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${statusStyle.badge}`}
         >
@@ -212,16 +220,16 @@ export default function NoticeCard({ notice, isSaved, onToggleSave }: NoticeCard
           </span>
           {budgetInfo.amount != null ? (
             <span className="inline-flex items-center whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-sm font-bold tabular-nums text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-400/30">
-              {budgetInfo.formatted}
+              {budgetInfo.korean ?? budgetInfo.formatted}
             </span>
           ) : (
             <span className="inline-flex items-center whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-inset ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-white/10">
-              {budgetInfo.display}
+              예산 미공개
             </span>
           )}
-          {budgetInfo.korean && (
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              ({budgetInfo.korean})
+          {budgetInfo.korean && budgetInfo.formatted && (
+            <span className="text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
+              ({budgetInfo.formatted})
             </span>
           )}
         </div>

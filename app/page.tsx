@@ -14,6 +14,10 @@ import {
   type Notice,
   type ProductFilter as ProductFilterValue,
 } from "@/data/sampleNotices";
+import {
+  dedupeByAnnouncementKey,
+  getAnnouncementKey,
+} from "@/lib/announcementKey";
 import { fetchLastCollectionRun } from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
@@ -31,6 +35,8 @@ import {
   isTestNoticeUrl,
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
+import { getPrimaryProduct, type PrimaryProduct } from "@/lib/primaryProduct";
+import { isKeyNew, recordSeenKeys, type SeenMap } from "@/lib/seenNotices";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
@@ -47,6 +53,13 @@ const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 const MISSING_TERRITORY_VALUE = "__missing__";
 type TerritoryFilter = string; // "all" | "__missing__" | actual territory string
 
+/**
+ * 화면 카드(상단 요약) 카운트 — 한 공고가 두 카드에 동시에 +1 되지 않도록
+ * announcementKey 로 dedup 하고, 제품별은 primaryProduct 기준 한 카드에만 +1.
+ *  → "전체 진행 중 공고 = CONTRABASS + VIOLA" 처럼 보이지는 않더라도 (둘 다 매칭되지
+ *    않은 공고도 활성 상태일 수 있으므로 같지는 않음), 적어도 합계가 전체보다 커지는
+ *    부조리는 사라진다.
+ */
 function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts {
   const counts: DashboardSummaryCounts = {
     activeTotal: 0,
@@ -54,20 +67,28 @@ function countSummaryForCards(notices: DisplayNotice[]): DashboardSummaryCounts 
     viola: 0,
   };
 
+  const seenKeys = new Set<string>();
   for (const notice of notices) {
+    const key = getAnnouncementKey(notice);
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+
     counts.activeTotal += 1;
-    if (notice.relatedProducts.some((p) => CONTRABASS_FAMILY_SET.has(p))) {
-      counts.contrabass += 1;
-    }
-    if (notice.relatedProducts.includes("VIOLA")) {
-      counts.viola += 1;
-    }
+    const primary = notice.primaryProduct;
+    if (primary === "CONTRABASS") counts.contrabass += 1;
+    else if (primary === "VIOLA") counts.viola += 1;
   }
 
   return counts;
 }
 
-type DisplayNotice = Notice & { rawData?: string };
+type DisplayNotice = Notice & {
+  rawData?: string;
+  /** announcementKey 기반 신규 여부. 24h 안에 처음 본 공고이면 true. */
+  isNew?: boolean;
+  /** 카드 카운트와 "주제품" 표시에 쓰는 단일 제품 분류. */
+  primaryProduct?: PrimaryProduct;
+};
 
 function buildNoticeHaystack(notice: DisplayNotice): string {
   return [
@@ -224,6 +245,18 @@ async function attachRawData(
   }));
 }
 
+/**
+ * announcementKey 기준 SeenMap 을 받아 각 공고에 isNew 플래그를 부착한다.
+ * (24h 이내에 처음 들어온 공고만 isNew=true)
+ */
+function applyNewFlags(notices: DisplayNotice[], seenMap: SeenMap): DisplayNotice[] {
+  const now = Date.now();
+  return notices.map((n) => ({
+    ...n,
+    isNew: isKeyNew(getAnnouncementKey(n), seenMap, now),
+  }));
+}
+
 export default function Home() {
   const [notices, setNotices] = useState<DisplayNotice[]>([]);
   const [dataSource, setDataSource] = useState<NoticeDataSource>("sample");
@@ -234,10 +267,23 @@ export default function Home() {
   const [territoryFilter, setTerritoryFilter] = useState<TerritoryFilter>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
+  /** "신규" 필터 — 켜면 24h 이내 처음 들어온 공고만 표시. */
+  const [showNewOnly, setShowNewOnly] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
+
+  /**
+   * 수집 직후 짧게 띄우는 "신규 N건 추가됨" toast.
+   * setTimeout 으로 4s 뒤 자동 dismiss.
+   */
+  const [collectToast, setCollectToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!collectToast) return;
+    const id = window.setTimeout(() => setCollectToast(null), 4_000);
+    return () => window.clearTimeout(id);
+  }, [collectToast]);
 
   // 수동 수집("지금 수집") 상태.
   // - "idle"     : 클릭 전
@@ -248,12 +294,35 @@ export default function Home() {
   const [manualStatus, setManualStatus] = useState<ManualCollectStatus>("idle");
   const [manualMessage, setManualMessage] = useState<string | null>(null);
 
-  const loadNotices = useCallback(async () => {
+  /**
+   * 공고 목록 갱신 — Supabase / 샘플에서 가져온 뒤
+   *  1) negativeWeight 보정 + rawData 부착 (기존)
+   *  2) primaryProduct 계산 (CONTRABASS / VIOLA 카드 카운트가 중복되지 않게)
+   *  3) announcementKey 기준 dedup
+   *  4) seenNotices 와 비교해 isNew 표시
+   *
+   * 반환값: 이번 갱신에서 "처음 본" 공고 수 — 수집 직후 toast 메시지에 사용.
+   */
+  const loadNotices = useCallback(async (): Promise<{ newCount: number }> => {
     const result = await fetchNotices();
     const withRaw = await attachRawData(result.notices, result.source);
-    setNotices(withRaw);
+
+    // primaryProduct 부착 + dedup
+    const enriched: DisplayNotice[] = withRaw.map((n) => ({
+      ...n,
+      primaryProduct: getPrimaryProduct(n),
+    }));
+    const deduped = dedupeByAnnouncementKey(enriched);
+
+    // 처음 보는 공고는 firstSeenAt = now 로 기록.
+    const keys = deduped.map((n) => getAnnouncementKey(n));
+    const { newKeys, map } = recordSeenKeys(keys);
+
+    const flagged = applyNewFlags(deduped, map);
+    setNotices(flagged);
     setDataSource(result.source);
     setErrorMessage(result.error);
+    return { newCount: newKeys.length };
   }, []);
 
   const loadLastRun = useCallback(async () => {
@@ -302,7 +371,8 @@ export default function Home() {
       (notice) =>
         matchesProduct(notice, selectedProduct) &&
         matchesTerritoryStatus(notice, territoryFilter) &&
-        (!showSavedOnly || savedIds.includes(notice.id)),
+        (!showSavedOnly || savedIds.includes(notice.id)) &&
+        (!showNewOnly || notice.isNew === true),
     );
     return sortNoticesByState(filtered, sortState);
   }, [
@@ -311,6 +381,7 @@ export default function Home() {
     selectedProduct,
     territoryFilter,
     showSavedOnly,
+    showNewOnly,
     savedIds,
     sortState,
   ]);
@@ -322,9 +393,16 @@ export default function Home() {
         (notice) =>
           matchesProduct(notice, selectedProduct) &&
           matchesTerritoryStatus(notice, territoryFilter) &&
-          (!showSavedOnly || savedIds.includes(notice.id)),
+          (!showSavedOnly || savedIds.includes(notice.id)) &&
+          (!showNewOnly || notice.isNew === true),
       ),
-    [candidates, selectedProduct, territoryFilter, showSavedOnly, savedIds],
+    [candidates, selectedProduct, territoryFilter, showSavedOnly, showNewOnly, savedIds],
+  );
+
+  /** 현재 후보 안의 신규(isNew=true) 건수 — 신규 필터 버튼 라벨에 표시. */
+  const newCandidateCount = useMemo(
+    () => candidates.filter((n) => n.isNew === true).length,
+    [candidates],
   );
 
   /**
@@ -398,7 +476,7 @@ export default function Home() {
     }
 
     // 어쨌든 끝났으니 화면 데이터는 다시 읽어온다. (DB 로그가 안 남았더라도 notices 는 갱신됐을 수 있음)
-    await Promise.all([loadNotices(), loadLastRun()]);
+    const [{ newCount }] = await Promise.all([loadNotices(), loadLastRun()]);
 
     if (!resp) {
       setManualStatus("error");
@@ -438,6 +516,12 @@ export default function Home() {
     setManualStatus("success");
     setManualMessage(`수집 완료: ${parts.join(" / ")}`);
 
+    // 사용자에게 즉시 보이는 신규 공고 건수를 토스트로 안내. (loadNotices 가 SeenMap 비교로
+    // 산출한 값이라 이번 수집에서 화면에 새로 등장한 공고만 잡힌다.)
+    if (newCount > 0) {
+      setCollectToast(`신규 ${newCount.toLocaleString("ko-KR")}건이 추가됐어요`);
+    }
+
     // 일부 환경에서 Supabase 의 read replica 가 약간 지연될 수 있어, 1초 후 한 번 더 lastRun 을 갱신한다.
     setTimeout(() => {
       void loadLastRun();
@@ -464,6 +548,27 @@ export default function Home() {
     <div className="min-h-full">
       <main className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
         <Header totalCount={candidates.length} filteredCount={filteredNotices.length} />
+
+        {/*
+          수집 직후 짧게 보이는 토스트.
+          "신규 N건 추가됨" 처럼 사용자가 결과를 곧장 인지할 수 있게 한다.
+          4초 뒤 자동 dismiss (collectToast useEffect 가 처리).
+        */}
+        {collectToast && (
+          <div
+            role="status"
+            className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 shadow-sm dark:border-emerald-400/30 dark:bg-emerald-500/15 dark:text-emerald-200 sm:text-sm"
+          >
+            <span className="font-semibold">{collectToast}</span>
+            <button
+              type="button"
+              onClick={() => setCollectToast(null)}
+              className="text-[11px] font-medium text-emerald-700/80 hover:text-emerald-900 dark:text-emerald-200/80 dark:hover:text-emerald-50"
+            >
+              닫기
+            </button>
+          </div>
+        )}
 
         {dataSource === "sample" && errorMessage && (
           <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200">
@@ -506,6 +611,29 @@ export default function Home() {
                 }`}
               >
                 {showSavedOnly ? "★ 관심만 (켜짐)" : "☆ 관심만"}
+              </button>
+
+              {/*
+                "신규" 필터 — announcementKey 기반 SeenMap 으로 24h 이내 처음 들어온 공고만 추린다.
+                미적용 시 카운트만 안내 (예: "신규 3"), 적용 시 강조 색.
+              */}
+              <button
+                type="button"
+                onClick={() => setShowNewOnly((prev) => !prev)}
+                aria-pressed={showNewOnly}
+                title="최근 24시간 내 처음 들어온 공고만 표시"
+                disabled={newCandidateCount === 0 && !showNewOnly}
+                className={`inline-flex h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
+                  showNewOnly
+                    ? "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+                    : newCandidateCount > 0
+                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30 dark:hover:bg-emerald-500/25"
+                      : "cursor-not-allowed bg-slate-50 text-slate-400 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-500 dark:ring-white/10"
+                }`}
+              >
+                <span aria-hidden>●</span>
+                <span>신규</span>
+                <span className="tabular-nums">{newCandidateCount}</span>
               </button>
 
               <span aria-hidden className="hidden h-6 w-px bg-slate-200 dark:bg-white/10 lg:inline-block" />

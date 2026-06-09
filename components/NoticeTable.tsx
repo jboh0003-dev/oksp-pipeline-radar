@@ -440,6 +440,14 @@ export default function NoticeTable({
                           title={notice.title}
                           className="text-sm font-semibold text-slate-900 group-hover:text-blue-700 dark:text-slate-100 dark:group-hover:text-blue-300"
                         >
+                          {notice.isNew && (
+                            <span
+                              title="최근 24시간 안에 처음 들어온 공고"
+                              className="mr-1.5 inline-flex items-center whitespace-nowrap rounded-md bg-emerald-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+                            >
+                              신규
+                            </span>
+                          )}
                           {notice.title}
                         </div>
                         {(() => {
@@ -504,25 +512,30 @@ export default function NoticeTable({
                     </div>
                   </td>
 
-                  {/* 5. 예산 — 천 단위 콤마 + 한글 보조 (공고명 바로 다음) */}
+                  {/*
+                    5. 예산
+                    - 첫 줄: 사람이 읽기 쉬운 한글 금액 (bold)        예: "31억 3,001만 원"
+                    - 둘째 줄: 정확한 원 단위                       예: "3,130,012,000원"
+                    - 금액 정보가 아예 없으면 "예산 미공개"
+                  */}
                   <td className="px-3 py-3 align-top text-right">
                     {(() => {
                       const budget = getBudgetInfo(notice.budget);
                       if (budget.amount == null) {
                         return (
                           <span className="whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500">
-                            금액 정보 없음
+                            예산 미공개
                           </span>
                         );
                       }
                       return (
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="whitespace-nowrap text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">
-                            {budget.formatted}
+                            {budget.korean ?? budget.formatted}
                           </span>
-                          {budget.korean && (
-                            <span className="whitespace-nowrap text-[11px] text-slate-500 dark:text-slate-400">
-                              {budget.korean}
+                          {budget.korean && budget.formatted && (
+                            <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
+                              {budget.formatted}
                             </span>
                           )}
                         </div>

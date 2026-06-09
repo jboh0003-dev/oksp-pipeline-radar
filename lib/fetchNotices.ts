@@ -197,6 +197,7 @@ function mapRowToNotice(
 
   return {
     id: String(row.id),
+    externalId: row.external_id ?? null,
     title: row.title,
     agency: row.agency,
     deadline: dueRaw ? formatDueDate(String(dueRaw)) : "",

@@ -48,40 +48,51 @@ const items: Array<{
  * 단, 기존만큼 거대하지 않게 padding/숫자 크기를 절제한다.
  * 카드 좌측에 컬러 아이콘을 두어 브랜드 톤을 살린다.
  *
+ * 카운트 정책 (회의 피드백):
+ *  - 진행 중 공고: announcementKey 로 dedup 한 unique 공고 수.
+ *  - CONTRABASS / VIOLA: primaryProduct 기준 (한 공고 = 정확히 한 카드에만 +1).
+ *    → 카드 합계가 진행 중 공고 수보다 커지지 않는다.
+ *  - 카드 하단에 "주제품 기준" 안내를 작게 표시.
+ *
  * 예산은 별도 합계 카드로 두지 않는다. 공고별 예산은 NoticeTable 의 "예산" 컬럼에서 표시한다.
  */
 export default function SummaryCards(props: SummaryCardsProps) {
   return (
-    <section className="mb-4 grid grid-cols-3 gap-2.5 sm:gap-3">
-      {items.map((item) => (
-        <div
-          key={item.key}
-          className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm dark:hover:border-blue-400/30 sm:px-4 sm:py-3.5"
-        >
+    <section className="mb-4">
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+        {items.map((item) => (
           <div
-            aria-hidden
-            className={`pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r ${item.bar}`}
-          />
-          <div className="flex items-center gap-3">
-            <span
+            key={item.key}
+            className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm dark:hover:border-blue-400/30 sm:px-4 sm:py-3.5"
+          >
+            <div
               aria-hidden
-              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${item.iconBg} ${item.iconText}`}
-            >
-              <Icon name={item.icon} />
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:text-xs">
-                {item.label}
-              </p>
-              <p
-                className={`mt-0.5 text-xl font-bold leading-none tracking-tight tabular-nums sm:text-2xl ${item.accentText}`}
+              className={`pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r ${item.bar}`}
+            />
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden
+                className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${item.iconBg} ${item.iconText}`}
               >
-                {props[item.key]}
-              </p>
+                <Icon name={item.icon} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:text-xs">
+                  {item.label}
+                </p>
+                <p
+                  className={`mt-0.5 text-xl font-bold leading-none tracking-tight tabular-nums sm:text-2xl ${item.accentText}`}
+                >
+                  {props[item.key]}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
+      <p className="mt-1.5 text-right text-[10px] text-slate-400 dark:text-slate-500 sm:text-[11px]">
+        제품별 카드는 주제품 기준 · 진행 중 공고는 중복 제거된 건수
+      </p>
     </section>
   );
 }
