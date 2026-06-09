@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Notice } from "@/data/sampleNotices";
 import { CONTRABASS_FAMILY } from "@/data/sampleNotices";
 import {
   type AnnouncementFeedback,
   type FeedbackRating,
+  type FeedbackSourceType,
   type KeywordFeedback,
   loadLastAuthor,
   saveFeedback,
@@ -46,16 +46,41 @@ const RATING_TONE: Record<
   },
 };
 
+/**
+ * 피드백 모달의 대상 공고 — bid Notice 와 PreSpecAnnouncement 양쪽이 모두 만족할 수 있는
+ * 최소 인터페이스. 각 화면에서 자기 데이터를 살짝 shape 해 넘기면 된다.
+ */
+export type FeedbackSubject = {
+  id: string;
+  title: string;
+  agency: string;
+  relatedProducts: readonly string[];
+  keywords: readonly string[];
+  /** 입찰공고는 deadline, 사전규격은 opinionDeadline 등 — 화면 표시용. */
+  deadline?: string;
+  /** 사전규격에서는 "의견마감" 등 라벨로 표시하기 위한 옵셔널. */
+  deadlineLabel?: string;
+  customer?: {
+    customerName?: string;
+    territory?: string | null;
+    accountType?: string | null;
+  } | null;
+};
+
 type Props = {
   /** 모달이 열려있는지. false 면 unmount 되어 SSR 안전. */
   open: boolean;
-  /** 피드백 대상 공고. */
-  notice: Notice;
+  /** 피드백 대상 공고 (구조적 subset). 입찰/사전규격 어느 쪽이든 가능. */
+  notice: FeedbackSubject;
   /** 공고 unique key — 저장 ID. */
   announcementKey: string;
+  /** 어느 소스의 피드백인지. 입찰=BID(기본), 사전규격=PRE_SPEC. */
+  sourceType?: FeedbackSourceType;
+  /** 메모 placeholder 를 화면별로 변경. */
+  memoPlaceholder?: string;
   /** 기존 피드백(있으면 폼 초기값). */
   existing?: AnnouncementFeedback;
-  /** 저장 직후 부모에 갱신된 전체 list 전달. */
+  /** 저장 직후 부모에 갱신된 list 전달. (sourceType 으로 필터된 결과) */
   onSaved: (list: AnnouncementFeedback[]) => void;
   onClose: () => void;
 };
@@ -76,6 +101,8 @@ export default function FeedbackModal({
   open,
   notice,
   announcementKey,
+  sourceType = "BID",
+  memoPlaceholder,
   existing,
   onSaved,
   onClose,
@@ -83,6 +110,7 @@ export default function FeedbackModal({
   const [rating, setRating] = useState<FeedbackRating>("neutral");
   const [contrabass, setContrabass] = useState<FeedbackRating | undefined>();
   const [viola, setViola] = useState<FeedbackRating | undefined>();
+  const [cmp, setCmp] = useState<FeedbackRating | undefined>();
   const [department, setDepartment] = useState<FeedbackRating | undefined>();
   const [correctDepartment, setCorrectDepartment] = useState<string>("");
   const [keywordRatings, setKeywordRatings] = useState<KeywordFeedback[]>([]);
@@ -91,12 +119,17 @@ export default function FeedbackModal({
   const dialogRef = useRef<HTMLDivElement>(null);
 
   const hasContrabass = useMemo(
-    () => notice.relatedProducts.some((p) => CONTRABASS_FAMILY_SET.has(p)),
+    () => notice.relatedProducts.some((p) => CONTRABASS_FAMILY_SET.has(p) || p === "CONTRABASS"),
     [notice.relatedProducts],
   );
   const hasViola = useMemo(
     () => notice.relatedProducts.includes("VIOLA"),
     [notice.relatedProducts],
+  );
+  /** CMP 평가는 사전규격 전용. 입찰공고에서는 표시하지 않는다. */
+  const hasCmp = useMemo(
+    () => sourceType === "PRE_SPEC" && notice.relatedProducts.includes("CMP"),
+    [notice.relatedProducts, sourceType],
   );
 
   /** 모달이 새로 열릴 때 폼을 existing 또는 디폴트로 초기화. */
@@ -105,6 +138,7 @@ export default function FeedbackModal({
     setRating(existing?.rating ?? "neutral");
     setContrabass(existing?.productFeedback?.CONTRABASS);
     setViola(existing?.productFeedback?.VIOLA);
+    setCmp(existing?.productFeedback?.CMP);
     setDepartment(existing?.departmentFeedback);
     setCorrectDepartment(existing?.correctDepartment ?? "");
     const baseKeywords = Array.from(
@@ -150,17 +184,17 @@ export default function FeedbackModal({
     if (author.trim()) saveLastAuthor(author);
     const next = saveFeedback({
       announcementKey,
+      sourceType,
       noticeId: notice.id,
       noticeTitle: notice.title,
       rating,
       productFeedback: {
         ...(contrabass ? { CONTRABASS: contrabass } : {}),
         ...(viola ? { VIOLA: viola } : {}),
+        ...(cmp ? { CMP: cmp } : {}),
       },
       departmentFeedback: department,
       correctDepartment: correctDepartment.trim() || undefined,
-      // "그대로(neutral) + 메모 없음" 같은 의미 없는 키워드는 굳이 저장하지 않아도 되지만
-      // 단순함을 위해 전부 저장 — CSV 내보낼 때 의도가 보존됨.
       keywordFeedback: keywordRatings,
       memo: memo.trim(),
       author: author.trim() || undefined,
@@ -234,7 +268,7 @@ export default function FeedbackModal({
           )}
           {notice.deadline && (
             <span className="text-slate-500 dark:text-slate-400">
-              · 마감{" "}
+              · {notice.deadlineLabel ?? "마감"}{" "}
               <span className="font-semibold text-slate-700 dark:text-slate-200">
                 {notice.deadline.slice(0, 10)}
               </span>
@@ -255,8 +289,8 @@ export default function FeedbackModal({
           <RatingPicker value={rating} onChange={setRating} />
         </Section>
 
-        {/* 3) 제품별 평가 — 매칭된 제품만 노출 */}
-        {(hasContrabass || hasViola) && (
+        {/* 3) 제품별 평가 — 매칭된 제품만 노출. CMP 는 사전규격 전용. */}
+        {(hasContrabass || hasViola || hasCmp) && (
           <Section label="제품 매칭 평가">
             <div className="space-y-2">
               {hasContrabass && (
@@ -271,6 +305,13 @@ export default function FeedbackModal({
                   label="VIOLA"
                   value={viola}
                   onChange={setViola}
+                />
+              )}
+              {hasCmp && (
+                <ProductRow
+                  label="CMP"
+                  value={cmp}
+                  onChange={setCmp}
                 />
               )}
             </div>
@@ -355,7 +396,12 @@ export default function FeedbackModal({
           <textarea
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
-            placeholder="예: 가상화 키워드는 맞지만 실제 사업 범위가 단순 장비 교체라 우선순위는 낮아 보임"
+            placeholder={
+              memoPlaceholder ??
+              (sourceType === "PRE_SPEC"
+                ? "예: 규격서에 VMware 전환 내용이 있어 Contrabass 관점에서 사전 영업 필요"
+                : "예: 가상화 키워드는 맞지만 실제 사업 범위가 단순 장비 교체라 우선순위는 낮아 보임")
+            }
             rows={3}
             className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400 dark:focus:ring-blue-400/30"
           />

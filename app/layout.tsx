@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import AppShell from "@/components/AppShell";
 import {
   APP_DESCRIPTION,
   APP_FULL_NAME,
@@ -72,7 +73,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-full flex flex-col">
-        {children}
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

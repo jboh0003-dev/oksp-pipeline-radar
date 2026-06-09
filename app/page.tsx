@@ -448,9 +448,9 @@ export default function Home() {
     };
   }, [loadNotices, loadLastRun]);
 
-  /** 첫 마운트에 localStorage 에서 피드백 목록 읽어 메모리에 캐싱. */
+  /** 첫 마운트에 localStorage 에서 입찰공고용 피드백만 읽어 메모리에 캐싱. */
   useEffect(() => {
-    setFeedbackList(loadAllFeedbacks());
+    setFeedbackList(loadAllFeedbacks("BID"));
   }, []);
 
   /** announcementKey → AnnouncementFeedback 인덱스. 테이블 행 lookup 에 사용. */
@@ -723,16 +723,16 @@ export default function Home() {
     // 데이터가 없는 동안 빈 Header(0/0건) 가 잠깐 보이는 것을 막아 체감 속도를 개선.
     return (
       <div className="min-h-full">
-        <main className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
+        <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
           <DashboardLoading />
-        </main>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-full">
-      <main className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
+      <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
         <Header
           matchedCount={matchedTotal}
           filteredCount={displayedCount}
@@ -1120,7 +1120,7 @@ export default function Home() {
         <p className="mt-8 text-center text-[11px] text-slate-400 dark:text-slate-500">
           {dataSource === "supabase" ? "Supabase · 나라장터 연동" : "샘플 데이터 기반 MVP"}
         </p>
-      </main>
+      </div>
 
       {/*
         피드백 모달 — feedbackTarget 이 set 되면 모달이 열린다.

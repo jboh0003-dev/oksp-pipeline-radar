@@ -18,6 +18,9 @@
 
 export type FeedbackRating = "good" | "bad" | "neutral";
 
+/** 피드백이 어느 소스에서 왔는지. 기존 입찰공고 데이터와의 호환을 위해 default = "BID". */
+export type FeedbackSourceType = "BID" | "PRE_SPEC";
+
 export type KeywordFeedback = {
   keyword: string;
   rating: FeedbackRating;
@@ -26,10 +29,12 @@ export type KeywordFeedback = {
 export type AnnouncementFeedback = {
   id: string;
   announcementKey: string;
+  /** 어떤 소스의 공고인지. 미지정시 "BID" 로 간주. */
+  sourceType?: FeedbackSourceType;
   noticeId?: string;
   noticeTitle?: string;
   rating: FeedbackRating;
-  productFeedback?: Partial<Record<"CONTRABASS" | "VIOLA", FeedbackRating>>;
+  productFeedback?: Partial<Record<"CONTRABASS" | "VIOLA" | "CMP", FeedbackRating>>;
   departmentFeedback?: FeedbackRating;
   /** 영업이 "올바른 본부는 ~ 이다" 로 정정한 값. 미입력은 undefined. */
   correctDepartment?: string;
@@ -71,8 +76,13 @@ function safeWrite(list: AnnouncementFeedback[]) {
 }
 
 /** 모든 피드백 — 화면 진입 시 한 번 읽고 useMemo 로 announcementKey 기준 인덱싱해서 사용. */
-export function loadAllFeedbacks(): AnnouncementFeedback[] {
-  return safeRead();
+export function loadAllFeedbacks(
+  sourceType?: FeedbackSourceType,
+): AnnouncementFeedback[] {
+  const all = safeRead();
+  if (!sourceType) return all;
+  // sourceType 미지정 데이터(과거 데이터)는 "BID" 로 간주.
+  return all.filter((f) => (f.sourceType ?? "BID") === sourceType);
 }
 
 /** announcementKey → feedback 인덱스. 테이블 행마다 빠르게 lookup 하기 위함. */
@@ -87,46 +97,61 @@ export function buildFeedbackMap(
 }
 
 /**
- * upsert — announcementKey 기준 1건 저장. 이미 있으면 updatedAt 만 갱신, 없으면 createdAt 도 셋업.
- * 반환값: 저장 후의 전체 목록 (재렌더 시 useState 갱신용).
+ * upsert — (announcementKey, sourceType) 기준 1건 저장. 이미 있으면 updatedAt 만 갱신,
+ * 없으면 createdAt 도 셋업.
+ *
+ * 같은 announcementKey 라도 sourceType 이 다르면 별도 row 로 본다 — 1차에선 거의 일어나지
+ * 않지만 사전규격→입찰공고 연결 추적을 위해 안전한 분리.
+ *
+ * 반환값: 저장 후의 (sourceType 으로 필터된) 목록 (재렌더 시 useState 갱신용).
  */
 export function saveFeedback(
   partial: Omit<AnnouncementFeedback, "id" | "createdAt" | "updatedAt">,
 ): AnnouncementFeedback[] {
   const list = safeRead();
   const now = new Date().toISOString();
+  const sourceType: FeedbackSourceType = partial.sourceType ?? "BID";
   const idx = list.findIndex(
-    (item) => item.announcementKey === partial.announcementKey,
+    (item) =>
+      item.announcementKey === partial.announcementKey &&
+      (item.sourceType ?? "BID") === sourceType,
   );
   if (idx >= 0) {
     list[idx] = {
       ...list[idx],
       ...partial,
+      sourceType,
       updatedAt: now,
     };
   } else {
     const newId =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
-        : `${partial.announcementKey}-${Date.now()}`;
+        : `${sourceType}-${partial.announcementKey}-${Date.now()}`;
     list.push({
       ...partial,
+      sourceType,
       id: newId,
       createdAt: now,
       updatedAt: now,
     });
   }
   safeWrite(list);
-  return list;
+  return loadAllFeedbacks(sourceType);
 }
 
-/** 단건 삭제. */
-export function deleteFeedback(announcementKey: string): AnnouncementFeedback[] {
-  const list = safeRead().filter(
-    (item) => item.announcementKey !== announcementKey,
-  );
+/** 단건 삭제. sourceType 미지정 시 같은 key 의 모든 sourceType 을 지운다. */
+export function deleteFeedback(
+  announcementKey: string,
+  sourceType?: FeedbackSourceType,
+): AnnouncementFeedback[] {
+  const list = safeRead().filter((item) => {
+    if (item.announcementKey !== announcementKey) return true;
+    if (!sourceType) return false;
+    return (item.sourceType ?? "BID") !== sourceType;
+  });
   safeWrite(list);
-  return list;
+  return loadAllFeedbacks(sourceType);
 }
 
 /** 마지막 작성자 — 다음 모달에 미리 채워준다. */
@@ -153,11 +178,13 @@ export function saveLastAuthor(author: string) {
 /** CSV 내보내기용 — 한 줄당 한 피드백. 한국어 헤더로 영업이 바로 열어볼 수 있게. */
 export function feedbacksToCsv(list: AnnouncementFeedback[]): string {
   const header = [
+    "구분",
     "공고키",
     "공고명",
     "전체평가",
     "CONTRABASS",
     "VIOLA",
+    "CMP",
     "담당본부 평가",
     "올바른 본부",
     "키워드 피드백",
@@ -166,17 +193,23 @@ export function feedbacksToCsv(list: AnnouncementFeedback[]): string {
     "작성일",
     "수정일",
   ];
+  const sourceLabel: Record<FeedbackSourceType, string> = {
+    BID: "입찰공고",
+    PRE_SPEC: "사전규격공고",
+  };
   const rows = list.map((f) => {
     const pf = f.productFeedback ?? {};
     const kw = (f.keywordFeedback ?? [])
       .map((k) => `${k.keyword}:${k.rating}`)
       .join(" | ");
     return [
+      sourceLabel[(f.sourceType ?? "BID") as FeedbackSourceType] ?? "입찰공고",
       f.announcementKey,
       f.noticeTitle ?? "",
       f.rating,
       pf.CONTRABASS ?? "",
       pf.VIOLA ?? "",
+      pf.CMP ?? "",
       f.departmentFeedback ?? "",
       f.correctDepartment ?? "",
       kw,
