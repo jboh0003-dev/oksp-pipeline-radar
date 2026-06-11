@@ -11,17 +11,18 @@
  *   - getPublicPrcureThngInfoCnstwkPPSSrch (공사)
  *   - getPublicPrcureThngInfoFrgcptPPSSrch (외자)
  *
- * 필수 파라미터:
- *   serviceKey, pageNo, numOfRows, inqryDiv, inqryEndDt
+ * 참고 fallback (현 시점에서는 G2B 공식이 위 endpoint 만 노출하지만 다른 G2B 크롤러 프로젝트에서
+ * 발견된 후보들을 함께 정의해 두고 한 번씩 시도하도록 만든다 — 운영에서 한 endpoint 가 죽어도
+ * 다른 후보로 흘러가게 한다):
+ *   - getPublicPrcureThngInfoServc / getPublicPrcureThngInfoCnstwk (구버전)
  *
- * 응답 구조 (실제 응답 예):
- *   { response: { header: { resultCode, resultMsg }, body: { totalCount, pageNo, numOfRows, items: [...] } } }
- *
- *   items 가 단일 객체로 올 수도 있음 → toArray 로 normalize.
- *
- * 1차 수집 대상: 용역 + 물품 (concurrency 3)
- * 이후 확장: 공사, 외자
+ * 호출 안정성 (3차 고도화):
+ *   - lib/g2b/client + lib/g2b/fetchPaged 를 사용 (timeout / retry / resultCode / JSON 파싱 통합).
+ *   - 한 endpoint 의 실패가 전체 수집을 막지 않음 — page.error 로 기록하고 다른 endpoint 는 계속.
+ *   - 페이지 별 결과를 PreSpecFetchPage 로 그대로 노출 → 호출부에서 CollectionError 로 매핑.
  */
+
+import { fetchG2bPaged, type G2bPagedPage } from "@/lib/g2b/fetchPaged";
 
 const DEFAULT_BASE_URL =
   process.env.G2B_PRESPEC_BASE_URL ??
@@ -29,11 +30,15 @@ const DEFAULT_BASE_URL =
 
 export type PreSpecCategory = "servc" | "thng" | "cnstwk" | "frgcpt";
 
-const ENDPOINT_BY_CATEGORY: Record<PreSpecCategory, string> = {
-  servc: "getPublicPrcureThngInfoServcPPSSrch",
-  thng: "getPublicPrcureThngInfoThngPPSSrch",
-  cnstwk: "getPublicPrcureThngInfoCnstwkPPSSrch",
-  frgcpt: "getPublicPrcureThngInfoFrgcptPPSSrch",
+/**
+ * 카테고리별 endpoint 후보. 운영 endpoint 가 첫 번째이고, fallback 후보가 그 뒤.
+ * 첫 번째 후보가 데이터를 정상적으로 반환했다면 추가 후보는 호출하지 않는다.
+ */
+const ENDPOINT_CANDIDATES_BY_CATEGORY: Record<PreSpecCategory, string[]> = {
+  servc: ["getPublicPrcureThngInfoServcPPSSrch", "getPublicPrcureThngInfoServc"],
+  thng: ["getPublicPrcureThngInfoThngPPSSrch", "getPublicPrcureThngInfoThng"],
+  cnstwk: ["getPublicPrcureThngInfoCnstwkPPSSrch", "getPublicPrcureThngInfoCnstwk"],
+  frgcpt: ["getPublicPrcureThngInfoFrgcptPPSSrch"],
 };
 
 export const PRE_SPEC_CATEGORY_LABEL: Record<PreSpecCategory, string> = {
@@ -55,7 +60,6 @@ export type PreSpecFetchPage = {
   items: Record<string, unknown>[];
   resultCode: string | null;
   resultMsg: string | null;
-  /** 페이지 단위 수집 시간 (ms) — 디버그/성능 진단용. */
   durationMs?: number;
   error: string | null;
 };
@@ -71,226 +75,141 @@ export type PreSpecFetchOptions = {
   categories?: PreSpecCategory[];
   /** 페이지 동시 호출 수 제한. 기본 3. */
   concurrency?: number;
+  /** 호출별 timeout(ms). 기본 15s. */
+  timeoutMs?: number;
+  /** retry 횟수. 기본 3. */
+  retries?: number;
 };
 
 export type PreSpecFetchResult = {
-  items: Record<string, unknown>[];
+  /** raw 아이템들에 (sourceApi, sourceEndpoint) 정보를 부착해 반환. */
+  items: Array<Record<string, unknown> & { __sourceApi?: string; __sourceEndpoint?: string }>;
   pages: PreSpecFetchPage[];
   totalsByCategory: Partial<Record<PreSpecCategory, number>>;
-  /** 첫 페이지의 첫 아이템 sample — 디버깅용 (운영용 응답에서는 빈 객체일 수 있음). */
+  /** 첫 페이지의 첫 아이템 sample — 디버깅용. */
   firstItemSample: Record<string, unknown> | null;
-  /** 첫 페이지에서 본 키 목록 — 필드 매핑 확장 시 참고. */
   firstItemKeys: string[];
+  /** 사람이 읽기 쉬운 페이지 단위 에러 메시지(legacy 호환). */
   errors: string[];
+  /** 페이지 단위 에러 raw — collectionErrors.ts 로 매핑할 수 있도록 구조화된 형태. */
+  pageErrors: Array<{
+    category: PreSpecCategory;
+    endpoint: string;
+    pageNo: number;
+    message: string;
+    detail?: string;
+  }>;
 };
 
-function toArray<T>(value: T | T[] | null | undefined): T[] {
-  if (value == null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function buildUrl(
-  baseUrl: string,
-  endpoint: string,
-  serviceKey: string,
-  pageNo: number,
-  inqryBgnDt: string,
-  inqryEndDt: string,
-): string {
-  const normalized = baseUrl.replace(/\/$/, "");
-  const u = new URL(`${normalized}/${endpoint}`);
-  u.searchParams.set("serviceKey", serviceKey);
-  u.searchParams.set("pageNo", String(pageNo));
-  u.searchParams.set("numOfRows", String(PRE_SPEC_NUM_OF_ROWS));
-  u.searchParams.set("inqryDiv", "1");
-  u.searchParams.set("inqryBgnDt", inqryBgnDt);
-  u.searchParams.set("inqryEndDt", inqryEndDt);
-  u.searchParams.set("type", "json");
-  return u.toString();
-}
-
-async function fetchJson(url: string): Promise<unknown> {
-  const resp = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    headers: { Accept: "application/json, text/plain, */*" },
-  });
-  const text = await resp.text();
-  if (!resp.ok) {
-    // public data API 가 200 이 아닌 응답을 줄 때 본문에 의미 있는 메시지가 있는 경우가 많다.
-    throw new Error(`HTTP ${resp.status} · ${text.slice(0, 200)}`);
-  }
-  // XML 응답이 섞여 올 수 있다 — JSON 파싱 실패 시 명확한 에러로 throw.
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`사전규격공고 응답 파싱 중 오류가 발생했습니다: ${text.slice(0, 200)}`);
-  }
-}
-
-function readHeader(parsed: unknown): { resultCode: string | null; resultMsg: string | null } {
-  if (!parsed || typeof parsed !== "object") return { resultCode: null, resultMsg: null };
-  const root = parsed as Record<string, unknown>;
-  const response =
-    (root.response as Record<string, unknown> | undefined) ??
-    (root as Record<string, unknown>);
-  const header = response.header as Record<string, unknown> | undefined;
+/** g2bPagedPage → PreSpecFetchPage. */
+function toPreSpecPage(category: PreSpecCategory, p: G2bPagedPage): PreSpecFetchPage {
   return {
-    resultCode: typeof header?.resultCode === "string" ? header.resultCode : null,
-    resultMsg: typeof header?.resultMsg === "string" ? header.resultMsg : null,
+    category,
+    endpoint: p.endpoint,
+    pageNo: p.pageNo,
+    totalCount: p.totalCount,
+    items: p.items,
+    resultCode: p.resultCode,
+    resultMsg: p.resultMsg,
+    durationMs: p.durationMs,
+    error: p.error,
   };
 }
 
-function readTotalCount(parsed: unknown): number | null {
-  if (!parsed || typeof parsed !== "object") return null;
-  const root = parsed as Record<string, unknown>;
-  const response = (root.response as Record<string, unknown> | undefined) ?? root;
-  const body = response.body as Record<string, unknown> | undefined;
-  const total = body?.totalCount;
-  if (typeof total === "number") return total;
-  if (typeof total === "string") {
-    const n = Number(total);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-function readItems(parsed: unknown): Record<string, unknown>[] {
-  if (!parsed || typeof parsed !== "object") return [];
-  const root = parsed as Record<string, unknown>;
-  const response = (root.response as Record<string, unknown> | undefined) ?? root;
-  const body = response.body as Record<string, unknown> | undefined;
-  const items = body?.items;
-  if (!items) return [];
-  // 실제 응답: items 가 곧장 배열인 경우가 많다.
-  if (Array.isArray(items)) return items as Record<string, unknown>[];
-  if (typeof items === "object") {
-    const inner = (items as Record<string, unknown>).item;
-    return toArray(inner) as Record<string, unknown>[];
-  }
-  return [];
-}
-
-async function fetchOnePage(
-  baseUrl: string,
+async function fetchOneCategoryWithFallback(
   serviceKey: string,
   category: PreSpecCategory,
-  pageNo: number,
-  inqryBgnDt: string,
-  inqryEndDt: string,
-): Promise<PreSpecFetchPage> {
-  const endpoint = ENDPOINT_BY_CATEGORY[category];
-  const url = buildUrl(baseUrl, endpoint, serviceKey, pageNo, inqryBgnDt, inqryEndDt);
-  const startedAt = Date.now();
-  try {
-    const parsed = await fetchJson(url);
-    const { resultCode, resultMsg } = readHeader(parsed);
-    const items = readItems(parsed);
-    const totalCount = readTotalCount(parsed);
-    return {
-      category,
-      endpoint,
-      pageNo,
-      totalCount,
-      items,
-      resultCode,
-      resultMsg,
-      durationMs: Date.now() - startedAt,
-      error: resultCode && resultCode !== "00" ? `${resultCode} · ${resultMsg ?? ""}` : null,
-    };
-  } catch (err) {
-    return {
-      category,
-      endpoint,
-      pageNo,
-      totalCount: null,
-      items: [],
-      resultCode: null,
-      resultMsg: null,
-      durationMs: Date.now() - startedAt,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
+  options: PreSpecFetchOptions,
+): Promise<{
+  items: Array<Record<string, unknown> & { __sourceApi?: string; __sourceEndpoint?: string }>;
+  pages: PreSpecFetchPage[];
+  totalCount: number | null;
+}> {
+  const candidates = ENDPOINT_CANDIDATES_BY_CATEGORY[category];
+  const sourceApi = `사전규격(${PRE_SPEC_CATEGORY_LABEL[category]})`;
+  const baseParams = {
+    inqryDiv: "1",
+    inqryBgnDt: options.inqryBgnDt,
+    inqryEndDt: options.inqryEndDt,
+  };
+  const allPages: PreSpecFetchPage[] = [];
+  let lastTotalCount: number | null = null;
 
-/** Promise.all + concurrency 제한 — 작업이 끝나는 대로 다음을 시작. */
-async function runWithConcurrency<T>(
-  tasks: (() => Promise<T>)[],
-  concurrency: number,
-): Promise<T[]> {
-  const results: T[] = new Array(tasks.length);
-  let cursor = 0;
-  async function worker() {
-    while (cursor < tasks.length) {
-      const idx = cursor++;
-      results[idx] = await tasks[idx]();
+  for (const endpoint of candidates) {
+    const result = await fetchG2bPaged({
+      baseUrl: DEFAULT_BASE_URL,
+      endpoint,
+      sourceApi: `${sourceApi}/${endpoint}`,
+      serviceKey,
+      baseParams,
+      numOfRows: PRE_SPEC_NUM_OF_ROWS,
+      maxPages: options.maxPagesPerCategory ?? 5,
+      concurrency: options.concurrency ?? 3,
+      timeoutMs: options.timeoutMs,
+      retries: options.retries,
+    });
+    const mapped = result.pages.map((p) => toPreSpecPage(category, p));
+    allPages.push(...mapped);
+    lastTotalCount = result.totalCount ?? lastTotalCount;
+
+    // 데이터를 받았다면 fallback 추가 호출은 하지 않는다.
+    const itemCount = result.items.length;
+    if (itemCount > 0) {
+      const enriched = result.items.map((it) =>
+        Object.assign({}, it, { __sourceApi: sourceApi, __sourceEndpoint: endpoint }),
+      );
+      return { items: enriched, pages: allPages, totalCount: lastTotalCount };
     }
+    // 모든 페이지가 정상 응답인데 데이터 0건 (= EMPTY_ITEMS) 인 경우도 fallback 시도하지 않는다 —
+    // 단순히 그 endpoint 결과가 0건일 뿐이다.
+    const allOk = result.pages.every((p) => !p.error);
+    if (allOk) {
+      return { items: [], pages: allPages, totalCount: lastTotalCount };
+    }
+    // 그 외(에러로 인한 0건)는 다음 후보로 진행.
   }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker()),
-  );
-  return results;
+
+  return { items: [], pages: allPages, totalCount: lastTotalCount };
 }
 
 export async function fetchPreSpecAnnouncements(
   serviceKey: string,
   options: PreSpecFetchOptions,
 ): Promise<PreSpecFetchResult> {
-  const baseUrl = DEFAULT_BASE_URL;
   const categories = options.categories ?? DEFAULT_PRE_SPEC_CATEGORIES;
-  const maxPagesPerCategory = options.maxPagesPerCategory ?? 5;
-  const concurrency = options.concurrency ?? 3;
   const errors: string[] = [];
+  const pageErrors: PreSpecFetchResult["pageErrors"] = [];
   const totalsByCategory: Partial<Record<PreSpecCategory, number>> = {};
   const allPages: PreSpecFetchPage[] = [];
-  const allItems: Record<string, unknown>[] = [];
+  const allItems: PreSpecFetchResult["items"] = [];
 
-  // 1) 각 카테고리의 1페이지를 먼저 받아 totalCount 를 알아낸다 (병렬 OK).
-  const firstPages = await Promise.all(
-    categories.map((cat) =>
-      fetchOnePage(baseUrl, serviceKey, cat, 1, options.inqryBgnDt, options.inqryEndDt),
-    ),
+  // 카테고리는 병렬 — Promise.all 안에서 동시 실행. 한 카테고리가 실패해도 다른 카테고리에 영향 X.
+  const tasks = categories.map((cat) =>
+    fetchOneCategoryWithFallback(serviceKey, cat, options).then((r) => ({ cat, r })),
   );
-  for (const p of firstPages) {
-    allPages.push(p);
-    if (p.error) errors.push(`[${p.category}/p${p.pageNo}] ${p.error}`);
-    if (p.totalCount != null) totalsByCategory[p.category] = p.totalCount;
-    allItems.push(...p.items);
-  }
-
-  // 2) totalCount 기반으로 추가 페이지 task 생성 → concurrency 제한 병렬 실행.
-  const moreTasks: (() => Promise<PreSpecFetchPage>)[] = [];
-  for (const p of firstPages) {
-    if (p.error) continue;
-    const total = p.totalCount ?? 0;
-    const totalPages = Math.min(
-      maxPagesPerCategory,
-      Math.max(1, Math.ceil(total / PRE_SPEC_NUM_OF_ROWS)),
-    );
-    for (let pageNo = 2; pageNo <= totalPages; pageNo++) {
-      const cat = p.category;
-      moreTasks.push(() =>
-        fetchOnePage(baseUrl, serviceKey, cat, pageNo, options.inqryBgnDt, options.inqryEndDt),
-      );
-    }
-  }
-
-  if (moreTasks.length > 0) {
-    const morePages = await runWithConcurrency(moreTasks, concurrency);
-    for (const p of morePages) {
-      allPages.push(p);
-      if (p.error) errors.push(`[${p.category}/p${p.pageNo}] ${p.error}`);
-      allItems.push(...p.items);
+  const results = await Promise.all(tasks);
+  for (const { cat, r } of results) {
+    allPages.push(...r.pages);
+    if (r.totalCount != null) totalsByCategory[cat] = r.totalCount;
+    allItems.push(...r.items);
+    for (const p of r.pages) {
+      if (p.error) {
+        const message = `[${cat}/${p.endpoint}/p${p.pageNo}] ${p.error}`;
+        errors.push(message);
+        pageErrors.push({
+          category: cat,
+          endpoint: p.endpoint,
+          pageNo: p.pageNo,
+          message: p.error,
+        });
+      }
     }
   }
 
   const firstItemSample = allItems[0] ?? null;
   const firstItemKeys = firstItemSample ? Object.keys(firstItemSample).slice(0, 30) : [];
 
-  // 개발 환경에서만 첫 응답 sample 을 console 에 남긴다.
-  // 운영(production) 에서는 노이즈를 줄이기 위해 stop.
   if (process.env.NODE_ENV !== "production" && firstItemSample) {
-    // eslint-disable-next-line no-console
     console.log("[PRE_SPEC_ITEMS_SAMPLE]", {
       totalsByCategory,
       firstItemKeys,
@@ -305,6 +224,7 @@ export async function fetchPreSpecAnnouncements(
     firstItemSample,
     firstItemKeys,
     errors,
+    pageErrors,
   };
 }
 

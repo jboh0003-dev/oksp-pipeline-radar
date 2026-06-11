@@ -1,8 +1,10 @@
 "use client";
 
+import AttachmentButtons from "@/components/AttachmentButtons";
 import type { AnnouncementFeedback } from "@/lib/feedback";
 import { getBudgetInfo } from "@/lib/budget";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
+import { isValidHttpUrl } from "@/lib/sourceUrl";
 
 const RECOMMENDATION_BADGE: Record<string, string> = {
   "핵심검토":
@@ -209,18 +211,29 @@ export default function PreSpecTable({
                         >
                           {hasFeedback ? "피드백 ✓" : "피드백"}
                         </button>
-                        {item.sourceUrl ? (
+                        {/* 원문 버튼: 캐시/데이터에 어떤 값이 들어 있더라도
+                            반드시 http(s) 검증을 통과한 URL 만 클릭 가능한 링크로 렌더링한다.
+                            G2B 의 임의 검색/상세 URL 은 이전에 404 를 유발했으므로
+                            검증되지 않은 값은 항상 "원문없음" 비활성 라벨로 표시. */}
+                        {isValidHttpUrl(item.sourceUrl) ? (
                           <a
                             href={item.sourceUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            title="나라장터 사전규격 검색"
+                            title={item.sourceUrl}
                             className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-blue-600 px-2 text-[11px] font-semibold text-white transition hover:bg-blue-700 dark:bg-blue-500"
                           >
                             원문 ↗
                           </a>
                         ) : (
-                          <span className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+                          <span
+                            title={
+                              item.preSpecRegNo
+                                ? `사전규격등록번호: ${item.preSpecRegNo}`
+                                : undefined
+                            }
+                            className="inline-flex h-7 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500"
+                          >
                             원문없음
                           </span>
                         )}
@@ -276,20 +289,31 @@ export default function PreSpecTable({
                     </div>
                   </td>
                   <td className="px-3 py-3 align-top">
-                    {item.specFileUrl || item.fileUrl ? (
-                      <a
-                        href={item.specFileUrl ?? item.fileUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-cyan-600 px-2 text-[11px] font-semibold text-white transition hover:bg-cyan-700 dark:bg-cyan-500"
-                      >
-                        규격서 ↗
-                      </a>
-                    ) : (
-                      <span className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
-                        파일없음
-                      </span>
-                    )}
+                    {item.attachments && item.attachments.length > 0 ? (
+                      // RFP / 규격서 / 과업 / 첨부 N 묶음 — 사전규격은 규격서 강조.
+                      <AttachmentButtons attachments={item.attachments} emphasizeSpec compact />
+                    ) : (() => {
+                      // attachments 추출이 비어 있을 때의 legacy 폴백 (specDocFileUrl1~5).
+                      // 캐시/데이터에 무엇이 들어 있더라도 반드시 http(s) 검증 후에만 링크 노출.
+                      const legacy = item.specFileUrl ?? item.fileUrl;
+                      if (isValidHttpUrl(legacy)) {
+                        return (
+                          <a
+                            href={legacy}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-cyan-600 px-2 text-[11px] font-semibold text-white transition hover:bg-cyan-700 dark:bg-cyan-500"
+                          >
+                            규격서 ↗
+                          </a>
+                        );
+                      }
+                      return (
+                        <span className="inline-flex h-7 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                          파일없음
+                        </span>
+                      );
+                    })()}
                   </td>
                 </tr>
               );

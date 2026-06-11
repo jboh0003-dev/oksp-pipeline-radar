@@ -1,8 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BudgetFilter, {
+  matchesBudgetFilter,
+  type BudgetFilterValue,
+} from "@/components/BudgetFilter";
+import CollectionErrorPanel from "@/components/CollectionErrorPanel";
 import FeedbackModal from "@/components/FeedbackModal";
 import PreSpecTable from "@/components/PreSpecTable";
+import { clearPreSpecLocalCache } from "@/lib/cacheReset";
+import type { CollectionError } from "@/lib/collectionErrors";
 import {
   buildFeedbackMap,
   loadAllFeedbacks,
@@ -82,6 +89,31 @@ function isOpenPreSpec(item: PreSpecAnnouncement): boolean {
   return item.status !== "마감";
 }
 
+/**
+ * 마지막 수집 시각이 "직전 cron 시각(매일 08:30 KST) 이전" 이면 stale 로 간주.
+ *  - 자동 수집은 매일 08:30 KST 에 돌도록 vercel.json 에 등록되어 있다.
+ *  - 따라서 그 시각 이후로 한 번도 갱신되지 않았다면 사용자에게 "업데이트 필요" 라벨로 알린다.
+ *  - 시각 비교는 모두 UTC ms 기준이라 OS 타임존 영향 없음.
+ */
+function isStaleSinceMorningCutoff(lastFetchAt: number, now: number = Date.now()): boolean {
+  if (!Number.isFinite(lastFetchAt) || lastFetchAt <= 0) return false;
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  // KST 시각의 분/시 추출.
+  const kstNow = new Date(now + KST_OFFSET_MS);
+  const y = kstNow.getUTCFullYear();
+  const m = kstNow.getUTCMonth();
+  const d = kstNow.getUTCDate();
+  const kstHour = kstNow.getUTCHours();
+  const kstMinute = kstNow.getUTCMinutes();
+  // 오늘 08:30 KST 의 UTC ms.
+  let cutoffUtcMs = Date.UTC(y, m, d, 8, 30, 0) - KST_OFFSET_MS;
+  // 현재 KST 가 아직 08:30 전이라면, 직전 cutoff 는 어제 08:30 KST.
+  if (kstHour < 8 || (kstHour === 8 && kstMinute < 30)) {
+    cutoffUtcMs -= 24 * 60 * 60 * 1000;
+  }
+  return lastFetchAt < cutoffUtcMs;
+}
+
 type CollectResp = {
   ok: boolean;
   items?: PreSpecAnnouncement[];
@@ -89,6 +121,7 @@ type CollectResp = {
   message?: string;
   totalsByCategory?: Record<string, number>;
   errors?: string[];
+  collectionErrors?: CollectionError[];
   durationMs?: number;
   inqryBgnDt?: string;
   inqryEndDt?: string;
@@ -187,6 +220,8 @@ export default function PreSpecPage() {
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   /** API 응답의 errors 배열 — 카테고리별 페이지 에러 등. */
   const [apiErrors, setApiErrors] = useState<string[]>([]);
+  /** 구조화된 수집 오류 (CollectionErrorPanel 용). */
+  const [collectionErrors, setCollectionErrors] = useState<CollectionError[]>([]);
   /** debug panel 표시 여부 (응답의 debug 정보). */
   const [showDebug, setShowDebug] = useState(false);
   const [debugInfo, setDebugInfo] = useState<CollectResp["debug"]>(undefined);
@@ -206,6 +241,7 @@ export default function PreSpecPage() {
   const [showNewOnly, setShowNewOnly] = useState(false);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [showFeedbackOnly, setShowFeedbackOnly] = useState(false);
+  const [budgetFilter, setBudgetFilter] = useState<BudgetFilterValue>("all");
 
   const [savedKeys, setSavedKeys] = useState<string[]>([]);
   const savedSet = useMemo(() => new Set(savedKeys), [savedKeys]);
@@ -225,11 +261,16 @@ export default function PreSpecPage() {
     fetchInFlightRef.current = true;
     const started = Date.now();
     try {
-      const res = await fetch("/api/pre-spec/collect?days=30", { method: "GET" });
+      // days=7 — 사전규격은 의견접수기간이 보통 5~7일이므로 최근 7일 등록분만 받아도
+      // 진행중/마감임박 항목 거의 전부를 커버한다. 30일을 받으면 G2B API 가
+      // rcptDt ASC 정렬이라 maxPages 한도(=5) 안에 가장 오래된 페이지(이미 마감)만 들어와서
+      // 화면에 진행중 데이터가 1건도 안 나타나는 문제가 생긴다.
+      const res = await fetch("/api/pre-spec/collect?days=7", { method: "GET" });
       const json = (await res.json()) as CollectResp;
 
       // 서버가 보내준 진단 정보를 항상 반영 (성공/실패 상관없이).
       setApiErrors(json.errors ?? []);
+      setCollectionErrors(json.collectionErrors ?? []);
       setDebugInfo(json.debug);
       setTotalsByCategory(json.totalsByCategory ?? {});
 
@@ -308,7 +349,17 @@ export default function PreSpecPage() {
   // 필터/검색/페이지사이즈 변경 시 1페이지로 리셋.
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, productFilter, territoryFilter, showImminentOnly, showNewOnly, showSavedOnly, showFeedbackOnly, pageSize]);
+  }, [
+    debouncedSearch,
+    productFilter,
+    territoryFilter,
+    showImminentOnly,
+    showNewOnly,
+    showSavedOnly,
+    showFeedbackOnly,
+    budgetFilter,
+    pageSize,
+  ]);
 
   const handleManualCollect = async () => {
     if (collectStatus === "running") return;
@@ -354,17 +405,36 @@ export default function PreSpecPage() {
     return [...seen].sort((a, b) => a.localeCompare(b, "ko-KR"));
   }, [items]);
 
-  /**
-   * 진행 중(마감 안 된) 사전규격공고만 노출 후보.
-   * 기본 테이블 / 카드 / 표출 카운트 모두 이 집합 위에서 계산한다.
-   * (TODO 고급필터: 추후 마감 포함 보기 옵션을 별도 메뉴로 추가)
+  /*
+   * 데이터 레이어 분리 (3차 고도화):
+   *  - rawPreSpecItems       : 서버에서 받은 raw 매칭 모집단 (= items, 마감 포함)
+   *  - activePreSpecItems    : 마감 제외 unique 공고
+   *  - matchedPreSpecItems   : products 가 1개 이상인 active 공고 (제품 매칭됨)
+   *  - filteredPreSpecItems  : 검색/필터/예산 적용 후 표시 후보
+   *  - displayedPreSpecItems : 페이지네이션 적용 후 실제 화면 표시 (paged)
+   *
+   *  통계는 반드시 이 기준으로:
+   *    조회      = rawPreSpecItems.length
+   *    진행중    = activePreSpecItems.length
+   *    제품매칭  = sum(products.length) on activePreSpecItems
+   *    표출      = filteredPreSpecItems / displayedPreSpecItems
    */
-  const visibleItems = useMemo(() => items.filter(isOpenPreSpec), [items]);
+  const rawPreSpecItems = items;
+  const activePreSpecItems = useMemo(
+    () => rawPreSpecItems.filter(isOpenPreSpec),
+    [rawPreSpecItems],
+  );
+  const matchedPreSpecItems = useMemo(
+    () => activePreSpecItems.filter((it) => Array.isArray(it.products) && it.products.length > 0),
+    [activePreSpecItems],
+  );
+  // legacy alias — 화면 다른 부분에서 visibleItems 라는 이름을 그대로 쓴다.
+  const visibleItems = activePreSpecItems;
 
-  // 1차 필터 (검색/제품/담당본부/임박/신규/관심/피드백)
-  const filtered = useMemo(() => {
+  // 1차 필터 (검색/제품/담당본부/임박/신규/관심/피드백/예산)
+  const filteredPreSpecItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    return visibleItems.filter((it) => {
+    return activePreSpecItems.filter((it) => {
       if (q) {
         const hay = [
           it.title,
@@ -388,10 +458,11 @@ export default function PreSpecPage() {
       if (showNewOnly && !it.isNew) return false;
       if (showSavedOnly && !savedSet.has(it.announcementKey)) return false;
       if (showFeedbackOnly && !feedbackMap.has(it.announcementKey)) return false;
+      if (!matchesBudgetFilter(it.budget ?? null, budgetFilter)) return false;
       return true;
     });
   }, [
-    visibleItems,
+    activePreSpecItems,
     debouncedSearch,
     productFilter,
     territoryFilter,
@@ -401,26 +472,28 @@ export default function PreSpecPage() {
     showFeedbackOnly,
     savedSet,
     feedbackMap,
+    budgetFilter,
   ]);
 
   /*
    * 상단 통계 (입찰공고와 동일 정의):
-   *  - 진행중      : 마감 제외 unique 공고 수 (= visibleItems.length)
+   *  - 조회        : rawPreSpecItems.length (= items.length, 마감 포함 raw 모집단)
+   *  - 진행중      : activePreSpecItems.length (마감 제외 unique 공고 수)
    *  - 제품매칭    : products.length 합계 (한 공고에 두 제품이면 +2, "관계 수")
    *  - 복수매칭    : products 가 2개 이상인 공고 수
    *  - CONTRABASS / VIOLA / CMP : 각 제품이 products 에 포함된 공고 수 (관련 매칭 · 중복 포함)
    *  - 의견마감 임박 : status === "마감임박" — 보조지표
    *  - 신규 / 피드백 / 매칭(전체 items.length) 도 함께 표시.
    */
-  const matchedTotal = items.length; // "조회/매칭" 모집단 (마감 포함 raw 매칭 수)
-  const activeTotal = visibleItems.length;
+  const matchedTotal = rawPreSpecItems.length; // "조회/매칭" 모집단 (마감 포함 raw 매칭 수)
+  const activeTotal = activePreSpecItems.length;
   const productMatchTotal = useMemo(
     () =>
-      visibleItems.reduce(
+      matchedPreSpecItems.reduce(
         (sum, it) => sum + (Array.isArray(it.products) ? it.products.length : 0),
         0,
       ),
-    [visibleItems],
+    [matchedPreSpecItems],
   );
   const multiMatchCount = useMemo(
     () =>
@@ -447,16 +520,18 @@ export default function PreSpecPage() {
     [visibleItems],
   );
 
-  // 페이지네이션
-  const totalFiltered = filtered.length;
+  // 페이지네이션 — slice 는 표출 단계에서만 사용한다 (표출 외 통계는 filteredPreSpecItems 기준).
+  const totalFiltered = filteredPreSpecItems.length;
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalFiltered / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = pageSize === 0 ? 0 : (safePage - 1) * pageSize;
   const pageEnd = pageSize === 0 ? totalFiltered : Math.min(totalFiltered, pageStart + pageSize);
-  const paged = useMemo(
-    () => (pageSize === 0 ? filtered : filtered.slice(pageStart, pageEnd)),
-    [filtered, pageSize, pageStart, pageEnd],
+  const displayedPreSpecItems = useMemo(
+    () =>
+      pageSize === 0 ? filteredPreSpecItems : filteredPreSpecItems.slice(pageStart, pageEnd),
+    [filteredPreSpecItems, pageSize, pageStart, pageEnd],
   );
+  const paged = displayedPreSpecItems;
 
   return (
     <div className="min-h-full">
@@ -467,7 +542,7 @@ export default function PreSpecPage() {
             aria-hidden
             className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-cyan-300/20 blur-3xl"
           />
-          <div className="relative px-5 py-5 sm:px-7 sm:py-6">
+          <div className="relative flex min-h-[150px] flex-col justify-center px-5 py-7 sm:min-h-[190px] sm:px-7 sm:py-9">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">
               OKESTRO CS-G2B
             </p>
@@ -486,22 +561,11 @@ export default function PreSpecPage() {
             <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
               {errorMessage}
             </p>
-            {apiErrors.length > 0 && (
-              <details className="mt-2 text-[11px]">
-                <summary className="cursor-pointer select-none font-semibold">
-                  세부 페이지 오류 {apiErrors.length}건
-                </summary>
-                <ul className="mt-1 max-h-40 list-disc overflow-y-auto rounded-md bg-white/80 px-3 py-1.5 pl-5 dark:bg-slate-900/60">
-                  {apiErrors.map((e, i) => (
-                    <li key={i} className="font-mono">
-                      {e}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
           </div>
         )}
+
+        {/* 구조화된 수집 오류 패널 — 페이지 단위 timeout / 5xx / JSON 파싱 실패 등이 표시. */}
+        <CollectionErrorPanel errors={collectionErrors} title="사전규격 수집 오류" />
 
         {!errorMessage && infoMessage && (
           <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-200">
@@ -634,6 +698,19 @@ export default function PreSpecPage() {
                 · 업데이트 주기 매일 08:30 · 마지막 수집{" "}
                 {new Date(lastFetchAt).toLocaleString("ko-KR")}
                 {lastDurationMs && ` (${Math.round(lastDurationMs / 1000)}s)`}
+              </span>
+            )}
+            {/*
+              "오늘 08:30 이후 수집되었는지" 신선도 hint.
+              - 오늘 08:30 KST 이전 데이터면 "업데이트 필요" 라벨로 사용자가 인지하도록 한다.
+              - lastFetchAt 이 없으면 표시하지 않는다 (수집 자체가 처음인 케이스).
+            */}
+            {lastFetchAt && isStaleSinceMorningCutoff(lastFetchAt) && (
+              <span
+                title="오늘 08:30 KST 이전에 받은 데이터입니다 — 지금 수집을 눌러 새로 받아오세요"
+                className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+              >
+                업데이트 필요
               </span>
             )}
           </p>
@@ -770,6 +847,8 @@ export default function PreSpecPage() {
                 <option value="__missing__">미매칭</option>
               </select>
 
+              <BudgetFilter value={budgetFilter} onChange={setBudgetFilter} />
+
               <button
                 type="button"
                 onClick={() => setShowFeedbackOnly((p) => !p)}
@@ -796,6 +875,25 @@ export default function PreSpecPage() {
                 }`}
               >
                 {collectStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
+              </button>
+              <button
+                type="button"
+                title="사전규격공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심 등록은 보존됩니다."
+                onClick={() => {
+                  if (
+                    typeof window !== "undefined" &&
+                    !window.confirm(
+                      "사전규격공고 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
+                    )
+                  ) {
+                    return;
+                  }
+                  clearPreSpecLocalCache();
+                  window.location.reload();
+                }}
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
+              >
+                캐시 초기화
               </button>
               <button
                 type="button"

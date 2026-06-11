@@ -1,0 +1,15 @@
+node_modules
+.next
+.vercel
+.git
+dist
+build
+coverage
+.env
+.env.local
+*.log
+*.zip
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+tsconfig.tsbuildinfo

@@ -1,3 +1,4 @@
+import type { AttachmentInfo } from "@/lib/attachments";
 import type { MatchGrade } from "@/lib/noticeGrades";
 import { getMatchGrade } from "@/lib/noticeGrades";
 
@@ -57,6 +58,12 @@ export type Notice = {
    * fetchNotices 단계에서는 항상 undefined. (page.tsx 에서 SeenMap 비교 후 부착)
    */
   isNew?: boolean;
+  /** 첨부파일 / RFP / 과업지시서 / 규격서 정보 — raw_data 에서 추출. */
+  attachments?: AttachmentInfo[];
+  /** 첨부 분류 플래그 — 빠른 분기용. */
+  hasRfp?: boolean;
+  hasSpecDoc?: boolean;
+  hasTaskDoc?: boolean;
 };
 
 function withGrade(notice: Omit<Notice, "matchGrade"> & { matchGrade?: MatchGrade }): Notice {

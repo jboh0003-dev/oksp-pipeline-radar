@@ -76,7 +76,7 @@ export default function FeedbackPage() {
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
         <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
-          <div className="relative px-5 py-5 sm:px-7 sm:py-6">
+          <div className="relative flex min-h-[150px] flex-col justify-center px-5 py-7 sm:min-h-[190px] sm:px-7 sm:py-9">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">
               OKESTRO CS-G2B
             </p>

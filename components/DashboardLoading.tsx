@@ -29,7 +29,7 @@ export default function DashboardLoading() {
           aria-hidden
           className="pointer-events-none absolute -left-20 -bottom-20 h-48 w-48 rounded-full bg-indigo-400/15 blur-3xl"
         />
-        <div className="relative flex items-center justify-between gap-3 px-5 py-5 sm:px-7 sm:py-6">
+        <div className="relative flex min-h-[150px] items-center justify-between gap-3 px-5 py-7 sm:min-h-[190px] sm:px-7 sm:py-9">
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="h-9 w-32 rounded-md bg-white/15 sm:h-10 sm:w-36" />
             <div

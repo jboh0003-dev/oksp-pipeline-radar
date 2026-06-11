@@ -1,7 +1,9 @@
 import { sampleNotices, type Notice, type NoticeCustomerInfo } from "@/data/sampleNotices";
+import { extractAttachments, summarizeAttachments } from "@/lib/attachments";
 import { evaluateMatchGrade } from "@/lib/noticeGrades";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
 import { isNoticeVisible, sortNoticesForDisplay } from "@/lib/noticeVisibility";
+import { buildBidSourceUrl } from "@/lib/sourceUrl";
 import {
   getSupabaseClient,
   getSupabaseConfigError,
@@ -195,6 +197,26 @@ function mapRowToNotice(
     };
   }
 
+  // 첨부파일 / RFP / 규격서 / 과업지시서 — raw_data 에서 한 번 추출.
+  const attachments = extractAttachments(row.raw_data ?? null);
+  const att = summarizeAttachments(attachments);
+
+  // 원문 URL 결정: 직접 저장된 original_url 이 있으면 우선 사용, 없으면 bidNtceNo 로 검색 fallback.
+  const rawData = (row.raw_data ?? null) as Record<string, unknown> | null;
+  const bidNtceNo =
+    rawData && typeof rawData["bidNtceNo"] === "string"
+      ? (rawData["bidNtceNo"] as string)
+      : null;
+  const bidNtceOrd =
+    rawData && typeof rawData["bidNtceOrd"] === "string"
+      ? (rawData["bidNtceOrd"] as string)
+      : null;
+  const sourceUrlInfo = buildBidSourceUrl({
+    originalUrl: row.original_url,
+    bidNtceNo,
+    bidNtceOrd,
+  });
+
   return {
     id: String(row.id),
     externalId: row.external_id ?? null,
@@ -208,8 +230,13 @@ function mapRowToNotice(
     matchGrade: evaluateMatchGrade(fitScore, negativeWeight),
     keywords,
     summary: row.summary ?? undefined,
-    sourceUrl: row.original_url ?? "https://www.g2b.go.kr/",
+    sourceUrl:
+      sourceUrlInfo.url ?? row.original_url ?? "https://www.g2b.go.kr/",
     customer,
+    attachments,
+    hasRfp: att.hasRfp,
+    hasSpecDoc: att.hasSpecDoc,
+    hasTaskDoc: att.hasTaskDoc,
   };
 }
 

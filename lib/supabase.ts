@@ -12,8 +12,32 @@ export type Database = {
       customer_accounts: {
         Row: CustomerAccountRow;
       };
+      profiles: {
+        Row: ProfileRow;
+      };
     };
   };
+};
+
+/**
+ * Supabase `profiles` 테이블 row.
+ *
+ *  - 권장 스키마:
+ *      id          uuid       primary key, references auth.users(id) on delete cascade
+ *      email       text
+ *      role        text       check (role in ('admin', 'user')) default 'user'
+ *      created_at  timestamptz default now()
+ *      updated_at  timestamptz
+ *
+ *  - profiles row 가 없는 사용자는 화면에서 "user" 로 폴백 처리(lib/auth.ts).
+ *  - role 업데이트 / 사용자 관리 UI 는 다음 phase. 이번 phase 는 단순 조회만.
+ */
+export type ProfileRow = {
+  id: string;
+  email: string | null;
+  role: "admin" | "user" | string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 /**

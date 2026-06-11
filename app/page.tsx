@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BudgetFilter, {
+  matchesBudgetFilter,
+  type BudgetFilterValue,
+} from "@/components/BudgetFilter";
+import CollectionErrorPanel from "@/components/CollectionErrorPanel";
 import DashboardLoading from "@/components/DashboardLoading";
+import { clearBidLocalCache } from "@/lib/cacheReset";
 import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import NoticeCard from "@/components/NoticeCard";
@@ -9,6 +15,11 @@ import NoticeTable from "@/components/NoticeTable";
 import ProductFilter from "@/components/ProductFilter";
 import SearchBar from "@/components/SearchBar";
 import SummaryCards from "@/components/SummaryCards";
+import { parseBudgetAmount } from "@/lib/budget";
+import {
+  makeCollectionError,
+  type CollectionError,
+} from "@/lib/collectionErrors";
 import {
   CONTRABASS_FAMILY,
   type Notice,
@@ -299,6 +310,7 @@ export default function Home() {
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const [selectedProduct, setSelectedProduct] = useState<ProductFilterValue>("전체");
   const [territoryFilter, setTerritoryFilter] = useState<TerritoryFilter>("all");
+  const [budgetFilter, setBudgetFilter] = useState<BudgetFilterValue>("all");
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   /** "신규" 필터 — 켜면 이번 수집 snapshot 에서 새로 등장한 공고만 표시. */
@@ -513,20 +525,37 @@ export default function Home() {
     [visibleCandidates],
   );
 
+  /*
+   * 데이터 레이어 분리 (3차 고도화):
+   *  - rawBidItems       : Supabase 에서 받은 raw 매칭 모집단 (= notices)
+   *  - activeBidItems    : 마감 제외 + 제품 매칭된 후보 (= visibleCandidates)
+   *  - matchedBidItems   : products 가 1개 이상인 active 공고 (= activeBidItems 와 동일)
+   *  - filteredBidItems  : 검색/필터/예산 적용 후 표시 후보 (= filteredNotices)
+   *  - displayedBidItems : 페이지네이션 적용 후 실제 화면 표시 (= pagedNotices)
+   *
+   * 통계는 반드시 이 기준으로:
+   *   조회      = lastRun.fetched_count (G2B 원천 조회 수)
+   *   진행중    = activeBidItems.length
+   *   제품매칭  = sum(relatedProducts.length) on activeBidItems
+   *   표출      = filteredBidItems / displayedBidItems
+   */
   const filteredNotices = useMemo(() => {
     const query = debouncedSearchQuery.trim();
     let pool = visibleCandidates;
     if (query) {
       pool = pool.filter((notice) => matchesSearch(notice, query));
     }
-    const filtered = pool.filter(
-      (notice) =>
-        matchesProduct(notice, selectedProduct) &&
-        matchesTerritoryStatus(notice, territoryFilter) &&
-        (!showSavedOnly || savedIds.includes(notice.id)) &&
-        (!showNewOnly || notice.isNew === true) &&
-        (!showFeedbackOnly || feedbackMap.has(getAnnouncementKey(notice))),
-    );
+    const filtered = pool.filter((notice) => {
+      if (!matchesProduct(notice, selectedProduct)) return false;
+      if (!matchesTerritoryStatus(notice, territoryFilter)) return false;
+      if (showSavedOnly && !savedIds.includes(notice.id)) return false;
+      if (showNewOnly && notice.isNew !== true) return false;
+      if (showFeedbackOnly && !feedbackMap.has(getAnnouncementKey(notice))) return false;
+      // 예산 필터 — budget 문자열을 숫자(원) 로 파싱한 뒤 임계값 비교.
+      const budgetAmount = parseBudgetAmount(notice.budget);
+      if (!matchesBudgetFilter(budgetAmount, budgetFilter)) return false;
+      return true;
+    });
     return sortNoticesByState(filtered, sortState);
   }, [
     visibleCandidates,
@@ -539,6 +568,7 @@ export default function Home() {
     feedbackMap,
     savedIds,
     sortState,
+    budgetFilter,
   ]);
 
   const hasActiveSearch = debouncedSearchQuery.trim().length > 0;
@@ -602,13 +632,62 @@ export default function Home() {
     [filteredNotices, pageSize, pageStartIndex, pageEndIndex],
   );
 
-  /** 표출 카운트 — 페이지네이션 적용 후 화면에 실제로 보이는 건수. */
-  const displayedCount = pagedNotices.length;
   /**
    * "진행중" 기준 unique 공고 수 — 상단 통계에서 사용자가 헷갈리지 않도록 매칭이 아닌 진행 중을 노출.
    * (= visibleCandidates.length, 마감 제외)
+   * 표출 카운트는 페이지네이션 영역의 stat strip 에서 직접 pagedNotices.length / totalFiltered 로 보여준다.
    */
   const activeTotal = visibleCandidates.length;
+
+  /**
+   * 수집 오류 패널용 CollectionError[].
+   *  - Supabase config 오류 / 마지막 cron 실행에서 errors[]
+   *  - 직전 수동 수집(manualMessage) 가 error 인 경우.
+   * 0건이면 panel 자체가 렌더되지 않는다.
+   */
+  const collectionErrors: CollectionError[] = useMemo(() => {
+    const list: CollectionError[] = [];
+    if (dataSource === "sample" && errorMessage) {
+      list.push(
+        makeCollectionError({
+          scope: "BID",
+          kind: "API_RESPONSE_ERROR",
+          message: `Supabase 연결 실패 — 샘플 데이터 표시 중`,
+          detail: errorMessage,
+        }),
+      );
+    }
+    if (manualStatus === "error" && manualMessage) {
+      list.push(
+        makeCollectionError({
+          scope: "BID",
+          kind: "API_RESPONSE_ERROR",
+          message: manualMessage,
+        }),
+      );
+    }
+    if (lastRun?.errors && lastRun.errors.length > 0) {
+      for (const e of lastRun.errors) {
+        const lower = (e ?? "").toLowerCase();
+        const kind = lower.includes("timeout")
+          ? "API_TIMEOUT"
+          : lower.includes("json") || lower.includes("파싱")
+            ? "JSON_PARSE_ERROR"
+            : lower.includes("hcsp") || lower.includes("auth") || lower.includes("키")
+              ? "API_KEY_MISSING"
+              : "API_RESPONSE_ERROR";
+        list.push(
+          makeCollectionError({
+            scope: "BID",
+            kind,
+            endpoint: "cron/collect-g2b",
+            message: e ?? "(unknown)",
+          }),
+        );
+      }
+    }
+    return list;
+  }, [dataSource, errorMessage, manualStatus, manualMessage, lastRun]);
 
   // 필터/검색/페이지사이즈가 바뀌면 1페이지로 리셋.
   useEffect(() => {
@@ -620,6 +699,7 @@ export default function Home() {
     showSavedOnly,
     showNewOnly,
     showFeedbackOnly,
+    budgetFilter,
     pageSize,
   ]);
   // currentPage 가 totalPages 를 넘기면 자동으로 마지막 페이지로.
@@ -768,7 +848,6 @@ export default function Home() {
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
         <Header
           matchedCount={activeTotal}
-          filteredCount={displayedCount}
           fromCache={fromCache}
         />
 
@@ -803,6 +882,9 @@ export default function Home() {
             </p>
           </div>
         )}
+
+        {/* 구조화된 수집 오류 패널 — Supabase 실패 / 직전 수집 오류를 한 곳에 모아서 표시. */}
+        <CollectionErrorPanel errors={collectionErrors} title="입찰공고 수집 오류" />
 
         <LastCollectionRunCard
           run={lastRun}
@@ -935,6 +1017,8 @@ export default function Home() {
                 </span>
               </label>
 
+              <BudgetFilter value={budgetFilter} onChange={setBudgetFilter} />
+
               <button
                 type="button"
                 onClick={handleManualCollect}
@@ -956,6 +1040,26 @@ export default function Home() {
                 className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-3 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 transition hover:bg-blue-50 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 dark:hover:bg-slate-800 sm:text-sm"
               >
                 ⟳ 화면 새로고침
+              </button>
+
+              <button
+                type="button"
+                title="입찰공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심/DB 데이터는 보존됩니다."
+                onClick={() => {
+                  if (
+                    typeof window !== "undefined" &&
+                    !window.confirm(
+                      "입찰공고 화면 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
+                    )
+                  ) {
+                    return;
+                  }
+                  clearBidLocalCache();
+                  window.location.reload();
+                }}
+                className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
+              >
+                캐시 초기화
               </button>
             </div>
           </div>

@@ -1,9 +1,11 @@
+import { extractAttachments, summarizeAttachments } from "@/lib/attachments";
 import { matchPreSpec } from "@/lib/preSpec/match";
 import type {
   PreSpecAnnouncement,
   PreSpecRecommendation,
   PreSpecStatus,
 } from "@/lib/preSpec/types";
+import { buildPreSpecSourceUrl } from "@/lib/sourceUrl";
 
 /**
  * G2B 사전규격 raw item → PreSpecAnnouncement 정규화.
@@ -188,14 +190,25 @@ function pickLinkedBidNo(item: Record<string, unknown>): string | undefined {
   return first || undefined;
 }
 
-/** 사전규격 원문 페이지 URL — bfSpecRgstNo 가 있으면 G2B 사이트 fallback. */
-function buildSourceUrl(bfSpecRgstNo: string | undefined): string | undefined {
-  if (!bfSpecRgstNo) return undefined;
-  // 나라장터 사전규격 검색 결과 페이지 — 등록번호로 직접 접근.
-  // (정확한 상세 URL 패턴이 시기별로 바뀌므로 검색 페이지로 안전하게 fallback.)
-  return `https://www.g2b.go.kr/pn/pnz/pnza/PNZAPreStdtSearch.do?searchPreStdRegNo=${encodeURIComponent(
+/**
+ * 사전규격 원문 페이지 URL — lib/sourceUrl 의 buildPreSpecSourceUrl 위임.
+ *
+ * 정책 (404 방지):
+ *  - API raw 가 detailUrl / originalUrl 을 http(s) 형태로 직접 줄 때만 URL 반환.
+ *  - bfSpecRgstNo 만으로 임의 검색 URL 을 만들지 않는다 — 이전 방식은 G2B 에서 404 났다.
+ *  - 결과가 undefined 이면 화면은 "원문없음" 비활성 라벨로 표시한다.
+ */
+function buildSourceUrl(
+  raw: Record<string, unknown>,
+  bfSpecRgstNo: string | undefined,
+): string | undefined {
+  const detailUrl = pickFirst(raw, ["detailUrl", "ntceUrl", "ntceDtlUrl", "preSpecUrl"]);
+  const originalUrl = pickFirst(raw, ["originalUrl", "orgnlUrl", "sourceUrl"]);
+  return buildPreSpecSourceUrl({
     bfSpecRgstNo,
-  )}`;
+    detailUrl,
+    originalUrl,
+  }).url;
 }
 
 function getAnnouncementKey(item: Record<string, unknown>, fallback: string): string {
@@ -264,6 +277,9 @@ function getRecommendation(
 export type NormalizeOptions = {
   /** 상태 계산 기준 시각 (default: now). */
   now?: Date;
+  /** 어느 API endpoint 에서 받은 데이터인지 (디버깅). */
+  sourceApi?: string;
+  sourceEndpoint?: string;
 };
 
 export function normalizePreSpecItem(
@@ -286,18 +302,35 @@ export function normalizePreSpecItem(
   const opinionDeadline = parseG2bDate(pickFirst(raw, OPINION_DEADLINE_KEYS));
 
   const preSpecRegNo = pickFirst(raw, REG_NO_KEYS);
-  const specFileUrl = pickSpecFileUrl(raw);
+
+  // 첨부 / RFP / 규격서 / 과업지시서 — 통합 helper.
+  const attachments = extractAttachments(raw);
+  const att = summarizeAttachments(attachments);
+
+  // 규격서 URL: 첨부 분석에서 찾은 게 있으면 그것, 없으면 specDocFileUrl1~5 후보.
+  // pickSpecFileUrl 은 이미 http(s) 검증을 통과한 값만 반환하므로 추가 검증 불필요.
+  const specFileUrl = att.specDocUrl ?? pickSpecFileUrl(raw);
   const fileUrl = specFileUrl;
-  const sourceUrl = buildSourceUrl(preSpecRegNo);
+  const sourceUrl = buildSourceUrl(raw, preSpecRegNo);
+
+  // fileName: 첨부 목록의 첫 번째 항목의 이름을 대표 파일명으로 사용 (matching/표시 용).
+  // 첨부가 비어 있어도 raw 의 직접 fileName 후보는 추출.
+  const fileName =
+    attachments[0]?.name ??
+    pickFirst(raw, ["atchFileNm", "fileName", "fileNm", "specDocFileNm", "specFileNm"]);
 
   const linkedBidNo = pickLinkedBidNo(raw);
 
-  // 매칭 텍스트는 제목/사업명/기관명/품목상세/참조번호까지 합쳐 키워드 누락을 줄인다.
+  // 매칭 텍스트 — title / businessName / orgName / fileName 기준 (스펙 요구).
+  // 추가로 prdctDtlList / refNo / bsnsDivNm / 첨부 전체 파일명도 포함해서 누락 줄인다.
+  const attachmentNames = attachments.map((a) => a.name).filter(Boolean).join(" ");
   const matchBody = [
     title,
     businessName,
     orgName,
     demandOrgName,
+    fileName,
+    attachmentNames,
     pickFirst(raw, ["prdctDtlList"]),
     pickFirst(raw, ["refNo"]),
     pickFirst(raw, ["bsnsDivNm"]),
@@ -328,7 +361,7 @@ export function normalizePreSpecItem(
     budget,
     openDate,
     opinionDeadline,
-    fileName: undefined,
+    fileName,
     fileUrl,
     specFileUrl,
     sourceUrl,
@@ -352,5 +385,15 @@ export function normalizePreSpecItem(
     linkedBidNo,
     linkedBidTitle: undefined,
     linkedStatus: linkedBidNo ? "입찰공고등록" : undefined,
+
+    // 첨부 / 분류
+    attachments,
+    hasRfp: att.hasRfp,
+    hasSpecDoc: att.hasSpecDoc,
+    hasTaskDoc: att.hasTaskDoc,
+
+    // 출처 식별
+    sourceApi: opts.sourceApi,
+    sourceEndpoint: opts.sourceEndpoint,
   };
 }

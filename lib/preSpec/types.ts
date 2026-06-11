@@ -7,6 +7,8 @@
  * 향후 사전규격 → 실제 입찰공고 연결 추적을 위해 linkedBidNo 등 자리만 만들어둔다.
  */
 
+import type { AttachmentInfo } from "@/lib/attachments";
+
 export type PreSpecStatus = "진행중" | "마감임박" | "마감" | "확인필요";
 
 export type PreSpecRecommendation =
@@ -113,4 +115,20 @@ export type PreSpecAnnouncement = {
 
   /** 매칭된 고객사 (선택). */
   customer?: PreSpecCustomer | null;
+
+  /** 첨부파일 / RFP / 과업지시서 / 규격서 정보 (raw 에서 추출). */
+  attachments?: AttachmentInfo[];
+  /** 첨부에 RFP 또는 제안요청서가 포함됐는지. */
+  hasRfp?: boolean;
+  /** 첨부에 규격서가 포함됐는지. */
+  hasSpecDoc?: boolean;
+  /** 첨부에 과업지시서가 포함됐는지. */
+  hasTaskDoc?: boolean;
+
+  /** 어느 API endpoint 에서 받은 데이터인지 — 화면 / 디버깅용. */
+  sourceApi?: string;
+  /** 정확한 endpoint 식별자 (operation 이름). */
+  sourceEndpoint?: string;
+  /** 이 항목이 그 endpoint 에서 받아질 때 발생한 에러(있다면). */
+  fetchError?: string;
 };

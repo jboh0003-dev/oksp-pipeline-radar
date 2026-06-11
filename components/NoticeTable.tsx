@@ -1,5 +1,6 @@
 "use client";
 
+import AttachmentButtons from "@/components/AttachmentButtons";
 import { CONTRABASS_FAMILY, type Notice } from "@/data/sampleNotices";
 import { getAnnouncementKey } from "@/lib/announcementKey";
 import { getBudgetInfo } from "@/lib/budget";
@@ -496,6 +497,23 @@ export default function NoticeTable({
                             </div>
                           );
                         })()}
+                        {/*
+                          첨부 / RFP / 규격서 / 과업지시서 — raw_data 에서 추출.
+                          row 클릭 (원문 열기) 와 충돌하지 않도록 stopPropagation.
+                        */}
+                        {notice.attachments && notice.attachments.length > 0 && (
+                          <div
+                            className="mt-1.5"
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            role="presentation"
+                          >
+                            <AttachmentButtons
+                              attachments={notice.attachments}
+                              compact
+                            />
+                          </div>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button

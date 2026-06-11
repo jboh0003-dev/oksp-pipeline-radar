@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { fetchG2bApi } from "@/lib/g2b/client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -652,65 +653,25 @@ async function fetchG2BPage(
   pageNo: number,
   dateRange: DateRange,
 ): Promise<{ items: G2BItem[]; error: string | null; fatal?: boolean }> {
+  // 공통 G2B client 사용 — timeout / retry / resultCode / JSON 파싱 통합 처리.
+  // 여기서 호출자(executeCollect) 가 errors[] 에 메시지를 누적하므로 fatal 도 함께 반환한다.
   const url = buildG2BUrl(baseUrl, endpoint, serviceKey, pageNo, dateRange);
+  const result = await fetchG2bApi(url, {
+    label: `${endpoint}/p${pageNo}`,
+    timeoutMs: 20_000,
+    retries: 3,
+  });
 
-  let res: Response;
-  try {
-    res = await fetch(url, { cache: "no-store" });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  if (!result.ok) {
     return {
       items: [],
-      error: `${endpoint} p${pageNo}: 네트워크 오류 (${message})`,
-      fatal: true,
-    };
-  }
-
-  if (!res.ok) {
-    return {
-      items: [],
-      error: `${endpoint} p${pageNo}: HTTP ${res.status}`,
-      fatal: true,
-    };
-  }
-
-  let text: string;
-  try {
-    text = await res.text();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      items: [],
-      error: `${endpoint} p${pageNo}: 본문 읽기 실패 (${message})`,
-      fatal: true,
-    };
-  }
-
-  let json: unknown = null;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return {
-      items: [],
-      error: `${endpoint} p${pageNo}: JSON 파싱 실패`,
-      fatal: true,
-    };
-  }
-
-  const header = (json as { response?: { header?: { resultCode?: string; resultMsg?: string } } })
-    .response?.header;
-  const resultCode = header?.resultCode ?? null;
-
-  if (resultCode != null && resultCode !== "00") {
-    return {
-      items: [],
-      error: `${endpoint} p${pageNo}: ${header?.resultMsg ?? resultCode}`,
+      error: `${endpoint} p${pageNo}: ${result.error}`,
       fatal: true,
     };
   }
 
   return {
-    items: parseItems(json),
+    items: parseItems(result.data),
     error: null,
   };
 }
