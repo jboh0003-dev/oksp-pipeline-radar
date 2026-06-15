@@ -1,10 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import AttachmentButtons from "@/components/AttachmentButtons";
 import type { AnnouncementFeedback } from "@/lib/feedback";
 import { getBudgetInfo } from "@/lib/budget";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
-import { isValidHttpUrl } from "@/lib/sourceUrl";
+import { buildPreSpecSearchTarget, isValidHttpUrl } from "@/lib/sourceUrl";
 
 const RECOMMENDATION_BADGE: Record<string, string> = {
   "핵심검토":
@@ -45,6 +46,32 @@ export default function PreSpecTable({
   onToggleSave,
   onOpenFeedback,
 }: Props) {
+  // "검색" 버튼 클릭 시 검색어 클립보드 복사 안내용 toast.
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2800);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // 검색 버튼: 검색어 클립보드 복사 + 사전규격공고 검색 페이지 새 탭 오픈.
+  // 복사 성공 시에만 toast 표시 (실패해도 새 탭은 열림).
+  const handleSearchClick = (target: { query: string; url: string }) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      navigator.clipboard
+        .writeText(target.query)
+        .then(() =>
+          setToast("검색어가 복사되었습니다. 나라장터 검색창에 붙여넣어 확인하세요."),
+        )
+        .catch(() => {
+          // 클립보드 권한 거부/실패 — UX 보조 기능이므로 무시.
+        });
+    }
+    if (typeof window !== "undefined") {
+      window.open(target.url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   if (items.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-white/10 dark:bg-slate-900/60">
@@ -59,6 +86,7 @@ export default function PreSpecTable({
   }
 
   return (
+    <>
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/60">
       <div className="w-full overflow-x-auto lg:overflow-x-visible">
         <table className="w-full table-fixed text-sm">
@@ -211,32 +239,52 @@ export default function PreSpecTable({
                         >
                           {hasFeedback ? "피드백 ✓" : "피드백"}
                         </button>
-                        {/* 원문 버튼: 캐시/데이터에 어떤 값이 들어 있더라도
-                            반드시 http(s) 검증을 통과한 URL 만 클릭 가능한 링크로 렌더링한다.
-                            G2B 의 임의 검색/상세 URL 은 이전에 404 를 유발했으므로
-                            검증되지 않은 값은 항상 "원문없음" 비활성 라벨로 표시. */}
-                        {isValidHttpUrl(item.sourceUrl) ? (
-                          <a
-                            href={item.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={item.sourceUrl}
-                            className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-blue-600 px-2 text-[11px] font-semibold text-white transition hover:bg-blue-700 dark:bg-blue-500"
-                          >
-                            원문 ↗
-                          </a>
-                        ) : (
-                          <span
-                            title={
-                              item.preSpecRegNo
-                                ? `사전규격등록번호: ${item.preSpecRegNo}`
-                                : undefined
-                            }
-                            className="inline-flex h-7 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500"
-                          >
-                            원문없음
-                          </span>
-                        )}
+                        {/* 원문/검색/원문없음 3-way 분기.
+                            1) sourceUrl 이 http(s) 검증 통과 → 정확한 원문 링크
+                            2) 그렇지 않지만 등록번호/사전규격명/기관명 중 하나라도
+                               있으면 → G2B 메인으로 보내는 "검색" 버튼
+                               (검색어는 클립보드에 복사되어 G2B 검색창에 바로 붙여넣기 가능)
+                            3) 검색어조차 없으면 "원문없음" 비활성.
+                            절대 임의 상세 URL 을 만들지 않는다 (404 방지). */}
+                        {(() => {
+                          if (isValidHttpUrl(item.sourceUrl)) {
+                            return (
+                              <a
+                                href={item.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={item.sourceUrl}
+                                className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-blue-600 px-2 text-[11px] font-semibold text-white transition hover:bg-blue-700 dark:bg-blue-500"
+                              >
+                                원문 ↗
+                              </a>
+                            );
+                          }
+                          const search = buildPreSpecSearchTarget({
+                            preSpecRegNo: item.preSpecRegNo,
+                            title: item.title,
+                            orgName: item.orgName,
+                          });
+                          if (search) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleSearchClick(search)}
+                                title={`나라장터 사전규격공고 검색 - "${search.query}" (검색어가 클립보드에 복사됩니다)`}
+                                className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-sky-600 px-2 text-[11px] font-semibold text-white transition hover:bg-sky-700 dark:bg-sky-500"
+                              >
+                                검색 ↗
+                              </button>
+                            );
+                          }
+                          return (
+                            <span
+                              className="inline-flex h-7 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500"
+                            >
+                              원문없음
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                   </td>
@@ -322,5 +370,16 @@ export default function PreSpecTable({
         </table>
       </div>
     </div>
+    {/* 검색 버튼 클릭 시 클립보드 복사 안내 toast — 화면 우하단 고정, 자동 사라짐. */}
+    {toast && (
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none fixed bottom-6 right-6 z-50 max-w-sm rounded-lg bg-slate-900/95 px-4 py-3 text-xs font-medium text-white shadow-lg ring-1 ring-white/10 dark:bg-slate-800/95"
+      >
+        {toast}
+      </div>
+    )}
+    </>
   );
 }

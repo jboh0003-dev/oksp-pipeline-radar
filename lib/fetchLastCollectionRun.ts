@@ -110,3 +110,37 @@ export async function fetchLastCollectionRun(): Promise<LastCollectionRunResult>
     return { run: null, error: formatSupabaseError(error) };
   }
 }
+
+/**
+ * collection_runs 에서 가장 최근 "성공"한 (ok=true) row 1건.
+ *  - 화면의 "마지막 성공 수집" 표시 / stale 판정에 쓴다.
+ *  - last attempt 와 별개로 추적하므로, 마지막 시도가 실패하더라도
+ *    "데이터의 신선도" 는 마지막 성공 기준으로 계산할 수 있다.
+ */
+export async function fetchLastSuccessfulRun(): Promise<LastCollectionRunResult> {
+  const configError = getSupabaseConfigError();
+  if (configError) return { run: null, error: configError };
+
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { run: null, error: "Supabase 클라이언트를 생성하지 못했습니다." };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("collection_runs")
+      .select("*")
+      .eq("ok", true)
+      .order("finished_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(1);
+
+    if (error) return { run: null, error: formatSupabaseError(error) };
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    if (rows.length === 0) return { run: null, error: null };
+    return { run: normalizeRow(rows[0]), error: null };
+  } catch (error) {
+    return { run: null, error: formatSupabaseError(error) };
+  }
+}

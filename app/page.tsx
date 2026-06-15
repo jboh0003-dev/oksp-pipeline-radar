@@ -5,11 +5,13 @@ import BudgetFilter, {
   matchesBudgetFilter,
   type BudgetFilterValue,
 } from "@/components/BudgetFilter";
+import CollectionDiagnosticsPanel from "@/components/CollectionDiagnosticsPanel";
 import CollectionErrorPanel from "@/components/CollectionErrorPanel";
 import DashboardLoading from "@/components/DashboardLoading";
 import { clearBidLocalCache } from "@/lib/cacheReset";
 import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
+import { useAuth } from "@/lib/auth";
 import NoticeCard from "@/components/NoticeCard";
 import NoticeTable from "@/components/NoticeTable";
 import ProductFilter from "@/components/ProductFilter";
@@ -29,7 +31,10 @@ import {
   dedupeByAnnouncementKey,
   getAnnouncementKey,
 } from "@/lib/announcementKey";
-import { fetchLastCollectionRun } from "@/lib/fetchLastCollectionRun";
+import {
+  fetchLastCollectionRun,
+  fetchLastSuccessfulRun,
+} from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import {
   loadNoticesCache,
@@ -333,6 +338,16 @@ export default function Home() {
   const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [isLastRunLoading, setIsLastRunLoading] = useState(true);
+  /**
+   * 마지막 "성공" 수집 row.
+   *  - lastRun.ok=true 이면 동일하지만, 마지막 시도가 실패면 더 과거의 성공 row 를 가리킨다.
+   *  - 화면의 "데이터 신선도" / "업데이트 필요" 판정 기준이 되는 값.
+   */
+  const [lastSuccessRun, setLastSuccessRun] = useState<CollectionRunRow | null>(
+    null,
+  );
+
+  const auth = useAuth();
 
   /**
    * 페이지네이션 — 페이지당 50/100/200/전체.
@@ -417,9 +432,14 @@ export default function Home() {
   }, []);
 
   const loadLastRun = useCallback(async () => {
-    const { run, error } = await fetchLastCollectionRun();
-    setLastRun(run);
-    setLastRunError(error);
+    // last attempt + last success 를 병렬 조회. last success 가 stale 판정 기준이 된다.
+    const [attempt, success] = await Promise.all([
+      fetchLastCollectionRun(),
+      fetchLastSuccessfulRun(),
+    ]);
+    setLastRun(attempt.run);
+    setLastRunError(attempt.error);
+    setLastSuccessRun(success.run);
   }, []);
 
   /**
@@ -890,7 +910,21 @@ export default function Home() {
           run={lastRun}
           error={lastRunError}
           isLoading={isLastRunLoading}
+          lastSuccess={lastSuccessRun}
         />
+
+        {/*
+          관리자 전용 수집 진단 패널 — 일반 사용자에게는 보이지 않는다.
+          마지막 시도 / 마지막 성공 / 환경 점검 / Vercel cron 안내 등이 한 곳에 모인다.
+          isLastRunLoading 동안에는 아직 데이터가 없으므로 패널을 띄우지 않는다 (깜빡임 방지).
+        */}
+        {auth.isAdmin && !isLastRunLoading && (
+          <CollectionDiagnosticsPanel
+            lastAttempt={lastRun}
+            lastSuccess={lastSuccessRun}
+            fetchError={lastRunError}
+          />
+        )}
 
         <SummaryCards {...summaryCounts} />
 

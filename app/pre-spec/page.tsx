@@ -21,6 +21,7 @@ import {
   recordPreSpecLoadDurationMs,
   savePreSpecCache,
 } from "@/lib/preSpec/cache";
+import { isStaleSinceMorningCutoff } from "@/lib/freshness";
 import {
   isKeyNewInScope,
   loadNewMap,
@@ -87,31 +88,6 @@ function applyNewFlags(
  */
 function isOpenPreSpec(item: PreSpecAnnouncement): boolean {
   return item.status !== "마감";
-}
-
-/**
- * 마지막 수집 시각이 "직전 cron 시각(매일 08:30 KST) 이전" 이면 stale 로 간주.
- *  - 자동 수집은 매일 08:30 KST 에 돌도록 vercel.json 에 등록되어 있다.
- *  - 따라서 그 시각 이후로 한 번도 갱신되지 않았다면 사용자에게 "업데이트 필요" 라벨로 알린다.
- *  - 시각 비교는 모두 UTC ms 기준이라 OS 타임존 영향 없음.
- */
-function isStaleSinceMorningCutoff(lastFetchAt: number, now: number = Date.now()): boolean {
-  if (!Number.isFinite(lastFetchAt) || lastFetchAt <= 0) return false;
-  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-  // KST 시각의 분/시 추출.
-  const kstNow = new Date(now + KST_OFFSET_MS);
-  const y = kstNow.getUTCFullYear();
-  const m = kstNow.getUTCMonth();
-  const d = kstNow.getUTCDate();
-  const kstHour = kstNow.getUTCHours();
-  const kstMinute = kstNow.getUTCMinutes();
-  // 오늘 08:30 KST 의 UTC ms.
-  let cutoffUtcMs = Date.UTC(y, m, d, 8, 30, 0) - KST_OFFSET_MS;
-  // 현재 KST 가 아직 08:30 전이라면, 직전 cutoff 는 어제 08:30 KST.
-  if (kstHour < 8 || (kstHour === 8 && kstMinute < 30)) {
-    cutoffUtcMs -= 24 * 60 * 60 * 1000;
-  }
-  return lastFetchAt < cutoffUtcMs;
 }
 
 type CollectResp = {

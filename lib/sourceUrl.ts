@@ -79,22 +79,27 @@ export function buildBidSourceUrl(input: {
  * 사전규격공고 원문 URL.
  *
  * 정책 (404 방지):
- *  - API 가 검증된 상세 URL 필드(detailUrl / originalUrl 등) 를 직접 줄 때만 "exact" 로 반환.
- *  - bfSpecRgstNo / preSpecRegNo 만 있는 경우엔 절대 임의 검색 URL 을 만들지 않는다.
- *    (이전엔 PNZAPreStdtSearch.do?searchPreStdRegNo=... 으로 fallback 을 만들었는데 G2B 에서
- *     해당 경로가 404 가 떠서 전부 깨졌다. 검증된 패턴이 아니면 차라리 비활성화한다.)
+ *  - API 가 검증된 상세 URL 필드(detailUrl / originalUrl / specDetailUrl) 를 직접 줄 때만
+ *    "exact" 로 반환.
+ *  - bfSpecRgstNo / preSpecRegNo / preStdRegNo / publicPreSpecNo 만 있는 경우엔
+ *    절대 임의 상세 URL 을 만들지 않는다. (R26BD... 같은 R코드는 물론, 숫자형 preStdRegNo 도
+ *    G2B 에서 검증된 공개 상세 URL 패턴이 없으므로 추측해서 만들지 않는다 — 404 방지.)
+ *  - 이전엔 PNZAPreStdtSearch.do?searchPreStdRegNo=... 으로 fallback 을 만들었는데 G2B 에서
+ *    해당 경로가 404 가 떠서 전부 깨졌다. 검증된 패턴이 아니면 차라리 비활성화한다.
+ *  - 그 대신 화면 측에서 buildPreSpecSearchTarget 으로 사전규격공고 검색 페이지로 fallback.
  *
  * 화면 처리:
  *  - kind === "exact" : "원문" 버튼 활성
- *  - kind === "none"  : "원문없음" 으로 비활성 표시
+ *  - kind === "none"  : 화면에서 "검색" 또는 "원문없음" 으로 분기
  */
 export function buildPreSpecSourceUrl(input: {
   bfSpecRgstNo?: string | null;
   preSpecRegNo?: string | null;
   detailUrl?: string | null;
   originalUrl?: string | null;
+  specDetailUrl?: string | null;
 }): SourceUrlInfo {
-  const candidates = [input.detailUrl, input.originalUrl];
+  const candidates = [input.detailUrl, input.originalUrl, input.specDetailUrl];
   for (const c of candidates) {
     if (isValidHttpUrl(c)) {
       return { url: c.trim(), kind: "exact", label: "원문" };
@@ -108,5 +113,55 @@ export function normalizeHttpUrl(value: unknown): string | undefined {
   if (!isValidHttpUrl(value)) return undefined;
   return value.trim();
 }
+
+/**
+ * 사전규격공고 "검색" 버튼 fallback target.
+ *
+ *  - 정확한 원문/상세 URL 을 모를 때, 사용자가 나라장터에서 직접 찾아갈 수 있도록
+ *    "사전규격공고 진입 URL" 을 새 탭으로 열어준다.
+ *  - URL 은 G2B 메인(`https://www.g2b.go.kr/`) 이 아니라 사전규격공고 목록/검색
+ *    페이지로 직접 이동하는 link 패턴을 사용한다. 메인으로만 보내면 사전규격
+ *    화면까지 사용자가 한참 들어가야 해서 의미가 없었다.
+ *  - 임의의 ?keyword=... 형태(예: `https://www.g2b.go.kr/?keyword=...`) 는 G2B 가
+ *    해석하지 않아 결과적으로 메인만 뜬다 — 사용 금지.
+ *  - 검색어는 호출 측에서 클립보드에 복사해 G2B 검색창에 바로 붙여넣을 수 있게 한다.
+ *  - 검색어 우선순위: 등록번호(R코드 포함) > 사전규격명 > 기관명.
+ *
+ * @returns query 후보가 모두 비어 있으면 null. 그 외엔 query/url/label.
+ */
+export function buildPreSpecSearchTarget(input: {
+  preSpecRegNo?: string | null;
+  bfSpecRgstNo?: string | null;
+  title?: string | null;
+  orgName?: string | null;
+}): { query: string; url: string; label: string } | null {
+  // 우선순위: 등록번호 (preSpecRegNo / bfSpecRgstNo, R코드든 숫자든) > 사전규격명 > 기관명.
+  // R26BD... 같은 R코드도 그대로 검색어로 사용 (사용자가 G2B 검색창에 붙여넣어 검색).
+  const candidates = [
+    input.preSpecRegNo,
+    input.bfSpecRgstNo,
+    input.title,
+    input.orgName,
+  ];
+  for (const c of candidates) {
+    if (typeof c !== "string") continue;
+    const trimmed = c.trim();
+    if (!trimmed) continue;
+    return {
+      query: trimmed,
+      url: G2B_PRE_SPEC_SEARCH_URL,
+      label: "검색",
+    };
+  }
+  return null;
+}
+
+/**
+ * G2B 사전규격공고 진입 URL.
+ *  - 메인이 아니라 사전규격공고 목록/검색 페이지로 곧장 이동하는 link 라우트.
+ *  - 클릭 시 사용자는 한 단계만 검색창에 붙여넣으면 결과를 볼 수 있다.
+ */
+const G2B_PRE_SPEC_SEARCH_URL =
+  "https://www.g2b.go.kr/link/PRCA001_04/single/?flag=cnrtSl&srch=0002";
 
 export const G2B_DEFAULT_BID_DETAIL_BASE = G2B_BID_DETAIL_BASE;

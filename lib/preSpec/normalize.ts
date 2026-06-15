@@ -151,7 +151,17 @@ const OPINION_DEADLINE_KEYS = [
   "opinionDeadline",
 ] as const;
 
-const REG_NO_KEYS = ["bfSpecRgstNo", "preSpecRegNo", "spcfctRgstNo", "specRgstNo", "rgstNo"] as const;
+const REG_NO_KEYS = [
+  "bfSpecRgstNo",
+  "preSpecRegNo",
+  // preStdRegNo / publicPreSpecNo: API 응답 변종에서 등록번호가 들어있을 수 있는 후보들.
+  // R코드(R26BD...) 또는 숫자형 모두 그대로 검색어로 사용 (상세 URL 생성에는 절대 쓰지 않음).
+  "preStdRegNo",
+  "publicPreSpecNo",
+  "spcfctRgstNo",
+  "specRgstNo",
+  "rgstNo",
+] as const;
 
 /** 규격서 후보 키 — specDocFileUrl1~5 + 일반 fileUrl 후보. */
 const SPEC_FILE_KEYS = [
@@ -194,9 +204,11 @@ function pickLinkedBidNo(item: Record<string, unknown>): string | undefined {
  * 사전규격 원문 페이지 URL — lib/sourceUrl 의 buildPreSpecSourceUrl 위임.
  *
  * 정책 (404 방지):
- *  - API raw 가 detailUrl / originalUrl 을 http(s) 형태로 직접 줄 때만 URL 반환.
- *  - bfSpecRgstNo 만으로 임의 검색 URL 을 만들지 않는다 — 이전 방식은 G2B 에서 404 났다.
- *  - 결과가 undefined 이면 화면은 "원문없음" 비활성 라벨로 표시한다.
+ *  - API raw 가 detailUrl / originalUrl / specDetailUrl 을 http(s) 형태로 직접 줄 때만
+ *    URL 반환 ("원문" 버튼).
+ *  - bfSpecRgstNo / preSpecRegNo / preStdRegNo / publicPreSpecNo (R코드든 숫자든)
+ *    만으로 임의 상세 URL 을 만들지 않는다. 이전엔 추정 URL 에서 404 가 났다.
+ *  - 결과가 undefined 이면 화면은 검색 버튼 또는 "원문없음" 으로 분기한다.
  */
 function buildSourceUrl(
   raw: Record<string, unknown>,
@@ -204,10 +216,12 @@ function buildSourceUrl(
 ): string | undefined {
   const detailUrl = pickFirst(raw, ["detailUrl", "ntceUrl", "ntceDtlUrl", "preSpecUrl"]);
   const originalUrl = pickFirst(raw, ["originalUrl", "orgnlUrl", "sourceUrl"]);
+  const specDetailUrl = pickFirst(raw, ["specDetailUrl", "specDtlsUrl", "specDtlUrl"]);
   return buildPreSpecSourceUrl({
     bfSpecRgstNo,
     detailUrl,
     originalUrl,
+    specDetailUrl,
   }).url;
 }
 

@@ -1,4 +1,5 @@
 import type { CollectionRunRow } from "@/lib/supabase";
+import { isIsoStaleSinceMorningCutoff } from "@/lib/freshness";
 
 type Props = {
   run: CollectionRunRow | null;
@@ -6,6 +7,12 @@ type Props = {
   error: string | null;
   /** 첫 마운트 시 fetchLastCollectionRun 을 기다리는 동안 true. */
   isLoading: boolean;
+  /**
+   * 마지막 "성공" 수집 row. lastRun.ok=true 면 동일하지만, 마지막 시도가 실패면
+   * 이 값은 더 과거의 성공 row 를 가리킨다. stale 판정은 이 값 기준.
+   *  - undefined / null 이면 lastRun.ok=true 인 경우 lastRun 으로 폴백.
+   */
+  lastSuccess?: CollectionRunRow | null;
 };
 
 const KST_FORMATTER = new Intl.DateTimeFormat("ko-KR", {
@@ -78,7 +85,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function LastCollectionRunCard({ run, error, isLoading }: Props) {
+export default function LastCollectionRunCard({
+  run,
+  error,
+  isLoading,
+  lastSuccess,
+}: Props) {
   if (isLoading) {
     return (
       <Shell>
@@ -113,6 +125,15 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
   const errors = pickItems(run.errors);
   const warnings = pickItems(run.warnings);
   const hasMessage = Boolean(run.message);
+
+  // "업데이트 필요" 판정 — 마지막 성공 수집이 직전 08:30 KST 이전이면 stale.
+  // lastSuccess prop 이 있으면 그것 기준, 없으면 run 자체가 ok=true 일 때만 신선도 평가.
+  const successRunForStale = lastSuccess ?? (run.ok ? run : null);
+  const isStale = isIsoStaleSinceMorningCutoff(
+    successRunForStale?.finished_at ?? null,
+  );
+  // lastSuccess 가 명시적으로 null 인 경우 = 성공 이력이 한 번도 없음 → 항상 stale.
+  const noSuccessEver = lastSuccess === null && !run.ok;
 
   // warnings 첫 줄 컨텍스트("slot=... · ..." 또는 "mode=manual · ...") 는 우측 메타에 따로 그리므로
   // 메시지 카운트에서 제외.
@@ -169,6 +190,19 @@ export default function LastCollectionRunCard({ run, error, isLoading }: Props) 
         <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
           {formatKstShort(run.finished_at)} <span className="opacity-60">KST</span>
         </span>
+        {(isStale || noSuccessEver) && (
+          <span
+            title={
+              noSuccessEver
+                ? "성공한 수집 이력이 없습니다. 우측 '지금 수집' 버튼을 눌러 직접 수집해 보세요."
+                : "마지막 성공 수집이 오늘 08:30 KST 이전입니다. 자동 수집이 동작하지 않았을 수 있어요."
+            }
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+          >
+            <span aria-hidden>⚠</span>
+            업데이트 필요
+          </span>
+        )}
 
         <span aria-hidden className="hidden h-3.5 w-px bg-slate-200 dark:bg-white/10 sm:inline-block" />
 
