@@ -7,8 +7,18 @@ import BudgetFilter, {
 } from "@/components/BudgetFilter";
 import CollectionErrorPanel from "@/components/CollectionErrorPanel";
 import FeedbackModal from "@/components/FeedbackModal";
+import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import PreSpecTable from "@/components/PreSpecTable";
+import { useAuth } from "@/lib/auth";
+import { authedFetch } from "@/lib/authedFetch";
 import { clearPreSpecLocalCache } from "@/lib/cacheReset";
+import { fetchPreSpecNotices } from "@/lib/fetchPreSpecNotices";
+import {
+  fetchLastPreSpecCollectionRun,
+  fetchLastSuccessfulPreSpecRun,
+} from "@/lib/fetchLastPreSpecCollectionRun";
+import type { CollectionRunRow } from "@/lib/supabase";
+import { getClientSupabaseDebugInfo } from "@/lib/supabaseDebug";
 import type { CollectionError } from "@/lib/collectionErrors";
 import {
   buildFeedbackMap,
@@ -92,9 +102,22 @@ function isOpenPreSpec(item: PreSpecAnnouncement): boolean {
 
 type CollectResp = {
   ok: boolean;
+  source?: "pre_spec";
+  /** 수집된 사전규격공고 목록 (정규화된 형태). */
   items?: PreSpecAnnouncement[];
-  error?: string;
-  message?: string;
+  /** ok=false 일 때만 설정되는 사용자 표시 에러 메시지. */
+  error?: string | null;
+  /** 사용자 친화적 안내 메시지 (성공 / 일부 경고 / 결과 없음). */
+  message?: string | null;
+  /** 부분 실패 / 부가 안내 — 사용자 화면에는 info 톤으로 노출 (error 아님). */
+  warnings?: string[];
+  // ── 사용자 명세 카운터 ──
+  fetchedCount?: number;
+  normalizedCount?: number;
+  upsertedCount?: number;
+  matchedCount?: number;
+  excludedCount?: number;
+  // ── legacy / 진단용 ──
   totalsByCategory?: Record<string, number>;
   errors?: string[];
   collectionErrors?: CollectionError[];
@@ -180,12 +203,10 @@ async function applyCustomerMatching(
 /**
  * 사전규격공고 대시보드.
  *
- * 흐름:
- *  - 마운트 시 캐시(15분 TTL) 가 있으면 즉시 표시 → 백그라운드 fetch.
- *  - "지금 수집" 클릭 시 캐시 무시 + 바로 fetch.
- *  - 검색 / 필터 / 페이지 변경은 모두 클라이언트 (재호출 없음).
- *  - NEW 표시는 csg2b:preSpec:* localStorage 로 입찰공고와 분리 관리.
- *  - 피드백은 sourceType="PRE_SPEC" 으로 분리 저장.
+ * 흐름 (입찰공고와 동일):
+ *  - 마운트 / "새로고침": Supabase pre_spec_notices SELECT (fetchPreSpecNotices) — 모든 사용자.
+ *  - "지금 수집" (admin 만): /api/pre-spec/collect → G2B fetch + DB upsert → loadPreSpecNotices().
+ *  - 캐시(15분 TTL) 가 있으면 즉시 표시 → 백그라운드 DB 재조회.
  */
 export default function PreSpecPage() {
   const [items, setItems] = useState<PreSpecAnnouncement[]>([]);
@@ -204,10 +225,17 @@ export default function PreSpecPage() {
   const [collectStatus, setCollectStatus] = useState<"idle" | "running" | "success" | "error">(
     "idle",
   );
+  const [refreshStatus, setRefreshStatus] = useState<"idle" | "running">("idle");
   const [collectMessage, setCollectMessage] = useState<string | null>(null);
   const [lastFetchAt, setLastFetchAt] = useState<number | null>(null);
   const [lastDurationMs, setLastDurationMs] = useState<number | null>(null);
   const [totalsByCategory, setTotalsByCategory] = useState<Record<string, number>>({});
+  /** Supabase pre_spec_notices raw row 수 (필터 전). */
+  const [dbRowCount, setDbRowCount] = useState<number | null>(null);
+  const [lastPreSpecRun, setLastPreSpecRun] = useState<CollectionRunRow | null>(null);
+  const [lastPreSpecSuccess, setLastPreSpecSuccess] = useState<CollectionRunRow | null>(null);
+  const [lastPreSpecRunLoading, setLastPreSpecRunLoading] = useState(true);
+  const [lastPreSpecRunError, setLastPreSpecRunError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
@@ -218,6 +246,25 @@ export default function PreSpecPage() {
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [showFeedbackOnly, setShowFeedbackOnly] = useState(false);
   const [budgetFilter, setBudgetFilter] = useState<BudgetFilterValue>("all");
+  /**
+   * 표시 모드 — 사용자 정책 (2026-06).
+   *
+   *   'recommended' (기본):
+   *     - status in (진행중, 마감임박)
+   *     - recommendation !== "제외"
+   *     - AND (products.length > 0 OR matchedKeywords.length > 0)
+   *     → 영업이 실제로 검토할 후보만 좁게 노출.
+   *
+   *   'with-excluded' ("제외 포함"):
+   *     - 위와 동일하되 recommendation === "제외" 까지 포함.
+   *     → 키워드 매칭이 약해 자동 제외된 항목도 한 번 훑어보고 싶을 때.
+   *
+   *   'all' ("전체 보기" — admin 만):
+   *     - active(마감 안 된) 모집단 전체. 매칭 0건도 포함.
+   *     → 운영/디버그용 전체 모집단 확인.
+   */
+  type ViewMode = "recommended" | "with-excluded" | "all";
+  const [viewMode, setViewMode] = useState<ViewMode>("recommended");
 
   const [savedKeys, setSavedKeys] = useState<string[]>([]);
   const savedSet = useMemo(() => new Set(savedKeys), [savedKeys]);
@@ -230,67 +277,168 @@ export default function PreSpecPage() {
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   const fetchInFlightRef = useRef(false);
+  const auth = useAuth();
 
-  /** 사전규격 수집 — /api/pre-spec/collect 호출 → 정규화 + dedup 은 서버에서 끝났음. */
-  const refresh = useCallback(async (): Promise<{ newCount: number; ok: boolean }> => {
-    if (fetchInFlightRef.current) return { newCount: 0, ok: false };
+  /**
+   * DB 에서 사전규격 목록 조회 — 입찰공고 fetchNotices 와 동일 패턴.
+   * 모든 사용자(일반 user 포함)가 사용한다. G2B 수집은 하지 않는다.
+   */
+  const loadPreSpecNotices = useCallback(async (): Promise<{ newCount: number }> => {
+    if (fetchInFlightRef.current) return { newCount: 0 };
     fetchInFlightRef.current = true;
     const started = Date.now();
     try {
-      // days=7 — 사전규격은 의견접수기간이 보통 5~7일이므로 최근 7일 등록분만 받아도
-      // 진행중/마감임박 항목 거의 전부를 커버한다. 30일을 받으면 G2B API 가
-      // rcptDt ASC 정렬이라 maxPages 한도(=5) 안에 가장 오래된 페이지(이미 마감)만 들어와서
-      // 화면에 진행중 데이터가 1건도 안 나타나는 문제가 생긴다.
-      const res = await fetch("/api/pre-spec/collect?days=7", { method: "GET" });
-      const json = (await res.json()) as CollectResp;
+      const result = await fetchPreSpecNotices({
+        email: auth.session?.user?.email ?? null,
+        role: auth.role,
+        viewMode,
+        productFilter,
+        territoryFilter,
+        budgetFilter,
+      });
 
-      // 서버가 보내준 진단 정보를 항상 반영 (성공/실패 상관없이).
-      setApiErrors(json.errors ?? []);
-      setCollectionErrors(json.collectionErrors ?? []);
-      setDebugInfo(json.debug);
-      setTotalsByCategory(json.totalsByCategory ?? {});
-
-      if (!json.ok || !Array.isArray(json.items)) {
-        setErrorMessage(json.error ?? "사전규격 수집 실패");
-        setInfoMessage(null);
-        return { newCount: 0, ok: false };
+      if (result.error) {
+        setErrorMessage(result.error);
+        console.warn("[pre-spec/page] DB 조회 실패:", result.error);
+      } else {
+        setErrorMessage(null);
       }
-      setErrorMessage(null);
-      setInfoMessage(json.message ?? null);
 
-      const next = json.items;
-      // snapshot diff — 이전 수집에는 없었지만 이번 수집에 새로 등장한 키만 NEW.
-      // 최초 시드는 자동으로 newMap 비움 (= 신규 0건).
+      setDbRowCount(result.rowCount);
+
+      const next = result.items;
       const keys = next.map((n) => n.announcementKey);
       const { newKeys, newMap } = markNewItemsBySnapshot("preSpec", keys);
       const flagged = applyNewFlags(next, newMap);
 
-      // 담당본부 매칭 — 시간이 걸려도 화면에는 매칭 전 데이터를 먼저 띄우고 끝나면 update.
       setItems(flagged);
       const now = Date.now();
-      const duration = now - started;
       savePreSpecCache(flagged, now);
-      recordPreSpecLoadDurationMs(duration);
+      recordPreSpecLoadDurationMs(now - started);
       setLastFetchAt(now);
-      setLastDurationMs(duration);
+      setLastDurationMs(now - started);
       setFromCache(false);
 
-      // 비동기 매칭 — Promise 끝나면 items 갱신 + cache 도 다시 저장.
+      if (result.rowCount === 0 && !result.error) {
+        setInfoMessage(
+          auth.isAdmin
+            ? "아직 수집된 사전규격공고가 없습니다. '지금 수집'으로 즉시 수집하거나, 자동 수집은 매일 08:30에 실행됩니다."
+            : "아직 수집된 사전규격공고가 없습니다. 자동 수집은 매일 08:30에 실행됩니다.",
+        );
+      } else if (!result.error) {
+        setInfoMessage(null);
+      }
+
+      const env = getClientSupabaseDebugInfo();
+      console.log("[pre-spec/page] loadPreSpecNotices", {
+        nodeEnv: env.nodeEnv,
+        supabaseProjectRef: env.projectRef,
+        supabaseMaskedUrl: env.maskedUrl,
+        email: auth.session?.user?.email ?? null,
+        role: auth.role,
+        dbRowCount: result.rowCount,
+        mappedCount: next.length,
+        filters: { viewMode, productFilter, territoryFilter, budgetFilter },
+      });
+
       void applyCustomerMatching(flagged).then((withCustomer) => {
         setItems(withCustomer);
         savePreSpecCache(withCustomer, Date.now());
       });
 
-      return { newCount: newKeys.length, ok: true };
+      return { newCount: newKeys.length };
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : String(err));
-      return { newCount: 0, ok: false };
+      const fatal = err instanceof Error ? err.message : String(err);
+      setErrorMessage(fatal);
+      console.error("[pre-spec/page] loadPreSpecNotices exception:", fatal);
+      return { newCount: 0 };
     } finally {
       fetchInFlightRef.current = false;
     }
+  }, [
+    auth.isAdmin,
+    auth.role,
+    auth.session?.user?.email,
+    viewMode,
+    productFilter,
+    territoryFilter,
+    budgetFilter,
+  ]);
+
+  /** G2B 사전규격 수집 — admin 전용 (/api/pre-spec/collect). */
+  const collectPreSpec = useCallback(async (): Promise<{
+    ok: boolean;
+    itemsCount: number;
+    warningsCount: number;
+    errorMessage: string | null;
+    successMessage: string | null;
+  }> => {
+    try {
+      const res = await authedFetch("/api/pre-spec/collect?days=7", { method: "GET" });
+      const json = (await res.json()) as CollectResp;
+
+      setApiErrors(json.errors ?? []);
+      setCollectionErrors(json.collectionErrors ?? []);
+      setDebugInfo(json.debug);
+      setTotalsByCategory(json.totalsByCategory ?? {});
+
+      const warnings = json.warnings ?? [];
+
+      if (!json.ok || !Array.isArray(json.items)) {
+        const fatal =
+          json.error ??
+          "사전규격 수집에 실패했습니다. 관리자에게 문의해 주세요.";
+        setErrorMessage(fatal);
+        setInfoMessage(null);
+        return {
+          ok: false,
+          itemsCount: 0,
+          warningsCount: warnings.length,
+          errorMessage: fatal,
+          successMessage: null,
+        };
+      }
+
+      setErrorMessage(null);
+      const successText =
+        warnings.length > 0
+          ? "사전규격 수집은 완료되었지만 일부 항목은 제외되었습니다."
+          : json.items.length === 0
+            ? "조건에 맞는 사전규격공고가 없습니다."
+            : "사전규격 수집이 완료되었습니다.";
+      setInfoMessage(json.message ?? successText);
+
+      console.log("[pre-spec/page] collect ok", {
+        fetched: json.fetchedCount,
+        normalized: json.normalizedCount,
+        upserted: json.upsertedCount,
+        warnings: warnings.length,
+      });
+
+      return {
+        ok: true,
+        itemsCount: json.items.length,
+        warningsCount: warnings.length,
+        errorMessage: null,
+        successMessage: successText,
+      };
+    } catch (err) {
+      const fatal =
+        err instanceof Error
+          ? err.message
+          : "사전규격 수집에 실패했습니다. 관리자에게 문의해 주세요.";
+      setErrorMessage(fatal);
+      return {
+        ok: false,
+        itemsCount: 0,
+        warningsCount: 0,
+        errorMessage: fatal,
+        successMessage: null,
+      };
+    }
   }, []);
 
-  // 첫 진입: 캐시 즉시 페인트 → 백그라운드 fetch
+  // 첫 진입: 캐시 즉시 페인트 → 백그라운드 DB 조회 (G2B 수집 아님)
   useEffect(() => {
     let mounted = true;
     setSavedKeys(loadSavedKeys());
@@ -299,8 +447,6 @@ export default function PreSpecPage() {
 
     const cached = loadPreSpecCache();
     if (cached && cached.items.length > 0) {
-      // 캐시 페인트 시점에서도 newMap 을 읽어 isNew 를 정확히 다시 부착한다.
-      // (snapshot 갱신은 fresh fetch 후에만 수행)
       const newMap = loadNewMap("preSpec");
       setItems(applyNewFlags(cached.items, newMap));
       setLastFetchAt(cached.fetchedAt);
@@ -311,7 +457,7 @@ export default function PreSpecPage() {
     (async () => {
       if (!cached) setIsLoading(true);
       try {
-        await refresh();
+        await loadPreSpecNotices();
       } finally {
         if (mounted) setIsLoading(false);
       }
@@ -320,7 +466,35 @@ export default function PreSpecPage() {
     return () => {
       mounted = false;
     };
-  }, [refresh]);
+  }, [loadPreSpecNotices]);
+
+  // 사전규격 collection_runs 이력 (마지막 수집 시각 표시용).
+  useEffect(() => {
+    let mounted = true;
+    setLastPreSpecRunLoading(true);
+    (async () => {
+      const [last, success] = await Promise.all([
+        fetchLastPreSpecCollectionRun(),
+        fetchLastSuccessfulPreSpecRun(),
+      ]);
+      if (!mounted) return;
+      setLastPreSpecRun(last.run);
+      setLastPreSpecSuccess(success.run);
+      setLastPreSpecRunError(last.error ?? success.error);
+      setLastPreSpecRunLoading(false);
+      const env = getClientSupabaseDebugInfo();
+      console.log("[pre-spec/page] collection_runs", {
+        nodeEnv: env.nodeEnv,
+        supabaseProjectRef: env.projectRef,
+        lastPreSpecRun: last.run?.finished_at ?? null,
+        lastPreSpecSuccess: success.run?.finished_at ?? null,
+        lastPreSpecOk: last.run?.ok ?? null,
+      });
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // 필터/검색/페이지사이즈 변경 시 1페이지로 리셋.
   useEffect(() => {
@@ -333,26 +507,62 @@ export default function PreSpecPage() {
     showNewOnly,
     showSavedOnly,
     showFeedbackOnly,
+    viewMode,
     budgetFilter,
     pageSize,
   ]);
 
+  /**
+   * "지금 수집" — admin 전용. G2B 수집 후 DB 재조회.
+   */
   const handleManualCollect = async () => {
     if (collectStatus === "running") return;
     setCollectStatus("running");
     setCollectMessage("사전규격공고 수집 중... (수십 초 걸릴 수 있어요)");
-    const { newCount, ok } = await refresh();
-    if (!ok) {
+    const result = await collectPreSpec();
+
+    if (!result.ok) {
       setCollectStatus("error");
-      setCollectMessage(`수집 실패: ${errorMessage ?? "알 수 없는 오류"}`);
+      setCollectMessage(
+        result.errorMessage ??
+          "사전규격 수집에 실패했습니다. 관리자에게 문의해 주세요.",
+      );
       return;
     }
+
+    await loadPreSpecNotices();
+
+    const [last, success] = await Promise.all([
+      fetchLastPreSpecCollectionRun(),
+      fetchLastSuccessfulPreSpecRun(),
+    ]);
+    setLastPreSpecRun(last.run);
+    setLastPreSpecSuccess(success.run);
+    setLastPreSpecRunError(last.error ?? success.error);
+
     setCollectStatus("success");
+    if (result.itemsCount === 0) {
+      setCollectMessage("조건에 맞는 사전규격공고가 없습니다.");
+      return;
+    }
+    const warnPart =
+      result.warningsCount > 0
+        ? ` · 경고 ${result.warningsCount.toLocaleString("ko-KR")}건`
+        : "";
     setCollectMessage(
-      newCount > 0
-        ? `수집 완료 · 신규 ${newCount.toLocaleString("ko-KR")}건 추가됨`
-        : `수집 완료 · 신규 0건`,
+      `${result.successMessage ?? "사전규격 수집이 완료되었습니다."}${warnPart}`,
     );
+  };
+
+  /** "새로고침" — 모든 사용자. Supabase DB 재조회만 (G2B 수집 없음). */
+  const handleRefresh = async () => {
+    if (refreshStatus === "running" || collectStatus === "running") return;
+    setRefreshStatus("running");
+    try {
+      await loadPreSpecNotices();
+    } finally {
+      setRefreshStatus("idle");
+    }
   };
 
   const handleToggleSave = (key: string) => {
@@ -382,18 +592,23 @@ export default function PreSpecPage() {
   }, [items]);
 
   /*
-   * 데이터 레이어 분리 (3차 고도화):
-   *  - rawPreSpecItems       : 서버에서 받은 raw 매칭 모집단 (= items, 마감 포함)
-   *  - activePreSpecItems    : 마감 제외 unique 공고
-   *  - matchedPreSpecItems   : products 가 1개 이상인 active 공고 (제품 매칭됨)
-   *  - filteredPreSpecItems  : 검색/필터/예산 적용 후 표시 후보
-   *  - displayedPreSpecItems : 페이지네이션 적용 후 실제 화면 표시 (paged)
+   * 데이터 레이어 분리 (사용자 정책 2026-06):
+   *  - rawPreSpecItems        : 서버에서 받은 raw 모집단 (= items, 마감 포함)
+   *  - activePreSpecItems     : 마감 제외 unique 공고 (= 진행중 + 마감임박 + 확인필요)
+   *  - matchedPreSpecItems    : products 또는 matchedKeywords 가 1개 이상인 active 공고
+   *  - excludedPreSpecItems   : recommendation === "제외" 인 active 공고
+   *  - baselineItems          : viewMode 에 따른 표시 모집단 (recommended | with-excluded | all)
+   *  - filteredPreSpecItems   : baselineItems 에 검색/필터/예산 적용 후 표시 후보
+   *  - displayedPreSpecItems  : 페이지네이션 적용 후 실제 화면 표시
    *
-   *  통계는 반드시 이 기준으로:
-   *    조회      = rawPreSpecItems.length
-   *    진행중    = activePreSpecItems.length
-   *    제품매칭  = sum(products.length) on activePreSpecItems
-   *    표출      = filteredPreSpecItems / displayedPreSpecItems
+   *  카운트 라벨 (사용자 정책 2026-06):
+   *    조회       = rawPreSpecItems.length          (API 에서 가져온 전체)
+   *    매칭       = matchedPreSpecItems.length      (제품/키워드 매칭 1건 이상)
+   *    표시       = filteredPreSpecItems.length     (현재 필터 적용 후 — 화면 행 수와 동일)
+   *    제외       = excludedPreSpecItems.length     (recommendation === "제외")
+   *    진행중     = activeTotal                     (마감 제외 unique 공고)
+   *    제품매칭   = productMatchTotal               (products 배열이 비어 있지 않은 수)
+   *    복수매칭   = multiMatchCount                 (products 배열 길이 >= 2)
    */
   const rawPreSpecItems = items;
   const activePreSpecItems = useMemo(
@@ -401,16 +616,47 @@ export default function PreSpecPage() {
     [rawPreSpecItems],
   );
   const matchedPreSpecItems = useMemo(
-    () => activePreSpecItems.filter((it) => Array.isArray(it.products) && it.products.length > 0),
+    () =>
+      activePreSpecItems.filter(
+        (it) =>
+          (Array.isArray(it.products) && it.products.length > 0) ||
+          (Array.isArray(it.matchedKeywords) && it.matchedKeywords.length > 0),
+      ),
     [activePreSpecItems],
   );
-  // legacy alias — 화면 다른 부분에서 visibleItems 라는 이름을 그대로 쓴다.
-  const visibleItems = activePreSpecItems;
+  const excludedPreSpecItems = useMemo(
+    () => activePreSpecItems.filter((it) => it.recommendation === "제외"),
+    [activePreSpecItems],
+  );
+  /**
+   * 기본 표시 모집단 — viewMode 에 따라 다음과 같이 결정 (사용자 정책 2026-06).
+   *
+   *   'recommended' (기본): "제외 아님" + "matched (products/keywords ≥ 1)"
+   *                         → 영업이 실제로 검토할 후보만 좁게 노출.
+   *   'with-excluded'     : "matched 또는 제외" → 매칭이 약해 자동 제외된 항목까지 한 번 훑어볼 때.
+   *   'all' (admin)       : active 모집단 전체 (매칭 0건 항목 포함).
+   *                         → 운영/디버그용 전체 확인.
+   */
+  const baselineItems = useMemo(() => {
+    switch (viewMode) {
+      case "all":
+      case "with-excluded":
+        // active 모집단 전체 (마감 제외). status null/확인필요 포함.
+        return activePreSpecItems;
+      case "recommended":
+      default:
+        // 기본: recommendation !== "제외" 인 active 항목만 (제외 키워드/점수 미달 숨김).
+        return activePreSpecItems.filter((it) => it.recommendation !== "제외");
+    }
+  }, [viewMode, activePreSpecItems]);
+  // legacy alias — 상단 카드/제품 카운트는 "표시 가능한" 모집단 기준.
+  const visibleItems = baselineItems;
 
   // 1차 필터 (검색/제품/담당본부/임박/신규/관심/피드백/예산)
+  // baseline = "제외" recommendation 을 기본 숨김한 모집단.
   const filteredPreSpecItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    return activePreSpecItems.filter((it) => {
+    const filtered = baselineItems.filter((it) => {
       if (q) {
         const hay = [
           it.title,
@@ -437,8 +683,28 @@ export default function PreSpecPage() {
       if (!matchesBudgetFilter(it.budget ?? null, budgetFilter)) return false;
       return true;
     });
+
+    /**
+     * 최신순 정렬 (사용자 정책 2026-06):
+     *  - openDate (=공개일/rcptDt) 내림차순 우선.
+     *  - openDate 가 비어 있으면 opinionDeadline 으로 보조 정렬 (의견마감 임박 = 최근 등록일 가능성).
+     *  - 둘 다 비면 announcementKey 사전순 (안정 정렬용 tiebreaker).
+     *  - 마감 항목이 baseline 에서 제외되어 있어 sort 안에 별도 처리 불필요.
+     */
+    const dateKey = (it: PreSpecAnnouncement) =>
+      (it.openDate ?? "") || (it.opinionDeadline ?? "") || "";
+    return [...filtered].sort((a, b) => {
+      const da = dateKey(a);
+      const db = dateKey(b);
+      if (da !== db) {
+        if (!da) return 1;
+        if (!db) return -1;
+        return db.localeCompare(da);
+      }
+      return a.announcementKey.localeCompare(b.announcementKey);
+    });
   }, [
-    activePreSpecItems,
+    baselineItems,
     debouncedSearch,
     productFilter,
     territoryFilter,
@@ -452,17 +718,19 @@ export default function PreSpecPage() {
   ]);
 
   /*
-   * 상단 통계 (입찰공고와 동일 정의):
-   *  - 조회        : rawPreSpecItems.length (= items.length, 마감 포함 raw 모집단)
-   *  - 진행중      : activePreSpecItems.length (마감 제외 unique 공고 수)
-   *  - 제품매칭    : products.length 합계 (한 공고에 두 제품이면 +2, "관계 수")
-   *  - 복수매칭    : products 가 2개 이상인 공고 수
-   *  - CONTRABASS / VIOLA / CMP : 각 제품이 products 에 포함된 공고 수 (관련 매칭 · 중복 포함)
-   *  - 의견마감 임박 : status === "마감임박" — 보조지표
-   *  - 신규 / 피드백 / 매칭(전체 items.length) 도 함께 표시.
+   * 상단 통계 — 사용자 피드백 반영 (조회 / 매칭 / 표시 / 제외 분리).
+   *  - rawTotal       : rawPreSpecItems.length (API 가 준 마감 포함 전체)
+   *  - activeTotal    : activePreSpecItems.length (마감 제외 unique 공고 수)
+   *  - matchedTotal   : 키워드/제품 매칭 1개 이상 (영업적으로 의미 있는 후보)
+   *  - excludedTotal  : recommendation === "제외" 인 active 공고
+   *  - 표시(filteredTotal): 현재 필터 적용 후 baselineItems 의 매칭 부분
+   *  - CONTRABASS / VIOLA / CMP : 각 제품이 products 에 포함된 공고 수 (visibleItems 기준)
+   *  - 복수매칭     : products 가 2개 이상인 공고 수 (visibleItems 기준)
    */
-  const matchedTotal = rawPreSpecItems.length; // "조회/매칭" 모집단 (마감 포함 raw 매칭 수)
+  const rawTotal = rawPreSpecItems.length;
   const activeTotal = activePreSpecItems.length;
+  const matchedTotal = matchedPreSpecItems.length;
+  const excludedTotal = excludedPreSpecItems.length;
   const productMatchTotal = useMemo(
     () =>
       matchedPreSpecItems.reduce(
@@ -509,6 +777,48 @@ export default function PreSpecPage() {
   );
   const paged = displayedPreSpecItems;
 
+  const tableEmptyReason: "no-data" | "filtered" =
+    dbRowCount == null || dbRowCount === 0
+      ? "no-data"
+      : totalFiltered === 0
+        ? "filtered"
+        : "no-data";
+
+  const clientDebug = useMemo(() => getClientSupabaseDebugInfo(), []);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const env = getClientSupabaseDebugInfo();
+    console.log("[pre-spec/page] display state", {
+      nodeEnv: env.nodeEnv,
+      supabaseProjectRef: env.projectRef,
+      email: auth.session?.user?.email ?? null,
+      role: auth.role,
+      dbRowCount,
+      rawTotal,
+      activeTotal,
+      totalFiltered,
+      viewMode,
+      productFilter,
+      territoryFilter,
+      budgetFilter,
+      lastPreSpecRun: lastPreSpecRun?.finished_at ?? null,
+    });
+  }, [
+    isLoading,
+    dbRowCount,
+    rawTotal,
+    activeTotal,
+    totalFiltered,
+    viewMode,
+    productFilter,
+    territoryFilter,
+    budgetFilter,
+    auth.session?.user?.email,
+    auth.role,
+    lastPreSpecRun?.finished_at,
+  ]);
+
   return (
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
@@ -533,15 +843,26 @@ export default function PreSpecPage() {
 
         {errorMessage && (
           <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200">
-            <p className="font-semibold">사전규격 수집 오류</p>
-            <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
-              {errorMessage}
+            <p className="font-semibold">
+              {auth.isAdmin
+                ? "사전규격 데이터 조회에 실패했습니다."
+                : "사전규격 목록을 불러오지 못했습니다. 잠시 후 새로고침해 주세요."}
             </p>
+            {auth.isAdmin && (
+              <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
+                {errorMessage}
+              </p>
+            )}
           </div>
         )}
 
-        {/* 구조화된 수집 오류 패널 — 페이지 단위 timeout / 5xx / JSON 파싱 실패 등이 표시. */}
-        <CollectionErrorPanel errors={collectionErrors} title="사전규격 수집 오류" />
+        {/*
+          구조화된 수집 오류 패널 — admin 만 볼 수 있다.
+          일반 사용자에게는 운영성 메시지를 노출하지 않는다.
+        */}
+        {auth.isAdmin && (
+          <CollectionErrorPanel errors={collectionErrors} title="사전규격 수집 오류" />
+        )}
 
         {!errorMessage && infoMessage && (
           <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-200">
@@ -549,7 +870,22 @@ export default function PreSpecPage() {
           </div>
         )}
 
-        {(apiErrors.length > 0 || debugInfo) && !errorMessage && (
+        <LastCollectionRunCard
+          title="최근 사전규격 수집"
+          run={lastPreSpecRun}
+          error={lastPreSpecRunError}
+          isLoading={lastPreSpecRunLoading}
+          lastSuccess={lastPreSpecSuccess}
+        />
+
+        {auth.isAdmin && (
+          <p className="mb-3 font-mono text-[10px] text-slate-400 dark:text-slate-500">
+            env={clientDebug.nodeEnv} · supabase={clientDebug.maskedUrl ?? "(unset)"} · dbRows=
+            {dbRowCount ?? "-"} · role={auth.role ?? "-"}
+          </p>
+        )}
+
+        {auth.isAdmin && (apiErrors.length > 0 || debugInfo) && !errorMessage && (
           <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400">
             <button
               type="button"
@@ -617,19 +953,45 @@ export default function PreSpecPage() {
         </p>
 
         {/*
-          수집 정보 띠 — 입찰공고와 동일 정의.
-            - 조회      : items 전체 (마감 포함, 매칭된 raw 모집단)
-            - 진행중    : 마감 제외 unique 공고 수
-            - 제품매칭  : products 배열 기준 (notice, product) 매칭 관계 수 (중복 포함 가능)
-            - 표출      : 현재 필터/페이지 적용 후 보이는 건수
-            - 복수매칭  : products 가 2개 이상인 공고 수
+          수집 정보 띠 — "조회 / 매칭 / 표시 / 제외" 4단 분리 표기.
+            - 조회      : 이번 수집 raw 전체 (마감 포함)
+            - 매칭      : 키워드/제품 매칭 1개 이상 (영업적으로 의미 있는 후보)
+            - 표시      : 현재 필터 적용 후 보이는 건수 (baseline 모집단 기준)
+            - 제외      : recommendation === "제외" 인 active 공고 수 (기본 숨김)
+            - 진행중/복수매칭/제품매칭 은 보조지표.
         */}
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
-            <span title="이번 수집에서 받은 raw 매칭 모집단 (마감 포함)">
+            <span title="이번 수집에서 받은 raw 전체 (마감 포함)">
               <span className="text-slate-500 dark:text-slate-400">조회 </span>
               <span className="font-semibold tabular-nums">
+                {rawTotal.toLocaleString("ko-KR")}
+              </span>
+            </span>
+            <span title="키워드/제품 매칭이 1건 이상 — 영업적으로 의미 있는 후보 (마감 제외)">
+              <span className="text-slate-500 dark:text-slate-400">매칭 </span>
+              <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
                 {matchedTotal.toLocaleString("ko-KR")}
+              </span>
+            </span>
+            <span title="현재 필터 + 페이지네이션 기준 (baseline 모집단)">
+              <span className="text-slate-500 dark:text-slate-400">표시 </span>
+              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                {totalFiltered === 0
+                  ? "0"
+                  : pageSize === 0
+                    ? `1-${totalFiltered.toLocaleString("ko-KR")}`
+                    : `${(pageStart + 1).toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}`}
+              </span>
+              <span className="text-slate-500 dark:text-slate-400">
+                {" "}
+                / {totalFiltered.toLocaleString("ko-KR")}건
+              </span>
+            </span>
+            <span title="recommendation === &quot;제외&quot; 인 active 공고 수 (기본 숨김 대상)">
+              <span className="text-slate-500 dark:text-slate-400">제외 </span>
+              <span className="font-semibold tabular-nums text-slate-500 dark:text-slate-400">
+                {excludedTotal.toLocaleString("ko-KR")}
               </span>
             </span>
             <span title="마감 제외 unique 공고 수">
@@ -642,20 +1004,6 @@ export default function PreSpecPage() {
               <span className="text-slate-500 dark:text-slate-400">제품매칭 </span>
               <span className="font-semibold tabular-nums">
                 {productMatchTotal.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            <span title="현재 필터 + 페이지네이션 기준">
-              <span className="text-slate-500 dark:text-slate-400">표출 </span>
-              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-                {totalFiltered === 0
-                  ? "0"
-                  : pageSize === 0
-                    ? `1-${totalFiltered.toLocaleString("ko-KR")}`
-                    : `${(pageStart + 1).toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}`}
-              </span>
-              <span className="text-slate-500 dark:text-slate-400">
-                {" "}
-                / {totalFiltered.toLocaleString("ko-KR")}건
               </span>
             </span>
             <span title="products 가 2개 이상인 공고 수">
@@ -840,47 +1188,104 @@ export default function PreSpecPage() {
                 💬 피드백 {feedbackTotal}
               </button>
 
+              {/*
+                표시 모드 토글 (사용자 정책 2026-06):
+                  - 기본 'recommended' = 추천/제품매칭 (영업 후보만 좁게)
+                  - 'with-excluded'    = 제외 포함 (매칭이 약한 자동 제외 항목까지)
+                  - 'all' (admin)      = 전체 보기 (active 모집단 전체)
+                일반 사용자는 'recommended' / 'with-excluded' 두 가지만, admin 만 'all' 추가.
+              */}
               <button
                 type="button"
-                onClick={handleManualCollect}
-                disabled={collectStatus === "running"}
-                className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold sm:text-sm ${
-                  collectStatus === "running"
-                    ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
-                    : "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500"
+                onClick={() =>
+                  setViewMode((m) =>
+                    m === "recommended" ? "with-excluded" : "recommended",
+                  )
+                }
+                title={
+                  viewMode === "recommended"
+                    ? "제외 분류 항목을 숨깁니다 — 클릭하면 제외 항목까지 포함합니다."
+                    : "제외 포함 — 클릭하면 제외 항목을 다시 숨깁니다."
+                }
+                className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
+                  viewMode === "recommended"
+                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+                    : "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
                 }`}
               >
-                {collectStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
+                {viewMode === "recommended" ? "제외 숨김" : "제외 포함"}
+                {excludedTotal > 0 ? ` · 제외 ${excludedTotal.toLocaleString("ko-KR")}` : ""}
               </button>
-              <button
-                type="button"
-                title="사전규격공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심 등록은 보존됩니다."
-                onClick={() => {
-                  if (
-                    typeof window !== "undefined" &&
-                    !window.confirm(
-                      "사전규격공고 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
-                    )
-                  ) {
-                    return;
+
+              {auth.isAdmin && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setViewMode((m) => (m === "all" ? "recommended" : "all"))
                   }
-                  clearPreSpecLocalCache();
-                  window.location.reload();
-                }}
-                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
-              >
-                캐시 초기화
-              </button>
+                  title={
+                    viewMode === "all"
+                      ? "active 모집단 전체 표시 중. 클릭하면 추천/제품매칭만 보기로 돌아갑니다."
+                      : "active 모집단 전체 표시 (운영/디버그용)."
+                  }
+                  className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
+                    viewMode === "all"
+                      ? "bg-slate-700 text-white dark:bg-slate-600"
+                      : "bg-slate-50 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-400 dark:ring-white/10"
+                  }`}
+                >
+                  {viewMode === "all" ? "전체 보기 (켜짐)" : "전체 보기"}
+                </button>
+              )}
+
+              {/* "지금 수집" / "캐시 초기화" 는 admin 만 노출. */}
+              {auth.isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleManualCollect}
+                    disabled={collectStatus === "running"}
+                    className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold sm:text-sm ${
+                      collectStatus === "running"
+                        ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
+                        : "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500"
+                    }`}
+                  >
+                    {collectStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
+                  </button>
+                  <button
+                    type="button"
+                    title="사전규격공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심 등록은 보존됩니다."
+                    onClick={() => {
+                      if (
+                        typeof window !== "undefined" &&
+                        !window.confirm(
+                          "사전규격공고 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
+                        )
+                      ) {
+                        return;
+                      }
+                      clearPreSpecLocalCache();
+                      window.location.reload();
+                    }}
+                    className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
+                  >
+                    캐시 초기화
+                  </button>
+                </>
+              )}
               <button
                 type="button"
-                onClick={() => window.location.reload()}
-                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 sm:text-sm"
+                onClick={() => void handleRefresh()}
+                disabled={refreshStatus === "running" || collectStatus === "running"}
+                title="Supabase DB에서 목록만 다시 읽습니다. G2B 수집은 실행하지 않습니다."
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 disabled:opacity-50 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 sm:text-sm"
               >
-                ⟳ 새로고침
+                {refreshStatus === "running" ? "⏳ 조회 중…" : "⟳ 새로고침"}
               </button>
             </div>
           </div>
-          {collectMessage && (
+          {auth.isAdmin && collectMessage && (
             <p
               className={`mt-2 text-[11px] ${
                 collectStatus === "error"
@@ -906,6 +1311,8 @@ export default function PreSpecPage() {
             feedbackMap={feedbackMap}
             onToggleSave={handleToggleSave}
             onOpenFeedback={(it) => setFeedbackTarget(it)}
+            isAdmin={auth.isAdmin}
+            emptyReason={paged.length === 0 ? tableEmptyReason : "no-data"}
           />
         )}
 

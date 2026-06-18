@@ -13,6 +13,8 @@ type Props = {
    *  - undefined / null 이면 lastRun.ok=true 인 경우 lastRun 으로 폴백.
    */
   lastSuccess?: CollectionRunRow | null;
+  /** 카드 제목. 기본 "최근 수집". */
+  title?: string;
 };
 
 const KST_FORMATTER = new Intl.DateTimeFormat("ko-KR", {
@@ -72,12 +74,12 @@ function resolveMode(
   return "auto";
 }
 
-const CARD_TITLE = "최근 수집";
+const DEFAULT_CARD_TITLE = "최근 수집";
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, title }: { children: React.ReactNode; title: string }) {
   return (
     <section
-      aria-label={CARD_TITLE}
+      aria-label={title}
       className="mb-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:backdrop-blur-sm sm:px-5 sm:py-3.5 sm:text-[13px]"
     >
       {children}
@@ -90,21 +92,22 @@ export default function LastCollectionRunCard({
   error,
   isLoading,
   lastSuccess,
+  title = DEFAULT_CARD_TITLE,
 }: Props) {
   if (isLoading) {
     return (
-      <Shell>
-        <span className="text-slate-500 dark:text-slate-400">{CARD_TITLE} 불러오는 중…</span>
+      <Shell title={title}>
+        <span className="text-slate-500 dark:text-slate-400">{title} 불러오는 중…</span>
       </Shell>
     );
   }
 
   if (!run) {
     return (
-      <Shell>
+      <Shell title={title}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-slate-700 dark:text-slate-200">
-            {CARD_TITLE}
+            {title}
           </span>
           <span className="hidden text-[11px] font-normal text-slate-400 dark:text-slate-500 sm:inline">
             (업데이트 주기 매일 08:30)
@@ -176,11 +179,11 @@ export default function LastCollectionRunCard({
     run.inserted_count != null || run.updated_count != null;
 
   return (
-    <Shell>
+    <Shell title={title}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 leading-tight">
         <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
           <span aria-hidden className="text-blue-500 dark:text-blue-400">●</span>
-          {CARD_TITLE}
+          {title}
           <span className="ml-1 hidden text-[11px] font-normal text-slate-400 dark:text-slate-500 sm:inline">
             (업데이트 주기 매일 08:30)
           </span>

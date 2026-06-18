@@ -66,8 +66,33 @@ export type PreSpecAnnouncement = {
   fileUrl?: string;
   /** 규격서 다운로드 URL (있으면 별도 버튼). */
   specFileUrl?: string;
-  /** 사전규격 원문 페이지 URL. */
-  sourceUrl?: string;
+  /** 규격서 첨부 URL (specFileUrl alias) — DB attachment_url 컬럼 매핑용. */
+  attachmentUrl?: string;
+
+  /**
+   * 검증된 사전규격 상세 URL — 공고명 클릭에 사용한다.
+   *  - null 이면 공고명을 *절대* 클릭형으로 만들지 마라.
+   *  - 검증되지 않은 fallback URL 을 여기에 절대 넣지 마라 (사용자 신뢰 위반).
+   */
+  detailUrl: string | null;
+  /**
+   * 나라장터 사전규격공고 검색/목록 URL — 항상 채워진다.
+   * 별도 "나라장터 검색" 버튼이 이 URL 을 사용한다.
+   */
+  searchUrl: string;
+  /**
+   * detailUrl 해석 방법.
+   *  - 'verified-detail': detailUrl 직접 진입 (verified=true).
+   *  - 'search-fallback': 등록번호는 있지만 deep-link 미지원 — 검색 버튼만 제공.
+   *  - 'unsupported'    : 등록번호도 없음 — 진입 페이지 안내만.
+   */
+  detailUrlMethod: "verified-detail" | "search-fallback" | "unsupported";
+  /** detail_url_verified 컬럼 값. method === 'verified-detail' 일 때만 true. */
+  detailUrlVerified: boolean;
+  /** 사유 라벨 (UI 배지 title 등). */
+  detailUrlReason?: string;
+  /** API 가 raw 로 제공한 원본 URL (검증된 http(s) 만). DB original_url 컬럼 매핑용. */
+  originalUrl?: string;
 
   /** 의견 등록 건수 (API 가 줄 때만). */
   opinionCount?: number;

@@ -12,6 +12,7 @@ import { clearBidLocalCache } from "@/lib/cacheReset";
 import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import { useAuth } from "@/lib/auth";
+import { authedFetch } from "@/lib/authedFetch";
 import NoticeCard from "@/components/NoticeCard";
 import NoticeTable from "@/components/NoticeTable";
 import ProductFilter from "@/components/ProductFilter";
@@ -784,7 +785,7 @@ export default function Home() {
     let resp: ManualResp | null = null;
     let httpStatus = 0;
     try {
-      const res = await fetch("/api/collect-now", { method: "POST" });
+      const res = await authedFetch("/api/collect-now", { method: "POST" });
       httpStatus = res.status;
       resp = (await res.json()) as ManualResp;
     } catch (err) {
@@ -903,8 +904,13 @@ export default function Home() {
           </div>
         )}
 
-        {/* 구조화된 수집 오류 패널 — Supabase 실패 / 직전 수집 오류를 한 곳에 모아서 표시. */}
-        <CollectionErrorPanel errors={collectionErrors} title="입찰공고 수집 오류" />
+        {/*
+          구조화된 수집 오류 패널 — admin 에게만 노출.
+          일반 사용자에겐 운영성 메시지(수집 실패 / 환경변수 누락 등)를 보여주지 않는다.
+        */}
+        {auth.isAdmin && (
+          <CollectionErrorPanel errors={collectionErrors} title="입찰공고 수집 오류" />
+        )}
 
         <LastCollectionRunCard
           run={lastRun}
@@ -1053,19 +1059,25 @@ export default function Home() {
 
               <BudgetFilter value={budgetFilter} onChange={setBudgetFilter} />
 
-              <button
-                type="button"
-                onClick={handleManualCollect}
-                disabled={manualStatus === "running"}
-                title="나라장터에서 새 공고를 다시 수집합니다."
-                className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition sm:text-sm ${
-                  manualStatus === "running"
-                    ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
-                    : "bg-blue-600 text-white shadow-sm hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400"
-                }`}
-              >
-                {manualStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
-              </button>
+              {/*
+                "지금 수집" 버튼은 admin 만 노출.
+                일반 사용자는 자동수집(매일 08:30) 결과를 그대로 본다.
+              */}
+              {auth.isAdmin && (
+                <button
+                  type="button"
+                  onClick={handleManualCollect}
+                  disabled={manualStatus === "running"}
+                  title="나라장터에서 새 공고를 다시 수집합니다."
+                  className={`inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition sm:text-sm ${
+                    manualStatus === "running"
+                      ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
+                      : "bg-blue-600 text-white shadow-sm hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400"
+                  }`}
+                >
+                  {manualStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
+                </button>
+              )}
 
               <button
                 type="button"
@@ -1076,29 +1088,32 @@ export default function Home() {
                 ⟳ 화면 새로고침
               </button>
 
-              <button
-                type="button"
-                title="입찰공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심/DB 데이터는 보존됩니다."
-                onClick={() => {
-                  if (
-                    typeof window !== "undefined" &&
-                    !window.confirm(
-                      "입찰공고 화면 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
-                    )
-                  ) {
-                    return;
-                  }
-                  clearBidLocalCache();
-                  window.location.reload();
-                }}
-                className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
-              >
-                캐시 초기화
-              </button>
+              {/* "캐시 초기화" 는 운영성 도구이므로 admin 에게만 노출. */}
+              {auth.isAdmin && (
+                <button
+                  type="button"
+                  title="입찰공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심/DB 데이터는 보존됩니다."
+                  onClick={() => {
+                    if (
+                      typeof window !== "undefined" &&
+                      !window.confirm(
+                        "입찰공고 화면 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
+                      )
+                    ) {
+                      return;
+                    }
+                    clearBidLocalCache();
+                    window.location.reload();
+                  }}
+                  className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
+                >
+                  캐시 초기화
+                </button>
+              )}
             </div>
           </div>
 
-          {manualMessage && (
+          {auth.isAdmin && manualMessage && (
             <p
               className={`mt-2 text-[11px] ${
                 manualStatus === "error"

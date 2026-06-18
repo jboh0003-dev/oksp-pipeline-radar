@@ -1,11 +1,14 @@
 import { extractAttachments, summarizeAttachments } from "@/lib/attachments";
+import {
+  resolvePreSpecDetailUrl,
+  isVerifiedHttpUrl as isHttpUrl,
+} from "@/lib/preSpec/detailUrl";
 import { matchPreSpec } from "@/lib/preSpec/match";
 import type {
   PreSpecAnnouncement,
   PreSpecRecommendation,
   PreSpecStatus,
 } from "@/lib/preSpec/types";
-import { buildPreSpecSourceUrl } from "@/lib/sourceUrl";
 
 /**
  * G2B 사전규격 raw item → PreSpecAnnouncement 정규화.
@@ -177,17 +180,11 @@ const SPEC_FILE_KEYS = [
   "ntceSpecDocUrl",
 ] as const;
 
-/** http(s) URL 인지 검증. */
-function isValidHttpUrl(url: string | undefined): url is string {
-  if (!url) return false;
-  return /^https?:\/\//i.test(url.trim());
-}
-
 /** specDocFileUrl1~5 중 첫 번째로 채워진 http URL 반환. */
 function pickSpecFileUrl(item: Record<string, unknown>): string | undefined {
   for (const key of SPEC_FILE_KEYS) {
     const v = item[key];
-    if (typeof v === "string" && isValidHttpUrl(v)) return v.trim();
+    if (typeof v === "string" && isHttpUrl(v)) return v.trim();
   }
   return undefined;
 }
@@ -201,28 +198,113 @@ function pickLinkedBidNo(item: Record<string, unknown>): string | undefined {
 }
 
 /**
- * 사전규격 원문 페이지 URL — lib/sourceUrl 의 buildPreSpecSourceUrl 위임.
+ * 사전규격 상세/검색 URL 정보 — lib/preSpec/detailUrl 의 resolvePreSpecDetailUrl 위임.
  *
- * 정책 (404 방지):
- *  - API raw 가 detailUrl / originalUrl / specDetailUrl 을 http(s) 형태로 직접 줄 때만
- *    URL 반환 ("원문" 버튼).
- *  - bfSpecRgstNo / preSpecRegNo / preStdRegNo / publicPreSpecNo (R코드든 숫자든)
- *    만으로 임의 상세 URL 을 만들지 않는다. 이전엔 추정 URL 에서 404 가 났다.
- *  - 결과가 undefined 이면 화면은 검색 버튼 또는 "원문없음" 으로 분기한다.
+ * 반환 형태:
+ *   { detailUrl, searchUrl, detailUrlMethod, detailUrlVerified, detailUrlReason, originalUrl }
+ *
+ *  - detailUrl         : 검증된 상세 URL — verified=true 일 때만 채워진다. 그 외엔 null.
+ *  - searchUrl         : 나라장터 사전규격 검색/목록 URL — 항상 채워진다 (별도 검색 버튼용).
+ *  - detailUrlMethod   : 'verified-detail' | 'search-fallback' | 'unsupported'.
+ *  - detailUrlVerified : method === 'verified-detail' 일 때만 true.
+ *  - detailUrlReason   : 사용자/관리자에게 보일 한 줄 사유.
+ *  - originalUrl       : API 가 raw 로 제공한 http(s) URL (DB original_url 매핑).
+ *
+ * 정책 (가짜 detail 방지):
+ *  - 등록번호로 만든 link 라우트 URL 은 *목록/검색 화면* 이라 detailUrl 에 절대 넣지 않는다.
+ *  - 화면은 detailUrlVerified === true 일 때만 공고명을 클릭형으로 만들어야 한다.
  */
-function buildSourceUrl(
+/**
+ * API 응답에서 *상세 페이지로 진입 가능한* http(s) URL 후보 키 모음.
+ *
+ * 사용자 요청 (G2B / 공공데이터포털 응답 변종 전수 커버):
+ *  - detailUrl, ntceUrl, ntceDtlUrl, preSpecUrl, inqireUrl, url, link,
+ *    linkUrl, viewUrl, preSpecViewUrl, preStdViewUrl, preStdDtlUrl, dtlsUrl ...
+ *
+ * 정책:
+ *  - 여기서 찾은 값 중 isHttpUrl() 통과한 것만 detailRaw / originalRaw 후보가 된다.
+ *  - 검색/목록 페이지 URL 은 detail 로 절대 사용하지 않는다 (resolvePreSpecDetailUrl 가 차단).
+ */
+const DETAIL_URL_KEYS = [
+  "detailUrl",
+  "ntceUrl",
+  "ntceDtlUrl",
+  "preSpecUrl",
+  "inqireUrl",
+  "viewUrl",
+  "preSpecViewUrl",
+  "preStdViewUrl",
+  "preStdDtlUrl",
+  "dtlsUrl",
+  "preSpecDtlUrl",
+] as const;
+
+const ORIGINAL_URL_KEYS = [
+  "originalUrl",
+  "orgnlUrl",
+  "sourceUrl",
+  "url",
+  "link",
+  "linkUrl",
+  "g2bUrl",
+  "ntceUrl",
+  "inqireUrl",
+] as const;
+
+const SPEC_DETAIL_URL_KEYS = [
+  "specDetailUrl",
+  "specDtlsUrl",
+  "specDtlUrl",
+] as const;
+
+function buildUrls(
   raw: Record<string, unknown>,
-  bfSpecRgstNo: string | undefined,
-): string | undefined {
-  const detailUrl = pickFirst(raw, ["detailUrl", "ntceUrl", "ntceDtlUrl", "preSpecUrl"]);
-  const originalUrl = pickFirst(raw, ["originalUrl", "orgnlUrl", "sourceUrl"]);
-  const specDetailUrl = pickFirst(raw, ["specDetailUrl", "specDtlsUrl", "specDtlUrl"]);
-  return buildPreSpecSourceUrl({
-    bfSpecRgstNo,
-    detailUrl,
+  preSpecRegNo: string | undefined,
+): {
+  detailUrl: string | null;
+  searchUrl: string;
+  detailUrlMethod: "verified-detail" | "search-fallback" | "unsupported";
+  detailUrlVerified: boolean;
+  detailUrlReason: string;
+  originalUrl: string | undefined;
+} {
+  const detailRaw = pickFirst(raw, DETAIL_URL_KEYS);
+  const originalRaw = pickFirst(raw, ORIGINAL_URL_KEYS);
+  const specDetailRaw = pickFirst(raw, SPEC_DETAIL_URL_KEYS);
+
+  // 검증된 http(s) detail URL 후보 우선순위: detailRaw > originalRaw > specDetailRaw.
+  // 모두 검증 통과한 http(s) 가 아니면 null 로 두고 search-fallback 로 진행.
+  const apiDetailUrl =
+    (isHttpUrl(detailRaw) && detailRaw!.trim()) ||
+    (isHttpUrl(originalRaw) && originalRaw!.trim()) ||
+    (isHttpUrl(specDetailRaw) && specDetailRaw!.trim()) ||
+    null;
+
+  const info = resolvePreSpecDetailUrl({
+    apiDetailUrl,
+    preSpecRegNo,
+  });
+
+  // originalUrl 에는 *raw API 가 직접 준 http(s)* 를 우선 저장한다.
+  // 사용자 정책: 화면에서 공고명 클릭 시 originalUrl 이 있으면 *우선* 사용.
+  // - 검증 통과한 http(s) 가 detailRaw 든 originalRaw 든 specDetailRaw 든
+  //   가장 먼저 발견된 것을 originalUrl 로 보존한다.
+  // - 추후 사용자가 G2B 가 deep-link 를 공식 지원하기 시작하면, originalUrl 우선 사용
+  //   덕분에 코드 변경 없이 자동으로 verified-detail 로 승격된다.
+  const originalUrl =
+    isHttpUrl(detailRaw) ? detailRaw!.trim() :
+    isHttpUrl(originalRaw) ? originalRaw!.trim() :
+    isHttpUrl(specDetailRaw) ? specDetailRaw!.trim() :
+    undefined;
+
+  return {
+    detailUrl: info.detailUrl,
+    searchUrl: info.searchUrl,
+    detailUrlMethod: info.method,
+    detailUrlVerified: info.verified,
+    detailUrlReason: info.reason,
     originalUrl,
-    specDetailUrl,
-  }).url;
+  };
 }
 
 function getAnnouncementKey(item: Record<string, unknown>, fallback: string): string {
@@ -254,20 +336,32 @@ function getStatus(opinionDeadline: string | undefined, today: Date): PreSpecSta
 }
 
 /**
- * 추천 등급 결정 — 사전규격 전용 룰.
- *  - 점수 합 ≥ 6 + 진행중/마감임박 → 핵심검토
- *  - 점수 합 ≥ 3 + 진행중           → 의견제출검토
- *  - 점수 합 ≥ 1                     → 영업확인필요
- *  - 점수 0 + 매칭 키워드 0          → 제외
+ * 추천 등급 결정 — 사전규격 전용 룰 (사용자 정책 2026-06).
+ *
+ *  ★ 강한 제외 키워드 (여행/급식/CCTV/공사 등) hit + *강한 제품 매칭 없음* → 즉시 "제외".
+ *    여기에는 score 도 보지 않는다 (여행 사업이 weak 키워드 1개 매칭한다고 영업후보가 되면 안 됨).
+ *
+ *  그 외:
+ *  - score >= 6 + 진행중/마감임박 → 핵심검토
+ *  - score >= 3 + 진행중           → 의견제출검토
+ *  - score >= 1                     → 영업확인필요
+ *  - score == 0 + 매칭 키워드 0    → 제외 (영업적 의미 0)
  *  - 그 외                          → 참고
- *  - 부정 신호 누적 시 한 단계 다운그레이드.
+ *  - 부정 신호(하드웨어 납품 등) 누적 시 한 단계 다운그레이드.
  */
 function getRecommendation(
   scoreSum: number,
   hasAnyKeyword: boolean,
   status: PreSpecStatus,
   negativeWeight: number,
+  exclusionHits: number,
+  exclusionOverridden: boolean,
 ): PreSpecRecommendation {
+  // 강한 제외 키워드 hit + 강한 제품 매칭 없음 → 무조건 "제외".
+  if (exclusionHits > 0 && !exclusionOverridden) {
+    return "제외";
+  }
+
   let base: PreSpecRecommendation;
   if (scoreSum >= 6 && (status === "진행중" || status === "마감임박")) {
     base = "핵심검토";
@@ -325,7 +419,7 @@ export function normalizePreSpecItem(
   // pickSpecFileUrl 은 이미 http(s) 검증을 통과한 값만 반환하므로 추가 검증 불필요.
   const specFileUrl = att.specDocUrl ?? pickSpecFileUrl(raw);
   const fileUrl = specFileUrl;
-  const sourceUrl = buildSourceUrl(raw, preSpecRegNo);
+  const urls = buildUrls(raw, preSpecRegNo);
 
   // fileName: 첨부 목록의 첫 번째 항목의 이름을 대표 파일명으로 사용 (matching/표시 용).
   // 첨부가 비어 있어도 raw 의 직접 fileName 후보는 추출.
@@ -335,8 +429,12 @@ export function normalizePreSpecItem(
 
   const linkedBidNo = pickLinkedBidNo(raw);
 
-  // 매칭 텍스트 — title / businessName / orgName / fileName 기준 (스펙 요구).
-  // 추가로 prdctDtlList / refNo / bsnsDivNm / 첨부 전체 파일명도 포함해서 누락 줄인다.
+  // 매칭 텍스트 — 제품 매칭은 *전체 텍스트* 기준 (사업명, 첨부파일명, 품목 상세).
+  // 강한 제외 키워드 (여행/급식/CCTV 등) 는 *제목 + 사업명* 만 검사 — 본문에 우연히 들어간 단어로
+  // 잘못 제외되지 않게 한다.
+  //
+  // 사용자 정책: 수요기관/공고기관 명칭은 제품 매칭 점수에 *과도하게* 반영하지 않는다.
+  // → orgName / demandOrgName 은 매칭 body 에 포함하되 가중치는 다른 텍스트와 동일 (×1).
   const attachmentNames = attachments.map((a) => a.name).filter(Boolean).join(" ");
   const matchBody = [
     title,
@@ -352,7 +450,10 @@ export function normalizePreSpecItem(
     .filter(Boolean)
     .join("\n");
 
-  const m = matchPreSpec(title, matchBody);
+  // 제외 키워드 검사 대상 — 제목 + 사업명만 (사용자 정책).
+  const exclusionTarget = [title, businessName].filter(Boolean).join("\n");
+
+  const m = matchPreSpec(title, matchBody, exclusionTarget);
 
   const status = getStatus(opinionDeadline, now);
   const scoreSum = Object.values(m.productScores).reduce((a, b) => a + (b ?? 0), 0);
@@ -361,6 +462,8 @@ export function normalizePreSpecItem(
     m.products.length > 0 || m.matchedKeywords.length > 0,
     status,
     m.negativeWeight,
+    m.exclusionHits.length,
+    m.exclusionOverridden,
   );
 
   return {
@@ -378,7 +481,13 @@ export function normalizePreSpecItem(
     fileName,
     fileUrl,
     specFileUrl,
-    sourceUrl,
+    attachmentUrl: specFileUrl,
+    detailUrl: urls.detailUrl,
+    searchUrl: urls.searchUrl,
+    detailUrlMethod: urls.detailUrlMethod,
+    detailUrlVerified: urls.detailUrlVerified,
+    detailUrlReason: urls.detailUrlReason,
+    originalUrl: urls.originalUrl,
     raw,
     products: m.products,
     primaryProduct: m.primaryProduct,

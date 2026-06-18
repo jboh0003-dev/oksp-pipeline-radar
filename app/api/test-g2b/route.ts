@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -134,7 +135,10 @@ function missingEnvResponse(missing: string[]): NextResponse<TestG2bResponse> {
   });
 }
 
-export async function GET(): Promise<NextResponse<TestG2bResponse>> {
+export async function GET(request: NextRequest): Promise<NextResponse<TestG2bResponse>> {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return adminFailResponse(auth) as NextResponse<TestG2bResponse>;
+
   const missing = getMissingEnvVars();
   if (missing.length > 0) {
     return missingEnvResponse(missing);

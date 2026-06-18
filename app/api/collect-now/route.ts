@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runCollect, type CollectResponse } from "@/app/api/collect-g2b-keywords/route";
+import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
 import { getMissingSyncEnvVars, getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -10,19 +11,17 @@ const RESPONSE_SCHEMA_VERSION = 2;
 /**
  * 수동 수집(Manual Collect) 엔드포인트.
  *
- * - 화면의 "지금 수집" 버튼이 호출한다.
+ * - 화면의 "지금 수집" 버튼이 호출한다 (admin 사용자만 보임).
  * - 자동수집(cron) 과 동일한 runCollect 로직을 재사용한다.
- * - 인증을 요구하지 않으므로(브라우저에서 직접 호출) Vercel Cron 만큼 빈번하게 호출되지 않도록
+ * - admin 인증 필요: Authorization: Bearer <Supabase access_token>.
+ *   profile.role !== 'admin' 이면 403.
+ * - 추가로 abuse 방지를 위해
  *   1) 모듈 레벨 lock 으로 동시 실행을 1건으로 제한,
  *   2) 마지막 성공 후 60초 cool-down 을 둔다.
  * - 결과는 collection_runs 에 mode='manual' 로 기록한다.
  *
- * 보안 노트:
- *   CRON_SECRET 은 브라우저에 노출하면 안 되므로 이 엔드포인트는 secret 을 요구하지 않는다.
- *   대신 lock + cool-down 으로 abuse 를 막는다. 향후 사용자 인증을 도입하면
- *   여기서도 isAuthenticated 검사를 추가할 수 있다.
- *
  * GET /api/collect-now : POST 호출 전에 환경 점검(env / cool-down / lock 상태)을 위한 진단용.
+ *  - GET 도 admin 만 호출 가능.
  */
 
 const COOLDOWN_MS = 60 * 1000;
@@ -165,7 +164,10 @@ async function recordRun(
   return { ok: false, error: errorsLog.join(" || ") };
 }
 
-async function handleManual(_request: NextRequest) {
+async function handleManual(request: NextRequest) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return adminFailResponse(auth);
+
   if (isRunning) {
     return NextResponse.json(
       {
@@ -316,8 +318,13 @@ async function handleManual(_request: NextRequest) {
 /**
  * GET /api/collect-now : 환경 점검용. 클릭 전에 시스템 준비 상태를 보고 싶을 때 사용.
  * (실제 수집은 트리거하지 않는다.)
+ *
+ * admin 만 호출 가능.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return adminFailResponse(auth);
+
   const missingEnv = getMissingSyncEnvVars();
   const supabase = getSupabaseAdmin();
 

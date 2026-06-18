@@ -10,9 +10,12 @@ import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
  * TTL 15분 — 자동 진입 시. 수동 "지금 수집" 은 캐시 무시.
  */
 
-const ITEMS_KEY = "csg2b:preSpec:items";
-const TIMESTAMP_KEY = "csg2b:preSpec:lastFetchAt";
-const DURATION_KEY = "csg2b:preSpec:lastDurationMs";
+// v2: 2026-06 PreSpecAnnouncement 의 URL 필드 구조가 detailUrl/searchUrl/detailUrlVerified 로 변경.
+// 구 캐시(v1) 가 그대로 화면에 들어오면 detailUrlMethod 가 undefined 라 UI 가 잘못 분기되므로
+// 키를 분리해 자동 폐기시킨다.
+const ITEMS_KEY = "csg2b:preSpec:items.v2";
+const TIMESTAMP_KEY = "csg2b:preSpec:lastFetchAt.v2";
+const DURATION_KEY = "csg2b:preSpec:lastDurationMs.v2";
 
 export const PRE_SPEC_CACHE_TTL_MS = 15 * 60 * 1000;
 

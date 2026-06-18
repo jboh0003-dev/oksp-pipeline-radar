@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runCollect, type CollectResponse } from "@/app/api/collect-g2b-keywords/route";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { getServerSupabaseDebugInfo } from "@/lib/supabaseDebug";
+import {
+  DEFAULT_PRE_SPEC_CATEGORIES,
+  fetchPreSpecAnnouncements,
+  getInquiryRangeYyyymmdd,
+} from "@/lib/preSpec/api";
+import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
+import { upsertPreSpecNotices, type PreSpecUpsertSummary } from "@/lib/preSpec/persist";
+import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
+import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -74,7 +84,7 @@ function pickSlot(request: NextRequest): {
 
 type CronResult = {
   schemaVersion: number;
-  /** 자동수집 "실행" 성공 여부. 인증 통과 + runCollect 정상 종료 + errors[] 비어있음. */
+  /** 자동수집 "실행" 성공 여부. 입찰 + 사전규격 모두 errors[] 비어있음. */
   ok: boolean;
   /** runCollect 내부 판정값. (errors == 0 && targetReached) — 영업/품질 지표용. */
   collectOk: boolean;
@@ -86,12 +96,41 @@ type CronResult = {
   slot: Slot;
   /** 실행 방식. cron 라우트는 항상 "auto". */
   mode: "auto";
+  /** 이번 실행에서 수집한 대상. cron 은 항상 "all". */
+  target: "all" | "bid" | "prespec";
   startedAt: string;
   finishedAt: string;
   targetCount: number;
   lookbackDays: number;
   pageStart: number;
   pageEnd: number | null;
+  // 입찰공고 결과.
+  bid: {
+    ok: boolean;
+    fetchedCount: number;
+    matchedCount: number;
+    savedCount: number;
+    insertedCount: number;
+    updatedCount: number;
+    activeProductMatchedCount: number;
+    skippedExpiredCount: number;
+    skippedNoProductCount: number;
+    errors: string[];
+  };
+  // 사전규격공고 결과.
+  prespec: {
+    ok: boolean;
+    fetchedCount: number;
+    matchedCount: number;
+    insertedCount: number;
+    updatedCount: number;
+    urlPatched: number;
+    skipped: number;
+    serviceKeySource: string | null;
+    tableMissing: boolean;
+    errors: string[];
+  };
+  // 합계 (입찰 + 사전규격).
   fetchedCount: number;
   matchedCount: number;
   savedCount: number;
@@ -221,6 +260,133 @@ async function recordRun(
   return { ok: false, error: errorsLog.join(" || ") };
 }
 
+/**
+ * 입찰공고 수집 wrapper. 실패해도 throw 하지 않고 body=null + runtimeError 형태로 반환.
+ */
+async function runBidCollect(
+  pageStart: number,
+  pageEnd: number,
+): Promise<{ body: CollectResponse | null; runtimeError: string | null }> {
+  try {
+    const r = await runCollect({
+      targetCount: DEFAULTS.targetCount,
+      lookbackDays: DEFAULTS.lookbackDays,
+      pageStart,
+      pageEnd,
+    });
+    return { body: r.body, runtimeError: null };
+  } catch (err) {
+    return {
+      body: null,
+      runtimeError: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+type PreSpecCollectResult = {
+  /** 정규화 + dedup 끝난 항목 수. */
+  matchedCount: number;
+  /** raw items 수 (dedup 전). */
+  fetchedCount: number;
+  upsert: PreSpecUpsertSummary | null;
+  /** 단일 fatal 메시지 (활용 안 됐을 때 등). */
+  errors: string[];
+  /** durationMs. */
+  durationMs: number;
+  /** 사용된 ServiceKey 의 출처 env var 이름. 진단용. */
+  serviceKeySource: string | null;
+};
+
+/**
+ * 사전규격공고 수집 + DB upsert.
+ *
+ *  - ServiceKey 가 없으면 errors 에 기록하고 즉시 반환.
+ *  - 페이지 단위 에러는 errors 에 모두 누적.
+ *  - 정규화 실패는 errors 에 누적 후 다음 항목으로 진행.
+ *  - 마지막에 pre_spec_notices 테이블에 upsert.
+ */
+async function runPreSpecCollect(): Promise<PreSpecCollectResult> {
+  const startedAt = Date.now();
+  const result: PreSpecCollectResult = {
+    matchedCount: 0,
+    fetchedCount: 0,
+    upsert: null,
+    errors: [],
+    durationMs: 0,
+    serviceKeySource: null,
+  };
+
+  const keyResolution = resolvePreSpecServiceKey();
+  if (!keyResolution.present) {
+    result.errors.push(
+      "사전규격 ServiceKey 누락 (NARA_PRESPEC_API_KEY / G2B_PRESPEC_SERVICE_KEY / G2B_SERVICE_KEY 중 하나 필요)",
+    );
+    result.durationMs = Date.now() - startedAt;
+    return result;
+  }
+  result.serviceKeySource = keyResolution.source;
+
+  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(7);
+
+  let raw;
+  try {
+    raw = await fetchPreSpecAnnouncements(keyResolution.key, {
+      inqryBgnDt,
+      inqryEndDt,
+      categories: DEFAULT_PRE_SPEC_CATEGORIES,
+      maxPagesPerCategory: 5,
+      concurrency: 3,
+    });
+  } catch (err) {
+    result.errors.push(
+      `사전규격 fetchPreSpecAnnouncements 예외: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    result.durationMs = Date.now() - startedAt;
+    return result;
+  }
+
+  result.fetchedCount = raw.items.length;
+  for (const e of raw.errors) result.errors.push(`사전규격 수집 페이지 에러: ${e}`);
+
+  // 정규화 + dedup.
+  const items: PreSpecAnnouncement[] = [];
+  const seen = new Set<string>();
+  let i = 0;
+  for (const rawItem of raw.items) {
+    const fallback = `pre-spec-${i++}`;
+    let norm: PreSpecAnnouncement;
+    try {
+      const meta = rawItem as { __sourceApi?: string; __sourceEndpoint?: string };
+      norm = normalizePreSpecItem(rawItem, fallback, {
+        sourceApi: meta.__sourceApi,
+        sourceEndpoint: meta.__sourceEndpoint,
+      });
+    } catch (err) {
+      result.errors.push(
+        `사전규격 정규화 실패: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
+    if (!norm.announcementKey || seen.has(norm.announcementKey)) continue;
+    seen.add(norm.announcementKey);
+    items.push(norm);
+  }
+  result.matchedCount = items.length;
+
+  // DB upsert. 테이블이 없거나 RLS 차단이어도 errors 에만 누적.
+  try {
+    result.upsert = await upsertPreSpecNotices(items);
+    for (const e of result.upsert.errors) result.errors.push(`사전규격 DB 저장: ${e}`);
+  } catch (err) {
+    result.errors.push(
+      `사전규격 upsert 예외: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  result.durationMs = Date.now() - startedAt;
+  return result;
+}
+
 async function handleCron(request: NextRequest) {
   const expectedSecret = process.env.CRON_SECRET?.trim();
   if (!expectedSecret) {
@@ -238,46 +404,66 @@ async function handleCron(request: NextRequest) {
   const profile = SLOT_PROFILES[slot];
   const startedAt = new Date().toISOString();
 
-  // runCollect 가 예외를 던지더라도 cron 응답은 안정적으로 내려가도록 try/catch 로 감싼다.
-  let body: CollectResponse | null = null;
-  let runtimeError: string | null = null;
-  try {
-    const r = await runCollect({
-      targetCount: DEFAULTS.targetCount,
-      lookbackDays: DEFAULTS.lookbackDays,
-      pageStart: profile.pageStart,
-      pageEnd: profile.pageEnd,
-    });
-    body = r.body;
-  } catch (err) {
-    runtimeError = err instanceof Error ? err.message : String(err);
-  }
+  const serverDebug = getServerSupabaseDebugInfo();
+  console.log("[/api/cron/collect-g2b] start", {
+    nodeEnv: serverDebug.nodeEnv,
+    supabaseProjectRef: serverDebug.serviceUrl.projectRef,
+    supabaseMaskedUrl: serverDebug.serviceUrl.maskedUrl,
+    hasServiceRoleKey: serverDebug.hasServiceRoleKey,
+    slot,
+    slotReason,
+    scheduleNote: "KST 08:30 = UTC 23:30 (vercel.json 30 23 * * *)",
+  });
+
+  // 입찰공고와 사전규격을 병렬 실행 — 한쪽이 실패해도 다른쪽은 계속 시도.
+  const [bidResult, preSpecResult] = await Promise.all([
+    runBidCollect(profile.pageStart, profile.pageEnd),
+    runPreSpecCollect(),
+  ]);
+  const body: CollectResponse | null = bidResult.body;
+  const runtimeError: string | null = bidResult.runtimeError;
 
   const finishedAt = new Date().toISOString();
 
   const targetCount = body?.targetCount ?? DEFAULTS.targetCount;
-  // CollectResponse 에는 lookbackDays 가 들어있지 않다. 우리가 호출 시 넘긴 값을 그대로 기록.
   const lookbackDays = DEFAULTS.lookbackDays;
   const pageStart = body?.pageStart ?? profile.pageStart;
   const pageEnd = body?.pageEnd ?? profile.pageEnd;
-  const fetchedCount = body?.fetchedCount ?? 0;
-  const matchedCount = body?.matchedCount ?? 0;
-  const savedCount = body?.savedCount ?? 0;
-  const insertedCount = body?.insertedCount ?? 0;
-  const updatedCount = body?.updatedCount ?? 0;
+
+  // 입찰공고 분.
+  const bidFetchedCount = body?.fetchedCount ?? 0;
+  const bidMatchedCount = body?.matchedCount ?? 0;
+  const bidSavedCount = body?.savedCount ?? 0;
+  const bidInsertedCount = body?.insertedCount ?? 0;
+  const bidUpdatedCount = body?.updatedCount ?? 0;
   const activeProductMatchedCount = body?.activeProductMatchedCount ?? 0;
   const skippedExpiredCount = body?.skippedExpiredCount ?? 0;
   const skippedNoProductCount = body?.skippedNoProductCount ?? 0;
-  const collectErrors = [...(body?.errors ?? [])];
-  if (runtimeError) {
-    collectErrors.push(`runCollect 예외: ${runtimeError}`);
-  }
+  const bidErrors = [...(body?.errors ?? [])];
+  if (runtimeError) bidErrors.push(`runCollect 예외: ${runtimeError}`);
+  const bidOk = bidErrors.length === 0;
+
+  // 사전규격공고 분.
+  const preSpecOk = preSpecResult.errors.length === 0;
+  const preSpecInserted = preSpecResult.upsert?.inserted ?? 0;
+  const preSpecUpdated = preSpecResult.upsert?.updated ?? 0;
+  const preSpecUrlPatched = preSpecResult.upsert?.urlPatched ?? 0;
+  const preSpecSkipped = preSpecResult.upsert?.skipped ?? 0;
+  const preSpecTableMissing = preSpecResult.upsert?.tableMissing ?? false;
+
+  // 합계 (입찰 + 사전규격).
+  const fetchedCount = bidFetchedCount + preSpecResult.fetchedCount;
+  const matchedCount = bidMatchedCount + preSpecResult.matchedCount;
+  const savedCount = bidSavedCount + preSpecInserted + preSpecUpdated;
+  const insertedCount = bidInsertedCount + preSpecInserted;
+  const updatedCount = bidUpdatedCount + preSpecUpdated;
+  const collectErrors = [...bidErrors, ...preSpecResult.errors];
 
   const targetReached = activeProductMatchedCount >= targetCount;
-  const collectOk = body?.ok ?? false;
+  const collectOk = (body?.ok ?? false) && preSpecOk;
 
   // ok = "자동수집 실행 성공 여부".
-  // errors 가 비어 있으면 savedCount=0 이라도 자동수집 자체는 정상으로 본다.
+  // 입찰/사전규격 양쪽이 모두 errors[]==0 이면 ok=true.
   const ok = collectErrors.length === 0;
 
   const warnings: string[] = [];
@@ -302,12 +488,37 @@ async function handleCron(request: NextRequest) {
     message,
     slot,
     mode: "auto",
+    target: "all",
     startedAt,
     finishedAt,
     targetCount,
     lookbackDays,
     pageStart,
     pageEnd,
+    bid: {
+      ok: bidOk,
+      fetchedCount: bidFetchedCount,
+      matchedCount: bidMatchedCount,
+      savedCount: bidSavedCount,
+      insertedCount: bidInsertedCount,
+      updatedCount: bidUpdatedCount,
+      activeProductMatchedCount,
+      skippedExpiredCount,
+      skippedNoProductCount,
+      errors: bidErrors,
+    },
+    prespec: {
+      ok: preSpecOk,
+      fetchedCount: preSpecResult.fetchedCount,
+      matchedCount: preSpecResult.matchedCount,
+      insertedCount: preSpecInserted,
+      updatedCount: preSpecUpdated,
+      urlPatched: preSpecUrlPatched,
+      skipped: preSpecSkipped,
+      serviceKeySource: preSpecResult.serviceKeySource,
+      tableMissing: preSpecTableMissing,
+      errors: preSpecResult.errors,
+    },
     fetchedCount,
     matchedCount,
     savedCount,
@@ -320,37 +531,135 @@ async function handleCron(request: NextRequest) {
     warnings,
   };
 
-  // collection_runs.source 에 slot 을 인코딩해 화면 카드가 슬롯을 식별할 수 있게 한다.
-  // (예: "cron:collect-g2b:morning"). 기존 컬럼 재사용으로 스키마 변경 불필요.
-  const insertResult = await recordRun({
-    source: `cron:collect-g2b:${slot}`,
+  if (preSpecTableMissing) {
+    warnings.push(
+      "pre_spec_notices 테이블이 없습니다. supabase/pre_spec_notices.sql 을 실행해 주세요. " +
+        "(테이블이 없어도 cron 자동수집은 계속 동작하며, 사전규격 화면은 API fresh fetch 로 표시됩니다.)",
+    );
+  }
+
+  // collection_runs 에 입찰/사전규격 각각 1건씩 기록.
+  //  - source 컬럼에 target 을 인코딩 ("cron:collect-g2b:bid:daily", "cron:collect-g2b:prespec:daily").
+  //  - 화면의 "최근 수집" 카드는 source 가 "cron:collect-g2b:bid" 인 row 만 읽어 기존 동작과 호환.
+  const bidInsert = await recordRun({
+    source: `cron:collect-g2b:bid:${slot}`,
     mode: "auto",
-    started_at: result.startedAt,
-    finished_at: result.finishedAt,
-    ok: result.ok,
-    target_count: result.targetCount,
-    page_start: result.pageStart,
-    page_end: result.pageEnd,
-    fetched_count: result.fetchedCount,
-    matched_count: result.matchedCount,
-    saved_count: result.savedCount,
-    inserted_count: result.insertedCount,
-    updated_count: result.updatedCount,
-    skipped_expired_count: result.skippedExpiredCount,
-    skipped_no_product_count: result.skippedNoProductCount,
-    errors: result.errors,
-    warnings: result.warnings,
-    message: result.message,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    ok: bidOk,
+    target_count: targetCount,
+    page_start: pageStart,
+    page_end: pageEnd,
+    fetched_count: bidFetchedCount,
+    matched_count: bidMatchedCount,
+    saved_count: bidSavedCount,
+    inserted_count: bidInsertedCount,
+    updated_count: bidUpdatedCount,
+    skipped_expired_count: skippedExpiredCount,
+    skipped_no_product_count: skippedNoProductCount,
+    errors: bidErrors,
+    warnings: [`target=bid · slot=${slot} · slotSource=${slotReason}`],
+    message: bidOk ? null : "입찰공고 수집 중 일부 실패",
   });
 
-  if (!insertResult.ok) {
-    result.warnings.push(`collection_runs 기록 실패 (모든 fallback 실패): ${insertResult.error}`);
-    console.error("[/api/cron/collect-g2b] recordRun failed all attempts:", insertResult.error);
-  } else if (insertResult.phase !== "full") {
-    result.warnings.push(
-      `collection_runs ${insertResult.phase} fallback 으로 저장됨. ` +
-        `Supabase SQL Editor 에서 supabase/collection_runs.sql 을 실행해 mode/inserted_count/updated_count 컬럼을 추가해 주세요.`,
-    );
+  // 화면의 "최근 수집" 카드 호환성을 위해 기존 source key 도 함께 기록 (입찰만).
+  // 신규 화면은 :bid:slot, 구 화면은 :slot 패턴을 읽으므로 둘 다 채운다.
+  const legacyBidInsert = await recordRun({
+    source: `cron:collect-g2b:${slot}`,
+    mode: "auto",
+    started_at: startedAt,
+    finished_at: finishedAt,
+    ok: bidOk,
+    target_count: targetCount,
+    page_start: pageStart,
+    page_end: pageEnd,
+    fetched_count: bidFetchedCount,
+    matched_count: bidMatchedCount,
+    saved_count: bidSavedCount,
+    inserted_count: bidInsertedCount,
+    updated_count: bidUpdatedCount,
+    skipped_expired_count: skippedExpiredCount,
+    skipped_no_product_count: skippedNoProductCount,
+    errors: bidErrors,
+    warnings: [
+      `slot=${slot} · pages ${pageStart}-${pageEnd ?? "-"} · lookback ${lookbackDays}일 · target ${targetCount} (slotSource=${slotReason})`,
+    ],
+    message: bidOk ? null : "입찰공고 수집 중 일부 실패",
+  });
+
+  const preSpecInsert = await recordRun({
+    source: `cron:collect-g2b:prespec:${slot}`,
+    mode: "auto",
+    started_at: startedAt,
+    finished_at: finishedAt,
+    ok: preSpecOk,
+    target_count: 0,
+    page_start: 1,
+    page_end: null,
+    fetched_count: preSpecResult.fetchedCount,
+    matched_count: preSpecResult.matchedCount,
+    saved_count: preSpecInserted + preSpecUpdated,
+    inserted_count: preSpecInserted,
+    updated_count: preSpecUpdated,
+    skipped_expired_count: 0,
+    skipped_no_product_count: 0,
+    errors: preSpecResult.errors,
+    warnings: [
+      `target=prespec · serviceKeySource=${preSpecResult.serviceKeySource ?? "(none)"} · urlPatched=${preSpecUrlPatched} · skipped=${preSpecSkipped}${preSpecTableMissing ? " · tableMissing" : ""}`,
+    ],
+    message: preSpecOk
+      ? null
+      : preSpecTableMissing
+        ? "사전규격 DB 저장 실패 — pre_spec_notices 테이블 미생성"
+        : "사전규격 수집 중 일부 실패",
+  });
+
+  // 표준 source=pre_spec (SQL 검증·화면 조회용). legacy cron:collect-g2b:prespec:* 와 병행 기록.
+  const preSpecStandardInsert = await recordRun({
+    source: "pre_spec",
+    mode: "auto",
+    started_at: startedAt,
+    finished_at: finishedAt,
+    ok: preSpecOk,
+    target_count: 0,
+    page_start: 1,
+    page_end: null,
+    fetched_count: preSpecResult.fetchedCount,
+    matched_count: preSpecResult.matchedCount,
+    saved_count: preSpecInserted + preSpecUpdated,
+    inserted_count: preSpecInserted,
+    updated_count: preSpecUpdated,
+    skipped_expired_count: 0,
+    skipped_no_product_count: 0,
+    errors: preSpecResult.errors,
+    warnings: [
+      `slot=${slot} · cron=collect-g2b · serviceKeySource=${preSpecResult.serviceKeySource ?? "(none)"}`,
+    ],
+    message: preSpecOk ? null : "사전규격 자동 수집 중 일부 실패",
+  });
+
+  console.log("[/api/cron/collect-g2b] prespec done", {
+    nodeEnv: serverDebug.nodeEnv,
+    supabaseProjectRef: serverDebug.serviceUrl.projectRef,
+    ok: preSpecOk,
+    fetched: preSpecResult.fetchedCount,
+    matched: preSpecResult.matchedCount,
+    inserted: preSpecInserted,
+    updated: preSpecUpdated,
+    tableMissing: preSpecTableMissing,
+    errorCount: preSpecResult.errors.length,
+  });
+
+  for (const ins of [bidInsert, legacyBidInsert, preSpecInsert, preSpecStandardInsert]) {
+    if (!ins.ok) {
+      result.warnings.push(`collection_runs 기록 실패 (모든 fallback 실패): ${ins.error}`);
+      console.error("[/api/cron/collect-g2b] recordRun failed:", ins.error);
+    } else if (ins.phase !== "full") {
+      result.warnings.push(
+        `collection_runs ${ins.phase} fallback 으로 저장됨. ` +
+          `Supabase SQL Editor 에서 supabase/collection_runs.sql 을 실행해 mode/inserted_count/updated_count 컬럼을 추가해 주세요.`,
+      );
+    }
   }
 
   return NextResponse.json(result);

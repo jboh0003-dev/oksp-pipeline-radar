@@ -27,6 +27,9 @@ const PRE_SPEC_KEYS = [
   "csg2b:preSpec:items",
   "csg2b:preSpec:lastFetchAt",
   "csg2b:preSpec:lastDurationMs",
+  "csg2b:preSpec:items.v2",
+  "csg2b:preSpec:lastFetchAt.v2",
+  "csg2b:preSpec:lastDurationMs.v2",
   // NEW snapshot 관련 (lib/newState.ts)
   "csg2b:preSpec:lastSnapshotKeys",
   "csg2b:preSpec:firstSeenMap",

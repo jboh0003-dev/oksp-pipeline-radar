@@ -43,7 +43,7 @@ function pickNumber(value: unknown): number | null {
   return null;
 }
 
-function normalizeRow(raw: Record<string, unknown>): CollectionRunRow {
+export function normalizeCollectionRunRow(raw: Record<string, unknown>): CollectionRunRow {
   const rawMode = pickString(raw.mode);
   const mode: CollectionRunRow["mode"] =
     rawMode === "auto" || rawMode === "manual" ? rawMode : (rawMode ?? null);
@@ -105,7 +105,7 @@ export async function fetchLastCollectionRun(): Promise<LastCollectionRunResult>
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     if (rows.length === 0) return { run: null, error: null };
-    return { run: normalizeRow(rows[0]), error: null };
+    return { run: normalizeCollectionRunRow(rows[0]), error: null };
   } catch (error) {
     return { run: null, error: formatSupabaseError(error) };
   }
@@ -139,7 +139,7 @@ export async function fetchLastSuccessfulRun(): Promise<LastCollectionRunResult>
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     if (rows.length === 0) return { run: null, error: null };
-    return { run: normalizeRow(rows[0]), error: null };
+    return { run: normalizeCollectionRunRow(rows[0]), error: null };
   } catch (error) {
     return { run: null, error: formatSupabaseError(error) };
   }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
 import { extractG2bHeader } from "@/lib/g2b/api";
 import {
   G2B_ENDPOINTS,
@@ -273,6 +274,9 @@ function emptyResponse(partial: Partial<SearchG2bKeywordResponse> & Pick<SearchG
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse<SearchG2bKeywordResponse>> {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return adminFailResponse(auth) as NextResponse<SearchG2bKeywordResponse>;
+
   const keyword = request.nextUrl.searchParams.get("keyword")?.trim() ?? "";
 
   if (!keyword) {

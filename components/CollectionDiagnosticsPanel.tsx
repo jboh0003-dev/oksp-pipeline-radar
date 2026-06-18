@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { authedFetch } from "@/lib/authedFetch";
 import {
   formatRelativeKstAgo,
   isIsoStaleSinceMorningCutoff,
@@ -100,7 +101,7 @@ export default function CollectionDiagnosticsPanel({
   const refreshProbe = async () => {
     setEnvProbeLoading(true);
     try {
-      const res = await fetch("/api/collect-now", { method: "GET" });
+      const res = await authedFetch("/api/collect-now", { method: "GET" });
       if (!res.ok) {
         setEnvProbe(null);
         setEnvProbeError(`HTTP ${res.status}`);

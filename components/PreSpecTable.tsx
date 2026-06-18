@@ -1,11 +1,80 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import AttachmentButtons from "@/components/AttachmentButtons";
 import type { AnnouncementFeedback } from "@/lib/feedback";
 import { getBudgetInfo } from "@/lib/budget";
+import { isVerifiedHttpUrl } from "@/lib/preSpec/detailUrl";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
-import { buildPreSpecSearchTarget, isValidHttpUrl } from "@/lib/sourceUrl";
+
+/**
+ * 사전규격 *내부* 라우트 — /pre-spec/[id].
+ *
+ * 사용자 정책 (2026-06):
+ *  - 공고명 클릭 = *내부 상세페이지* `/pre-spec/[external_id]`. *항상*. 예외 없음.
+ *    → 외부 G2B 검색/목록 화면으로 보내지 않는다.
+ *    → 규격서 다운로드 링크로도 보내지 않는다.
+ *  - 외부 "나라장터 검색" / "나라장터 상세" 는 *별도 보조 버튼*으로만 노출.
+ *  - id = preSpecRegNo (= bfSpecRgstNo / external_id) 우선, 없으면 announcementKey 사용.
+ */
+function buildInternalDetailHref(item: PreSpecAnnouncement): string {
+  const id = (item.preSpecRegNo ?? item.announcementKey ?? "").trim();
+  if (!id) return "/pre-spec";
+  return `/pre-spec/${encodeURIComponent(id)}`;
+}
+
+/**
+ * 공고명 클릭 시 열 외부 G2B URL 결정.
+ *
+ * 우선순위:
+ *  1) item.detailUrlVerified === true 인 검증된 deep-link (item.detailUrl).
+ *  2) item.originalUrl — API 가 raw 로 준 http(s) (예: detailUrl/inqireUrl/url 등 raw 필드).
+ *  3) item.searchUrl  — 등록번호가 query 로 박힌 나라장터 사전규격 검색 URL.
+ *                       → fallback. 이 경우 사용자에게는 "나라장터 검색" 으로 라벨링.
+ *  4) null — 어느 후보도 http(s) 가 아니면 null. 화면은 클릭 비활성 텍스트로 렌더.
+ *
+ * kind:
+ *  - "verified-detail" : 1) 또는 2) 가 채워진 케이스. 라벨 "나라장터 상세보기".
+ *  - "regno-search"    : 3) 만 가능한 케이스 (G2B SPA 가 deep-link 미지원). 라벨 "나라장터 검색".
+ *  - "none"            : URL 자체가 없음. 클릭 비활성 + 안내.
+ *
+ * 주의:
+ *  - 일반 입찰공고의 buildBidSourceUrl (bidNtceNo / bidNtceOrd 사용) 패턴을 그대로 갖다 쓰지 마라 —
+ *    사전규격은 fields/path 가 다르고 G2B link 라우트도 다르기 때문에 *전용 로직* (`lib/preSpec/detailUrl.ts`)
+ *    의 산출물(`searchUrl` / `detailUrl`) 만 사용한다.
+ */
+function resolveExternalLink(item: PreSpecAnnouncement): {
+  url: string | null;
+  kind: "verified-detail" | "regno-search" | "none";
+  label: string;
+} {
+  const verified = item.detailUrlVerified && isVerifiedHttpUrl(item.detailUrl);
+  if (verified) {
+    return {
+      url: item.detailUrl as string,
+      kind: "verified-detail",
+      label: "나라장터 상세보기",
+    };
+  }
+  if (isVerifiedHttpUrl(item.originalUrl)) {
+    return {
+      url: item.originalUrl as string,
+      kind: "verified-detail",
+      label: "나라장터 상세보기",
+    };
+  }
+  if (isVerifiedHttpUrl(item.searchUrl)) {
+    return {
+      url: item.searchUrl,
+      kind: "regno-search",
+      // G2B SPA 가 deep-link 를 공식 지원하지 않아 "검색" 으로 보내는 fallback.
+      // 사용자 명시 요구: 라벨은 검증된 상세가 아닌 경우에만 "나라장터 검색".
+      label: "나라장터 검색",
+    };
+  }
+  return { url: null, kind: "none", label: "링크 없음" };
+}
 
 const RECOMMENDATION_BADGE: Record<string, string> = {
   "핵심검토":
@@ -37,6 +106,10 @@ type Props = {
   feedbackMap: Map<string, AnnouncementFeedback>;
   onToggleSave: (key: string) => void;
   onOpenFeedback: (item: PreSpecAnnouncement) => void;
+  /** admin 이면 '지금 수집' 안내, 일반 user 는 자동 수집 안내. */
+  isAdmin?: boolean;
+  /** DB 비어 있음 vs 필터로 숨김 구분. */
+  emptyReason?: "no-data" | "filtered";
 };
 
 export default function PreSpecTable({
@@ -45,30 +118,34 @@ export default function PreSpecTable({
   feedbackMap,
   onToggleSave,
   onOpenFeedback,
+  isAdmin = false,
+  emptyReason = "no-data",
 }: Props) {
-  // "검색" 버튼 클릭 시 검색어 클립보드 복사 안내용 toast.
+  // 토스트 (regno-search fallback 일 때만 클립보드 복사 안내).
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2800);
+    const t = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(t);
   }, [toast]);
 
-  // 검색 버튼: 검색어 클립보드 복사 + 사전규격공고 검색 페이지 새 탭 오픈.
-  // 복사 성공 시에만 toast 표시 (실패해도 새 탭은 열림).
-  const handleSearchClick = (target: { query: string; url: string }) => {
+  /**
+   * "검색" 보조 버튼 클릭 시 등록번호를 클립보드에 복사 (사용자 편의).
+   *  - 토스트 메시지는 사용자 친화 톤으로 단순화 ("deep-link" 같은 기술 용어 제거).
+   *  - 핸들러는 *클립보드만* 담당 — preventDefault 하지 않고 외부 새 탭은 브라우저가 처리.
+   */
+  const onClickRegnoSearch = (item: PreSpecAnnouncement) => {
+    const query = (item.preSpecRegNo ?? "").trim();
+    if (!query) return;
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       navigator.clipboard
-        .writeText(target.query)
+        .writeText(query)
         .then(() =>
-          setToast("검색어가 복사되었습니다. 나라장터 검색창에 붙여넣어 확인하세요."),
+          setToast(
+            `나라장터 검색 페이지를 새 탭으로 엽니다. 등록번호(${query})가 클립보드에 복사되었습니다.`,
+          ),
         )
-        .catch(() => {
-          // 클립보드 권한 거부/실패 — UX 보조 기능이므로 무시.
-        });
-    }
-    if (typeof window !== "undefined") {
-      window.open(target.url, "_blank", "noopener,noreferrer");
+        .catch(() => setToast(`등록번호 ${query} 로 직접 검색해 주세요.`));
     }
   };
 
@@ -79,8 +156,17 @@ export default function PreSpecTable({
           표시할 사전규격이 없습니다
         </p>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-          상단에서 &quot;지금 수집&quot;을 눌러 최신 사전규격공고를 받아오세요.
+          {emptyReason === "filtered"
+            ? "현재 필터 조건에 맞는 사전규격이 없습니다. 필터를 조정하거나 \"제외 포함\"을 켜 보세요."
+            : isAdmin
+              ? "아직 수집된 사전규격공고가 없습니다. 상단 \"지금 수집\"으로 즉시 수집하거나, 자동 수집은 매일 08:30에 실행됩니다."
+              : "아직 수집된 사전규격공고가 없습니다. 자동 수집은 매일 08:30에 실행됩니다."}
         </p>
+        {emptyReason === "no-data" && (
+          <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+            새로고침은 DB 재조회만 수행하며, 수집을 실행하지 않습니다.
+          </p>
+        )}
       </div>
     );
   }
@@ -122,6 +208,9 @@ export default function PreSpecTable({
               const status = item.status;
               const rec = item.recommendation;
               const isImminent = status === "마감임박";
+              // 외부 G2B 링크 — 공고명 클릭 + 액션 버튼이 공통으로 사용.
+              const ext = resolveExternalLink(item);
+              const internalHref = buildInternalDetailHref(item);
               return (
                 <tr
                   key={item.announcementKey}
@@ -169,7 +258,16 @@ export default function PreSpecTable({
                   <td className="whitespace-normal break-keep px-3 py-3 align-top leading-6">
                     <div className="flex items-start gap-2">
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {/*
+                          공고명 — *항상* 우리 내부 사전규격 상세 페이지 (/pre-spec/[id]) 로 이동.
+                          외부 나라장터 URL / 검색 페이지 / 규격서 다운로드 링크에는 절대 연결하지 않는다.
+                          (사용자 정책 2026-06 — 검색/목록 화면으로 잘못 안내하면 영업 신뢰 깨짐.)
+                        */}
+                        <Link
+                          href={internalHref}
+                          title="CS-G2B 내부 사전규격 상세 페이지로 이동합니다"
+                          className="block w-full text-left text-sm font-semibold text-slate-900 underline-offset-2 transition hover:text-blue-700 hover:underline focus:text-blue-700 focus:underline focus:outline-none dark:text-slate-100 dark:hover:text-blue-300 dark:focus:text-blue-300"
+                        >
                           {item.isNew && (
                             <span className="mr-1.5 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-400/20 px-2 py-0.5 align-middle text-[11px] font-extrabold text-amber-700 ring-1 ring-inset ring-amber-400/60 dark:text-amber-200 dark:ring-amber-300/60">
                               <span aria-hidden>★</span>
@@ -177,7 +275,7 @@ export default function PreSpecTable({
                             </span>
                           )}
                           {item.title}
-                        </div>
+                        </Link>
                         <div className="mt-1 flex flex-wrap items-center gap-1">
                           {item.bsnsDivLabel && (
                             <span className="whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
@@ -192,6 +290,18 @@ export default function PreSpecTable({
                           {item.linkedBidNo && (
                             <span className="whitespace-nowrap rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30">
                               입찰연결 · {item.linkedBidNo}
+                            </span>
+                          )}
+                          {/*
+                            "G2B 외부 deep-link" 보조 표시 — verified 인 경우만 노출.
+                            "검색 fallback" 같은 운영 메시지는 사용자 화면에서 제거 (관리자 안내는 PreSpecDetailUrlReason 으로 충분).
+                          */}
+                          {ext.kind === "verified-detail" && (
+                            <span
+                              title="검증된 G2B 외부 상세 페이지가 있습니다 — 옆의 '나라장터 상세' 버튼 참고"
+                              className="whitespace-nowrap rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-400/30"
+                            >
+                              나라장터 상세 가능
                             </span>
                           )}
                         </div>
@@ -239,52 +349,47 @@ export default function PreSpecTable({
                         >
                           {hasFeedback ? "피드백 ✓" : "피드백"}
                         </button>
-                        {/* 원문/검색/원문없음 3-way 분기.
-                            1) sourceUrl 이 http(s) 검증 통과 → 정확한 원문 링크
-                            2) 그렇지 않지만 등록번호/사전규격명/기관명 중 하나라도
-                               있으면 → G2B 메인으로 보내는 "검색" 버튼
-                               (검색어는 클립보드에 복사되어 G2B 검색창에 바로 붙여넣기 가능)
-                            3) 검색어조차 없으면 "원문없음" 비활성.
-                            절대 임의 상세 URL 을 만들지 않는다 (404 방지). */}
-                        {(() => {
-                          if (isValidHttpUrl(item.sourceUrl)) {
-                            return (
-                              <a
-                                href={item.sourceUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={item.sourceUrl}
-                                className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-blue-600 px-2 text-[11px] font-semibold text-white transition hover:bg-blue-700 dark:bg-blue-500"
-                              >
-                                원문 ↗
-                              </a>
-                            );
-                          }
-                          const search = buildPreSpecSearchTarget({
-                            preSpecRegNo: item.preSpecRegNo,
-                            title: item.title,
-                            orgName: item.orgName,
-                          });
-                          if (search) {
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => handleSearchClick(search)}
-                                title={`나라장터 사전규격공고 검색 - "${search.query}" (검색어가 클립보드에 복사됩니다)`}
-                                className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-sky-600 px-2 text-[11px] font-semibold text-white transition hover:bg-sky-700 dark:bg-sky-500"
-                              >
-                                검색 ↗
-                              </button>
-                            );
-                          }
-                          return (
-                            <span
-                              className="inline-flex h-7 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md bg-slate-100 px-2 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500"
-                            >
-                              원문없음
-                            </span>
-                          );
-                        })()}
+                        {/*
+                          액션 버튼 (사용자 정책 2026-06):
+                            - "상세"   : 우리 내부 사전규격 상세 (/pre-spec/[id]) — 공고명 클릭과 동일한 destination.
+                            - "G2B ↗" : 검증된 외부 deep-link 가 있을 때만 (indigo).
+                            - "검색"   : 나라장터 사전규격공고 검색 페이지 (sky) — 검증과 무관하게 항상 보조 버튼.
+                          ★ 공고명 클릭 / "상세" 는 *내부* 페이지로만 이동하며, 외부 G2B 와 명확히 분리됨.
+                        */}
+                        <Link
+                          href={internalHref}
+                          title="CS-G2B 내부 사전규격 상세 페이지로 이동"
+                          className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-blue-600 px-2 text-[11px] font-semibold text-white transition hover:bg-blue-700 dark:bg-blue-500"
+                        >
+                          상세
+                        </Link>
+                        {ext.kind === "verified-detail" && ext.url && (
+                          <a
+                            href={ext.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="검증된 G2B 외부 상세 페이지를 새 탭으로 엽니다"
+                            className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-indigo-600 px-2 text-[11px] font-semibold text-white transition hover:bg-indigo-700 dark:bg-indigo-500"
+                          >
+                            G2B ↗
+                          </a>
+                        )}
+                        {/*
+                          "나라장터 검색" 보조 버튼 — searchUrl 이 있을 때 항상 노출.
+                          public 사용자에게는 "검색 fallback" 같은 기술 용어를 절대 노출하지 않는다.
+                        */}
+                        {isVerifiedHttpUrl(item.searchUrl) && (
+                          <a
+                            href={item.searchUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => onClickRegnoSearch(item)}
+                            title="나라장터 사전규격공고 검색 페이지를 새 탭으로 엽니다 (등록번호 자동 복사)"
+                            className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-sky-600 px-2 text-[11px] font-semibold text-white transition hover:bg-sky-700 dark:bg-sky-500"
+                          >
+                            검색
+                          </a>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -343,13 +448,14 @@ export default function PreSpecTable({
                     ) : (() => {
                       // attachments 추출이 비어 있을 때의 legacy 폴백 (specDocFileUrl1~5).
                       // 캐시/데이터에 무엇이 들어 있더라도 반드시 http(s) 검증 후에만 링크 노출.
-                      const legacy = item.specFileUrl ?? item.fileUrl;
-                      if (isValidHttpUrl(legacy)) {
+                      const legacy = item.attachmentUrl ?? item.specFileUrl ?? item.fileUrl;
+                      if (isVerifiedHttpUrl(legacy)) {
                         return (
                           <a
                             href={legacy}
                             target="_blank"
                             rel="noopener noreferrer"
+                            title="규격서 첨부파일을 새 탭으로 엽니다 (공고명 클릭과는 별개)"
                             className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md bg-cyan-600 px-2 text-[11px] font-semibold text-white transition hover:bg-cyan-700 dark:bg-cyan-500"
                           >
                             규격서 ↗
@@ -370,7 +476,7 @@ export default function PreSpecTable({
         </table>
       </div>
     </div>
-    {/* 검색 버튼 클릭 시 클립보드 복사 안내 toast — 화면 우하단 고정, 자동 사라짐. */}
+    {/* 검색 fallback 시 클립보드 복사 안내 toast — 화면 우하단 고정, 자동 사라짐. */}
     {toast && (
       <div
         role="status"

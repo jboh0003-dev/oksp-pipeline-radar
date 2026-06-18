@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -823,10 +824,14 @@ async function handleSync() {
   });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return adminFailResponse(auth);
   return handleSync();
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return adminFailResponse(auth);
   return handleSync();
 }
