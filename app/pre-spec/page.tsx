@@ -31,7 +31,11 @@ import {
   recordPreSpecLoadDurationMs,
   savePreSpecCache,
 } from "@/lib/preSpec/cache";
-import { isPreSpecKeywordMatched } from "@/lib/preSpec/displayFilter";
+import {
+  isPreSpecContrabassRelated,
+  isPreSpecRecommended,
+  isPreSpecViolaRelated,
+} from "@/lib/preSpec/displayFilter";
 import { isStaleSinceMorningCutoff } from "@/lib/freshness";
 import {
   isKeyNewInScope,
@@ -46,8 +50,8 @@ import type {
 } from "@/lib/preSpec/types";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
-type ProductFilter = "ALL" | PreSpecProduct;
-type ListFilter = "recommended" | "saved" | "new" | "imminent";
+type ProductFilter = "ALL" | "CONTRABASS" | "VIOLA";
+type ListFilter = "recommended" | "all_active" | "saved" | "new" | "imminent";
 
 const SAVED_KEY = "csg2b:preSpec:savedKeys";
 
@@ -590,7 +594,7 @@ export default function PreSpecPage() {
 
   const resetFilters = useCallback(() => {
     setSearchQuery("");
-    setListFilter("recommended");
+    setListFilter("all_active");
     setProductFilter("ALL");
     setTerritoryFilter("all");
     setBudgetFilter("all");
@@ -649,12 +653,11 @@ export default function PreSpecPage() {
     [rawPreSpecItems],
   );
   const matchedPreSpecItems = useMemo(
-    () =>
-      activePreSpecItems.filter(
-        (it) =>
-          (Array.isArray(it.products) && it.products.length > 0) ||
-          (Array.isArray(it.matchedKeywords) && it.matchedKeywords.length > 0),
-      ),
+    () => activePreSpecItems.filter((it) => isPreSpecRecommended(it)),
+    [activePreSpecItems],
+  );
+  const allActiveBaselineCount = useMemo(
+    () => activePreSpecItems.filter((it) => it.recommendation !== "제외").length,
     [activePreSpecItems],
   );
   const excludedPreSpecItems = useMemo(
@@ -674,10 +677,11 @@ export default function PreSpecPage() {
     if (viewMode === "all" && canAdmin) {
       return activePreSpecItems;
     }
-    return activePreSpecItems.filter(
-      (it) => it.recommendation !== "제외" && isPreSpecKeywordMatched(it),
-    );
-  }, [viewMode, canAdmin, activePreSpecItems]);
+    if (listFilter === "all_active") {
+      return activePreSpecItems.filter((it) => it.recommendation !== "제외");
+    }
+    return activePreSpecItems.filter((it) => isPreSpecRecommended(it));
+  }, [viewMode, canAdmin, listFilter, activePreSpecItems]);
   // legacy alias — 상단 카드/제품 카운트는 "표시 가능한" 모집단 기준.
   const visibleItems = baselineItems;
 
@@ -698,7 +702,8 @@ export default function PreSpecPage() {
           .toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      if (productFilter !== "ALL" && !it.products.includes(productFilter)) return false;
+      if (productFilter === "CONTRABASS" && !isPreSpecContrabassRelated(it)) return false;
+      if (productFilter === "VIOLA" && !isPreSpecViolaRelated(it)) return false;
       if (territoryFilter !== "all") {
         const t = it.customer?.territory ?? "미매칭";
         if (territoryFilter === "__missing__") {
@@ -753,22 +758,8 @@ export default function PreSpecPage() {
    */
   const rawTotal = rawPreSpecItems.length;
   const activeTotal = activePreSpecItems.length;
-  const matchedTotal = matchedPreSpecItems.length;
+  const recommendedTotal = matchedPreSpecItems.length;
   const excludedTotal = excludedPreSpecItems.length;
-  const productMatchTotal = useMemo(
-    () =>
-      matchedPreSpecItems.reduce(
-        (sum, it) => sum + (Array.isArray(it.products) ? it.products.length : 0),
-        0,
-      ),
-    [matchedPreSpecItems],
-  );
-  const multiMatchCount = useMemo(
-    () =>
-      visibleItems.filter((it) => Array.isArray(it.products) && it.products.length >= 2)
-        .length,
-    [visibleItems],
-  );
   const imminentTotal = useMemo(
     () => visibleItems.filter((it) => it.status === "마감임박").length,
     [visibleItems],
@@ -780,17 +771,39 @@ export default function PreSpecPage() {
   );
   const feedbackTotal = feedbackList.length;
   const contrabassTotal = useMemo(
-    () => visibleItems.filter((it) => it.products.includes("CONTRABASS")).length,
+    () => visibleItems.filter((it) => isPreSpecContrabassRelated(it)).length,
     [visibleItems],
   );
   const violaTotal = useMemo(
-    () => visibleItems.filter((it) => it.products.includes("VIOLA")).length,
+    () => visibleItems.filter((it) => isPreSpecViolaRelated(it)).length,
     [visibleItems],
   );
-  const cmpTotal = useMemo(
-    () => visibleItems.filter((it) => it.products.includes("CMP")).length,
-    [visibleItems],
-  );
+
+  const appliedFilterLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (listFilter === "recommended") parts.push("추천공고");
+    else if (listFilter === "all_active") parts.push("전체 진행중");
+    else if (listFilter === "saved") parts.push("관심공고");
+    else if (listFilter === "new") parts.push("신규");
+    else if (listFilter === "imminent") parts.push("의견마감 임박");
+    if (viewMode === "all" && canAdmin) parts.push("전체 수집본");
+    if (productFilter === "CONTRABASS") parts.push("CONTRABASS");
+    else if (productFilter === "VIOLA") parts.push("VIOLA");
+    if (territoryFilter !== "all") {
+      parts.push(territoryFilter === "__missing__" ? "담당본부 미매칭" : territoryFilter);
+    }
+    if (budgetFilter !== "all") parts.push(`예산:${budgetFilter}`);
+    if (debouncedSearch.trim()) parts.push(`검색:"${debouncedSearch.trim()}"`);
+    return parts.length > 0 ? parts.join(" + ") : "없음";
+  }, [
+    listFilter,
+    viewMode,
+    canAdmin,
+    productFilter,
+    territoryFilter,
+    budgetFilter,
+    debouncedSearch,
+  ]);
 
   // 페이지네이션 — slice 는 표출 단계에서만 사용한다 (표출 외 통계는 filteredPreSpecItems 기준).
   const totalFiltered = filteredPreSpecItems.length;
@@ -982,74 +995,38 @@ export default function PreSpecPage() {
           <SummaryCard label="피드백" value={feedbackTotal} note="등록된 의견" tone="violet" />
         </section>
 
-        {/* 제품별 카드 */}
-        <section className="mb-1 grid grid-cols-3 gap-2.5">
-          <SummaryCard label="CONTRABASS" value={contrabassTotal} note="관련 매칭 기준 · 중복 포함" tone="indigo" />
-          <SummaryCard label="VIOLA" value={violaTotal} note="관련 매칭 기준 · 중복 포함" tone="cyan" />
-          <SummaryCard label="CMP" value={cmpTotal} note="관련 매칭 기준 · 중복 포함" tone="emerald" />
+        {/* 제품별 카드 — CONTRABASS / VIOLA 만 */}
+        <section className="mb-4 grid grid-cols-2 gap-2.5">
+          <SummaryCard label="CONTRABASS" value={contrabassTotal} note="인프라·클라우드·가상화" tone="indigo" />
+          <SummaryCard label="VIOLA" value={violaTotal} note="플랫폼·쿠버네티스·컨테이너" tone="cyan" />
         </section>
-        <p className="mb-4 mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-          제품별 수는 복수 제품 매칭 시 중복 집계됩니다.
-        </p>
 
-        {/*
-          수집 정보 띠 — "조회 / 매칭 / 표시 / 제외" 4단 분리 표기.
-            - 조회      : 이번 수집 raw 전체 (마감 포함)
-            - 매칭      : 키워드/제품 매칭 1개 이상 (영업적으로 의미 있는 후보)
-            - 표시      : 현재 필터 적용 후 보이는 건수 (baseline 모집단 기준)
-            - 제외      : recommendation === "제외" 인 active 공고 수 (기본 숨김)
-            - 진행중/복수매칭/제품매칭 은 보조지표.
-        */}
-        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
-            <span title="이번 수집에서 받은 raw 전체 (마감 포함)">
+        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:text-sm">
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600 dark:text-slate-300">
+            <span>
               <span className="text-slate-500 dark:text-slate-400">조회 </span>
-              <span className="font-semibold tabular-nums">
-                {rawTotal.toLocaleString("ko-KR")}
-              </span>
+              <span className="font-semibold tabular-nums">{rawTotal.toLocaleString("ko-KR")}</span>
             </span>
-            <span title="키워드/제품 매칭이 1건 이상 — 영업적으로 의미 있는 후보 (마감 제외)">
-              <span className="text-slate-500 dark:text-slate-400">매칭 </span>
-              <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
-                {matchedTotal.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            <span title="현재 필터 + 페이지네이션 기준 (baseline 모집단)">
-              <span className="text-slate-500 dark:text-slate-400">표시 </span>
-              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-                {totalFiltered === 0
-                  ? "0"
-                  : pageSize === 0
-                    ? `1-${totalFiltered.toLocaleString("ko-KR")}`
-                    : `${(pageStart + 1).toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}`}
-              </span>
-              <span className="text-slate-500 dark:text-slate-400">
-                {" "}
-                / {totalFiltered.toLocaleString("ko-KR")}건
-              </span>
-            </span>
-            <span title="recommendation === &quot;제외&quot; 인 active 공고 수 (기본 숨김 대상)">
-              <span className="text-slate-500 dark:text-slate-400">제외 </span>
-              <span className="font-semibold tabular-nums text-slate-500 dark:text-slate-400">
-                {excludedTotal.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            <span title="마감 제외 unique 공고 수">
+            <span>
               <span className="text-slate-500 dark:text-slate-400">진행중 </span>
-              <span className="font-semibold tabular-nums">
-                {activeTotal.toLocaleString("ko-KR")}
+              <span className="font-semibold tabular-nums">{activeTotal.toLocaleString("ko-KR")}</span>
+            </span>
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">추천 </span>
+              <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+                {recommendedTotal.toLocaleString("ko-KR")}
               </span>
             </span>
-            <span title="products 배열 기준 매칭 관계 수 — 복수 제품 매칭 시 중복 포함">
-              <span className="text-slate-500 dark:text-slate-400">제품매칭 </span>
-              <span className="font-semibold tabular-nums">
-                {productMatchTotal.toLocaleString("ko-KR")}
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">현재 표시 </span>
+              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                {totalFiltered.toLocaleString("ko-KR")}
               </span>
             </span>
-            <span title="products 가 2개 이상인 공고 수">
-              <span className="text-slate-500 dark:text-slate-400">복수매칭 </span>
-              <span className="font-semibold tabular-nums">
-                {multiMatchCount.toLocaleString("ko-KR")}건
+            <span>
+              <span className="text-slate-500 dark:text-slate-400">제외 </span>
+              <span className="font-semibold tabular-nums text-slate-500">
+                {excludedTotal.toLocaleString("ko-KR")}
               </span>
             </span>
             {fromCache && (
@@ -1057,22 +1034,20 @@ export default function PreSpecPage() {
                 cache
               </span>
             )}
+          </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            적용 필터: <span className="font-medium text-slate-700 dark:text-slate-200">{appliedFilterLabel}</span>
             {lastFetchAt && (
-              <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              <span className="ml-2 text-slate-400 dark:text-slate-500">
                 · 업데이트 주기 매일 08:30 · 마지막 수집{" "}
                 {new Date(lastFetchAt).toLocaleString("ko-KR")}
                 {lastDurationMs && ` (${Math.round(lastDurationMs / 1000)}s)`}
               </span>
             )}
-            {/*
-              "오늘 08:30 이후 수집되었는지" 신선도 hint.
-              - 오늘 08:30 KST 이전 데이터면 "업데이트 필요" 라벨로 사용자가 인지하도록 한다.
-              - lastFetchAt 이 없으면 표시하지 않는다 (수집 자체가 처음인 케이스).
-            */}
             {lastFetchAt && canAdmin && isStaleSinceMorningCutoff(lastFetchAt) && (
               <span
                 title="오늘 08:30 KST 이전에 받은 데이터입니다 — 지금 수집을 눌러 새로 받아오세요"
-                className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+                className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
               >
                 업데이트 필요
               </span>
@@ -1156,9 +1131,15 @@ export default function PreSpecPage() {
             </span>
             <FilterPill
               label="추천공고"
-              count={matchedTotal}
+              count={recommendedTotal}
               active={listFilter === "recommended"}
               onClick={() => setListFilter("recommended")}
+            />
+            <FilterPill
+              label="전체 진행중"
+              count={allActiveBaselineCount}
+              active={listFilter === "all_active"}
+              onClick={() => setListFilter("all_active")}
             />
             <FilterPill
               label="관심공고"
@@ -1213,12 +1194,6 @@ export default function PreSpecPage() {
               count={violaTotal}
               active={productFilter === "VIOLA"}
               onClick={() => selectProductFilter("VIOLA")}
-            />
-            <FilterPill
-              label="CMP"
-              count={cmpTotal}
-              active={productFilter === "CMP"}
-              onClick={() => selectProductFilter("CMP")}
             />
           </div>
 

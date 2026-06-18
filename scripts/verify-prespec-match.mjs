@@ -49,10 +49,10 @@ console.log("=== 사전규격 matchPreSpec 회귀 ===");
   check("[2] 정보시스템 인프라 → CONTRABASS 매칭 (사용자 명시)", true, r.products.includes("CONTRABASS"));
 }
 
-// 3. 일반 "유지보수 인프라" → "인프라" 단독으론 더 이상 매칭 안 됨.
+// 3. 완화 정책 — "인프라" 단독도 CONTRABASS 후보.
 {
   const r = matchPreSpec("XX청 인프라 유지보수 사업", "");
-  check("[3] '인프라 유지보수' 단독 → 제품 매칭 없음", [], r.products);
+  check("[3] '인프라' 포함 → CONTRABASS 매칭", true, r.products.includes("CONTRABASS"));
 }
 
 // 4. 클라우드 마이그레이션 → CONTRABASS 매칭.
@@ -62,15 +62,15 @@ console.log("=== 사전규격 matchPreSpec 회귀 ===");
   check("[4] exclusionHits = 0", 0, r.exclusionHits.length);
 }
 
-// 5. 제외 + 제품 동시 → exclusionOverridden=true, 제품 채택.
+// 5. 명백한 제외(사무용품) + 클라우드 동시 → override 로 유지.
 {
   const r = matchPreSpec(
-    "XX청 노트북 구매 및 클라우드 마이그레이션 통합 사업",
+    "XX청 사무용품 구매 및 클라우드 마이그레이션 통합 사업",
     "VMware 전환 포함",
   );
-  check("[5] 노트북 구매+클라우드 → exclusionHits ≥ 1", true, r.exclusionHits.length >= 1);
-  check("[5] 노트북 구매+클라우드 → exclusionOverridden=true", true, r.exclusionOverridden);
-  check("[5] 노트북 구매+클라우드 → CONTRABASS 채택", true, r.products.includes("CONTRABASS"));
+  check("[5] 사무용품+클라우드 → exclusionHits ≥ 1", true, r.exclusionHits.length >= 1);
+  check("[5] 사무용품+클라우드 → exclusionOverridden=true", true, r.exclusionOverridden);
+  check("[5] 사무용품+클라우드 → CONTRABASS 채택", true, r.products.includes("CONTRABASS"));
 }
 
 // 6. PaaS → VIOLA 매칭.
@@ -79,17 +79,17 @@ console.log("=== 사전규격 matchPreSpec 회귀 ===");
   check("[6] PaaS → VIOLA", true, r.products.includes("VIOLA"));
 }
 
-// 7. CMP → CMP 매칭.
+// 7. 공통 키워드(AI) → matchedKeywords 에 포함.
 {
-  const r = matchPreSpec("멀티클라우드 통합 관리 (CMP) 도입", "");
-  check("[7] CMP+멀티클라우드 → CMP", true, r.products.includes("CMP"));
+  const r = matchPreSpec("AI 기반 업무시스템 고도화", "");
+  check("[7] AI+업무시스템 → matchedKeywords ≥ 1", true, r.matchedKeywords.length >= 1);
 }
 
-// 8. CCTV 단순 구매 → 제외.
+// 8. 청소 용역 → 제외 (명백한 무관).
 {
-  const r = matchPreSpec("학교 CCTV 추가 설치 및 유지보수", "");
-  check("[8] CCTV → exclusionHits ≥ 1", true, r.exclusionHits.length >= 1);
-  check("[8] CCTV → 제품 매칭 없음 (강제 override 안 됨)", [], r.products);
+  const r = matchPreSpec("학교 청소 용역", "");
+  check("[8] 청소 → exclusionHits ≥ 1", true, r.exclusionHits.length >= 1);
+  check("[8] 청소 → 제품 매칭 없음", [], r.products);
 }
 
 // 9. normalize 확인 — 수학여행 사업의 recommendation 이 "제외" 인지.

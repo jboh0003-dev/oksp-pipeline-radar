@@ -161,10 +161,9 @@ export default function PreSpecTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {items.map((item) => {
-                const isSaved = savedKeys.has(item.announcementKey);
-                const hasFeedback = feedbackMap.has(item.announcementKey);
-                const budget = getBudgetInfo(String(item.budget || ""));
+            {items.map((item) => {
+              const isSaved = savedKeys.has(item.announcementKey);
+              const budget = getBudgetInfo(String(item.budget || ""));
                 const status = item.status;
                 const rec = item.recommendation;
                 const isImminent = status === "마감임박";
@@ -254,14 +253,6 @@ export default function PreSpecTable({
                             className={`${ACTION_BTN} bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500`}
                           >
                             검색
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onOpenFeedback(item)}
-                            title={hasFeedback ? "피드백 보기/수정" : "피드백 작성"}
-                            className="text-[11px] font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-300"
-                          >
-                            {hasFeedback ? "피드백 ✓" : "피드백"}
                           </button>
                         </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1">

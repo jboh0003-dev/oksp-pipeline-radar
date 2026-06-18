@@ -345,41 +345,32 @@ function getStatus(opinionDeadline: string | undefined, today: Date): PreSpecSta
  *  - score >= 6 + 진행중/마감임박 → 핵심검토
  *  - score >= 3 + 진행중           → 의견제출검토
  *  - score >= 1                     → 영업확인필요
- *  - score == 0 + 매칭 키워드 0    → 제외 (영업적 의미 0)
+ *  - score == 0 + 매칭 키워드 0    → 참고 (사전규격은 애매하면 제외하지 않음)
  *  - 그 외                          → 참고
- *  - 부정 신호(하드웨어 납품 등) 누적 시 한 단계 다운그레이드.
+ *  - 사전규격에서는 hardware negative 가중치 미적용.
  */
 function getRecommendation(
   scoreSum: number,
   hasAnyKeyword: boolean,
   status: PreSpecStatus,
-  negativeWeight: number,
+  _negativeWeight: number,
   exclusionHits: number,
   exclusionOverridden: boolean,
 ): PreSpecRecommendation {
-  // 강한 제외 키워드 hit + 강한 제품 매칭 없음 → 무조건 "제외".
   if (exclusionHits > 0 && !exclusionOverridden) {
     return "제외";
   }
 
-  let base: PreSpecRecommendation;
   if (scoreSum >= 6 && (status === "진행중" || status === "마감임박")) {
-    base = "핵심검토";
-  } else if (scoreSum >= 3 && status === "진행중") {
-    base = "의견제출검토";
-  } else if (scoreSum >= 1) {
-    base = "영업확인필요";
-  } else if (!hasAnyKeyword) {
-    base = "제외";
-  } else {
-    base = "참고";
+    return "핵심검토";
   }
-  if (negativeWeight >= 2) {
-    if (base === "핵심검토") return "영업확인필요";
-    if (base === "의견제출검토") return "참고";
-    if (base === "영업확인필요") return "참고";
+  if (scoreSum >= 3 && status === "진행중") {
+    return "의견제출검토";
   }
-  return base;
+  if (scoreSum >= 1 || hasAnyKeyword) {
+    return "영업확인필요";
+  }
+  return "참고";
 }
 
 export type NormalizeOptions = {
