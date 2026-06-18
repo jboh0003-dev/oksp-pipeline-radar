@@ -75,12 +75,38 @@ export function isVerifiedHttpUrl(value: unknown): value is string {
  */
 const VERIFIED_DETAIL_URL_BUILDERS: ReadonlyArray<(regNo: string) => string | null> = [];
 
-/** stable link URL 위에 등록번호 query 를 안전하게 추가한다. 단, 이 URL 은 *검색* 용. */
-function buildSearchUrl(regNo: string | null): string {
-  if (!regNo) return G2B_PRE_SPEC_SEARCH_URL;
-  const sep = G2B_PRE_SPEC_SEARCH_URL.includes("?") ? "&" : "?";
-  const enc = encodeURIComponent(regNo);
-  return `${G2B_PRE_SPEC_SEARCH_URL}${sep}bfSpecRegNo=${enc}&srchPreStdRgstNo=${enc}`;
+/** stable link URL 위에 등록번호·사전규격명 query 를 안전하게 추가한다. 검색 전용. */
+function buildSearchUrl(regNo: string | null, title?: string | null): string {
+  try {
+    const url = new URL(G2B_PRE_SPEC_SEARCH_URL);
+    if (regNo) {
+      url.searchParams.set("bfSpecRegNo", regNo);
+      url.searchParams.set("srchPreStdRgstNo", regNo);
+    }
+    const q = (title ?? "").trim();
+    if (q) {
+      // G2B SPA 가 어떤 파라미터를 읽는지 환경마다 다를 수 있어 흔한 후보를 함께 넣는다.
+      url.searchParams.set("srchVal", q);
+      url.searchParams.set("searchKeyword", q);
+      url.searchParams.set("prdctClsfcNoNm", q);
+    }
+    return url.toString();
+  } catch {
+    if (!regNo) return G2B_PRE_SPEC_SEARCH_URL;
+    const sep = G2B_PRE_SPEC_SEARCH_URL.includes("?") ? "&" : "?";
+    const enc = encodeURIComponent(regNo);
+    return `${G2B_PRE_SPEC_SEARCH_URL}${sep}bfSpecRegNo=${enc}&srchPreStdRgstNo=${enc}`;
+  }
+}
+
+/** 나라장터 사전규격 검색 URL — 등록번호·사전규격명(선택) 포함. */
+export function buildPreSpecG2bSearchUrl(input?: {
+  preSpecRegNo?: string | null;
+  title?: string | null;
+}): string {
+  const regNo = (input?.preSpecRegNo ?? "").trim() || null;
+  const title = (input?.title ?? "").trim() || null;
+  return buildSearchUrl(regNo, title);
 }
 
 export type ResolvePreSpecDetailUrlInput = {
@@ -110,7 +136,7 @@ export function resolvePreSpecDetailUrl(
   const apiUrl = (input.apiDetailUrl ?? "").trim();
   const regNoRaw = (input.preSpecRegNo ?? "").trim();
   const regNo = regNoRaw.length > 0 ? regNoRaw : null;
-  const searchUrl = buildSearchUrl(regNo);
+  const searchUrl = buildSearchUrl(regNo, null);
 
   if (isVerifiedHttpUrl(apiUrl)) {
     return {

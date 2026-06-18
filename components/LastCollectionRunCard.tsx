@@ -15,6 +15,8 @@ type Props = {
   lastSuccess?: CollectionRunRow | null;
   /** 카드 제목. 기본 "최근 수집". */
   title?: string;
+  /** false 이면 '지금 수집' 안내 문구를 숨긴다 (일반 사용자 화면). */
+  showManualCollectHint?: boolean;
 };
 
 const KST_FORMATTER = new Intl.DateTimeFormat("ko-KR", {
@@ -93,6 +95,7 @@ export default function LastCollectionRunCard({
   isLoading,
   lastSuccess,
   title = DEFAULT_CARD_TITLE,
+  showManualCollectHint = true,
 }: Props) {
   if (isLoading) {
     return (
@@ -197,8 +200,12 @@ export default function LastCollectionRunCard({
           <span
             title={
               noSuccessEver
-                ? "성공한 수집 이력이 없습니다. 우측 '지금 수집' 버튼을 눌러 직접 수집해 보세요."
-                : "마지막 성공 수집이 오늘 08:30 KST 이전입니다. 자동 수집이 동작하지 않았을 수 있어요."
+                ? showManualCollectHint
+                  ? "성공한 수집 이력이 없습니다. 우측 '지금 수집' 버튼을 눌러 직접 수집해 보세요."
+                  : "성공한 자동 수집 이력이 없습니다. 매일 08:30에 자동 수집됩니다."
+                : showManualCollectHint
+                  ? "마지막 성공 수집이 오늘 08:30 KST 이전입니다. 자동 수집이 동작하지 않았을 수 있어요."
+                  : "마지막 자동 수집이 오늘 08:30 KST 이전입니다. 잠시 후 새로고침해 주세요."
             }
             className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
           >

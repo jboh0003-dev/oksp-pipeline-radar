@@ -444,6 +444,7 @@ export function normalizePreSpecItem(
     fileName,
     attachmentNames,
     pickFirst(raw, ["prdctDtlList"]),
+    pickFirst(raw, ["prcrmntObjctNm", "prdctDtlDscr", "rmrk", "etc", "specCn", "specContent"]),
     pickFirst(raw, ["refNo"]),
     pickFirst(raw, ["bsnsDivNm"]),
   ]

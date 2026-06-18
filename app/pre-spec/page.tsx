@@ -31,6 +31,7 @@ import {
   recordPreSpecLoadDurationMs,
   savePreSpecCache,
 } from "@/lib/preSpec/cache";
+import { isPreSpecKeywordMatched } from "@/lib/preSpec/displayFilter";
 import { isStaleSinceMorningCutoff } from "@/lib/freshness";
 import {
   isKeyNewInScope,
@@ -247,24 +248,12 @@ export default function PreSpecPage() {
   const [showFeedbackOnly, setShowFeedbackOnly] = useState(false);
   const [budgetFilter, setBudgetFilter] = useState<BudgetFilterValue>("all");
   /**
-   * 표시 모드 — 사용자 정책 (2026-06).
-   *
-   *   'recommended' (기본):
-   *     - status in (진행중, 마감임박)
-   *     - recommendation !== "제외"
-   *     - AND (products.length > 0 OR matchedKeywords.length > 0)
-   *     → 영업이 실제로 검토할 후보만 좁게 노출.
-   *
-   *   'with-excluded' ("제외 포함"):
-   *     - 위와 동일하되 recommendation === "제외" 까지 포함.
-   *     → 키워드 매칭이 약해 자동 제외된 항목도 한 번 훑어보고 싶을 때.
-   *
-   *   'all' ("전체 보기" — admin 만):
-   *     - active(마감 안 된) 모집단 전체. 매칭 0건도 포함.
-   *     → 운영/디버그용 전체 모집단 확인.
+   * 표시 모드
+   *   matched (기본): 키워드/제품 매칭 + recommendation !== "제외"
+   *   all (admin): 수집된 active 전체
    */
-  type ViewMode = "recommended" | "with-excluded" | "all";
-  const [viewMode, setViewMode] = useState<ViewMode>("recommended");
+  type ViewMode = "matched" | "all";
+  const [viewMode, setViewMode] = useState<ViewMode>("matched");
 
   const [savedKeys, setSavedKeys] = useState<string[]>([]);
   const savedSet = useMemo(() => new Set(savedKeys), [savedKeys]);
@@ -278,6 +267,25 @@ export default function PreSpecPage() {
 
   const fetchInFlightRef = useRef(false);
   const auth = useAuth();
+
+  /** profiles.role 이 확정된 admin 만 수집·관리 UI 노출. */
+  const canAdmin = useMemo(
+    () =>
+      auth.status === "authed" &&
+      auth.profileStatus === "ready" &&
+      auth.role === "admin",
+    [auth.status, auth.profileStatus, auth.role],
+  );
+
+  useEffect(() => {
+    if (!canAdmin) {
+      setCollectionErrors([]);
+      setApiErrors([]);
+      setCollectMessage(null);
+      setCollectStatus("idle");
+      if (viewMode === "all") setViewMode("matched");
+    }
+  }, [canAdmin, viewMode]);
 
   /**
    * DB 에서 사전규격 목록 조회 — 입찰공고 fetchNotices 와 동일 패턴.
@@ -321,7 +329,7 @@ export default function PreSpecPage() {
 
       if (result.rowCount === 0 && !result.error) {
         setInfoMessage(
-          auth.isAdmin
+          canAdmin
             ? "아직 수집된 사전규격공고가 없습니다. '지금 수집'으로 즉시 수집하거나, 자동 수집은 매일 08:30에 실행됩니다."
             : "아직 수집된 사전규격공고가 없습니다. 자동 수집은 매일 08:30에 실행됩니다.",
         );
@@ -356,7 +364,7 @@ export default function PreSpecPage() {
       fetchInFlightRef.current = false;
     }
   }, [
-    auth.isAdmin,
+    canAdmin,
     auth.role,
     auth.session?.user?.email,
     viewMode,
@@ -373,6 +381,19 @@ export default function PreSpecPage() {
     errorMessage: string | null;
     successMessage: string | null;
   }> => {
+    if (
+      auth.status !== "authed" ||
+      auth.profileStatus !== "ready" ||
+      auth.role !== "admin"
+    ) {
+      return {
+        ok: false,
+        itemsCount: 0,
+        warningsCount: 0,
+        errorMessage: null,
+        successMessage: null,
+      };
+    }
     try {
       const res = await authedFetch("/api/pre-spec/collect?days=7", { method: "GET" });
       const json = (await res.json()) as CollectResp;
@@ -436,7 +457,7 @@ export default function PreSpecPage() {
         successMessage: null,
       };
     }
-  }, []);
+  }, [auth.profileStatus, auth.role, auth.status]);
 
   // 첫 진입: 캐시 즉시 페인트 → 백그라운드 DB 조회 (G2B 수집 아님)
   useEffect(() => {
@@ -516,7 +537,7 @@ export default function PreSpecPage() {
    * "지금 수집" — admin 전용. G2B 수집 후 DB 재조회.
    */
   const handleManualCollect = async () => {
-    if (collectStatus === "running") return;
+    if (!canAdmin || collectStatus === "running") return;
     setCollectStatus("running");
     setCollectMessage("사전규격공고 수집 중... (수십 초 걸릴 수 있어요)");
     const result = await collectPreSpec();
@@ -638,17 +659,13 @@ export default function PreSpecPage() {
    *                         → 운영/디버그용 전체 확인.
    */
   const baselineItems = useMemo(() => {
-    switch (viewMode) {
-      case "all":
-      case "with-excluded":
-        // active 모집단 전체 (마감 제외). status null/확인필요 포함.
-        return activePreSpecItems;
-      case "recommended":
-      default:
-        // 기본: recommendation !== "제외" 인 active 항목만 (제외 키워드/점수 미달 숨김).
-        return activePreSpecItems.filter((it) => it.recommendation !== "제외");
+    if (viewMode === "all" && canAdmin) {
+      return activePreSpecItems;
     }
-  }, [viewMode, activePreSpecItems]);
+    return activePreSpecItems.filter(
+      (it) => it.recommendation !== "제외" && isPreSpecKeywordMatched(it),
+    );
+  }, [viewMode, canAdmin, activePreSpecItems]);
   // legacy alias — 상단 카드/제품 카운트는 "표시 가능한" 모집단 기준.
   const visibleItems = baselineItems;
 
@@ -841,14 +858,29 @@ export default function PreSpecPage() {
           </div>
         </header>
 
+        <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
+          {canAdmin ? (
+            <ul className="list-inside list-disc space-y-0.5">
+              <li>지금 수집은 즉시 나라장터 데이터를 가져옵니다.</li>
+              <li>자동 수집은 매일 08:30에 실행됩니다.</li>
+            </ul>
+          ) : (
+            <ul className="list-inside list-disc space-y-0.5">
+              <li>자동 수집은 매일 08:30에 실행됩니다.</li>
+              <li>새로고침은 저장된 공고를 다시 불러옵니다.</li>
+              <li>수집은 관리자와 서버 자동수집만 수행합니다.</li>
+            </ul>
+          )}
+        </div>
+
         {errorMessage && (
           <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200">
             <p className="font-semibold">
-              {auth.isAdmin
+              {canAdmin
                 ? "사전규격 데이터 조회에 실패했습니다."
                 : "사전규격 목록을 불러오지 못했습니다. 잠시 후 새로고침해 주세요."}
             </p>
-            {auth.isAdmin && (
+            {canAdmin && (
               <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
                 {errorMessage}
               </p>
@@ -860,7 +892,7 @@ export default function PreSpecPage() {
           구조화된 수집 오류 패널 — admin 만 볼 수 있다.
           일반 사용자에게는 운영성 메시지를 노출하지 않는다.
         */}
-        {auth.isAdmin && (
+        {canAdmin && (
           <CollectionErrorPanel errors={collectionErrors} title="사전규격 수집 오류" />
         )}
 
@@ -876,16 +908,17 @@ export default function PreSpecPage() {
           error={lastPreSpecRunError}
           isLoading={lastPreSpecRunLoading}
           lastSuccess={lastPreSpecSuccess}
+          showManualCollectHint={canAdmin}
         />
 
-        {auth.isAdmin && (
+        {canAdmin && (
           <p className="mb-3 font-mono text-[10px] text-slate-400 dark:text-slate-500">
             env={clientDebug.nodeEnv} · supabase={clientDebug.maskedUrl ?? "(unset)"} · dbRows=
             {dbRowCount ?? "-"} · role={auth.role ?? "-"}
           </p>
         )}
 
-        {auth.isAdmin && (apiErrors.length > 0 || debugInfo) && !errorMessage && (
+        {canAdmin && (apiErrors.length > 0 || debugInfo) && !errorMessage && (
           <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400">
             <button
               type="button"
@@ -1029,7 +1062,7 @@ export default function PreSpecPage() {
               - 오늘 08:30 KST 이전 데이터면 "업데이트 필요" 라벨로 사용자가 인지하도록 한다.
               - lastFetchAt 이 없으면 표시하지 않는다 (수집 자체가 처음인 케이스).
             */}
-            {lastFetchAt && isStaleSinceMorningCutoff(lastFetchAt) && (
+            {lastFetchAt && canAdmin && isStaleSinceMorningCutoff(lastFetchAt) && (
               <span
                 title="오늘 08:30 KST 이전에 받은 데이터입니다 — 지금 수집을 눌러 새로 받아오세요"
                 className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
@@ -1188,45 +1221,16 @@ export default function PreSpecPage() {
                 💬 피드백 {feedbackTotal}
               </button>
 
-              {/*
-                표시 모드 토글 (사용자 정책 2026-06):
-                  - 기본 'recommended' = 추천/제품매칭 (영업 후보만 좁게)
-                  - 'with-excluded'    = 제외 포함 (매칭이 약한 자동 제외 항목까지)
-                  - 'all' (admin)      = 전체 보기 (active 모집단 전체)
-                일반 사용자는 'recommended' / 'with-excluded' 두 가지만, admin 만 'all' 추가.
-              */}
-              <button
-                type="button"
-                onClick={() =>
-                  setViewMode((m) =>
-                    m === "recommended" ? "with-excluded" : "recommended",
-                  )
-                }
-                title={
-                  viewMode === "recommended"
-                    ? "제외 분류 항목을 숨깁니다 — 클릭하면 제외 항목까지 포함합니다."
-                    : "제외 포함 — 클릭하면 제외 항목을 다시 숨깁니다."
-                }
-                className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
-                  viewMode === "recommended"
-                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
-                    : "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
-                }`}
-              >
-                {viewMode === "recommended" ? "제외 숨김" : "제외 포함"}
-                {excludedTotal > 0 ? ` · 제외 ${excludedTotal.toLocaleString("ko-KR")}` : ""}
-              </button>
-
-              {auth.isAdmin && (
+              {canAdmin && (
                 <button
                   type="button"
                   onClick={() =>
-                    setViewMode((m) => (m === "all" ? "recommended" : "all"))
+                    setViewMode((m) => (m === "all" ? "matched" : "all"))
                   }
                   title={
                     viewMode === "all"
-                      ? "active 모집단 전체 표시 중. 클릭하면 추천/제품매칭만 보기로 돌아갑니다."
-                      : "active 모집단 전체 표시 (운영/디버그용)."
+                      ? "수집된 전체 사전규격을 표시 중입니다. 클릭하면 키워드 매칭 항목만 보기로 돌아갑니다."
+                      : "수집된 사전규격 전체를 표시합니다 (키워드 미매칭 포함)."
                   }
                   className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
                     viewMode === "all"
@@ -1234,12 +1238,12 @@ export default function PreSpecPage() {
                       : "bg-slate-50 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-400 dark:ring-white/10"
                   }`}
                 >
-                  {viewMode === "all" ? "전체 보기 (켜짐)" : "전체 보기"}
+                  {viewMode === "all" ? "전체 수집본 (켜짐)" : "전체 수집본 보기"}
                 </button>
               )}
 
-              {/* "지금 수집" / "캐시 초기화" 는 admin 만 노출. */}
-              {auth.isAdmin && (
+              {/* "지금 수집" / "캐시 초기화" — profiles.role=admin 확정 후에만 노출 */}
+              {canAdmin && (
                 <>
                   <button
                     type="button"
@@ -1285,7 +1289,7 @@ export default function PreSpecPage() {
               </button>
             </div>
           </div>
-          {auth.isAdmin && collectMessage && (
+          {canAdmin && collectMessage && (
             <p
               className={`mt-2 text-[11px] ${
                 collectStatus === "error"
@@ -1311,8 +1315,8 @@ export default function PreSpecPage() {
             feedbackMap={feedbackMap}
             onToggleSave={handleToggleSave}
             onOpenFeedback={(it) => setFeedbackTarget(it)}
-            isAdmin={auth.isAdmin}
             emptyReason={paged.length === 0 ? tableEmptyReason : "no-data"}
+            isAdmin={canAdmin}
           />
         )}
 
