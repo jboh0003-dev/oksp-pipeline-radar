@@ -47,6 +47,7 @@ import type {
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 type ProductFilter = "ALL" | PreSpecProduct;
+type ListFilter = "recommended" | "saved" | "new" | "imminent";
 
 const SAVED_KEY = "csg2b:preSpec:savedKeys";
 
@@ -242,10 +243,7 @@ export default function PreSpecPage() {
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
   const [productFilter, setProductFilter] = useState<ProductFilter>("ALL");
   const [territoryFilter, setTerritoryFilter] = useState<string>("all");
-  const [showImminentOnly, setShowImminentOnly] = useState(false);
-  const [showNewOnly, setShowNewOnly] = useState(false);
-  const [showSavedOnly, setShowSavedOnly] = useState(false);
-  const [showFeedbackOnly, setShowFeedbackOnly] = useState(false);
+  const [listFilter, setListFilter] = useState<ListFilter>("recommended");
   const [budgetFilter, setBudgetFilter] = useState<BudgetFilterValue>("all");
   /**
    * 표시 모드
@@ -524,11 +522,7 @@ export default function PreSpecPage() {
     debouncedSearch,
     productFilter,
     territoryFilter,
-    showImminentOnly,
-    showNewOnly,
-    showSavedOnly,
-    showFeedbackOnly,
-    viewMode,
+    listFilter,
     budgetFilter,
     pageSize,
   ]);
@@ -586,6 +580,24 @@ export default function PreSpecPage() {
     }
   };
 
+  /** 제품 필터 — radio. 동일 항목 재클릭 시 전체 제품으로 해제. */
+  const selectProductFilter = (next: ProductFilter) => {
+    setProductFilter((prev) => {
+      if (next === "ALL") return "ALL";
+      return prev === next ? "ALL" : next;
+    });
+  };
+
+  const resetFilters = useCallback(() => {
+    setSearchQuery("");
+    setListFilter("recommended");
+    setProductFilter("ALL");
+    setTerritoryFilter("all");
+    setBudgetFilter("all");
+    setViewMode("matched");
+    setCurrentPage(1);
+  }, []);
+
   const handleToggleSave = (key: string) => {
     setSavedKeys((prev) => {
       const next = prev.includes(key)
@@ -600,7 +612,7 @@ export default function PreSpecPage() {
     const keys = items.map((it) => it.announcementKey);
     const newMap = resetNewSnapshot("preSpec", keys);
     setItems((prev) => applyNewFlags(prev, newMap));
-    setShowNewOnly(false);
+    if (listFilter === "new") setListFilter("recommended");
   };
 
   const territoryOptions = useMemo(() => {
@@ -693,10 +705,9 @@ export default function PreSpecPage() {
           if (t && t !== "미매칭") return false;
         } else if (t !== territoryFilter) return false;
       }
-      if (showImminentOnly && it.status !== "마감임박") return false;
-      if (showNewOnly && !it.isNew) return false;
-      if (showSavedOnly && !savedSet.has(it.announcementKey)) return false;
-      if (showFeedbackOnly && !feedbackMap.has(it.announcementKey)) return false;
+      if (listFilter === "imminent" && it.status !== "마감임박") return false;
+      if (listFilter === "new" && !it.isNew) return false;
+      if (listFilter === "saved" && !savedSet.has(it.announcementKey)) return false;
       if (!matchesBudgetFilter(it.budget ?? null, budgetFilter)) return false;
       return true;
     });
@@ -725,12 +736,8 @@ export default function PreSpecPage() {
     debouncedSearch,
     productFilter,
     territoryFilter,
-    showImminentOnly,
-    showNewOnly,
-    showSavedOnly,
-    showFeedbackOnly,
+    listFilter,
     savedSet,
-    feedbackMap,
     budgetFilter,
   ]);
 
@@ -767,6 +774,10 @@ export default function PreSpecPage() {
     [visibleItems],
   );
   const newTotal = useMemo(() => visibleItems.filter((it) => it.isNew).length, [visibleItems]);
+  const savedTotal = useMemo(
+    () => visibleItems.filter((it) => savedSet.has(it.announcementKey)).length,
+    [visibleItems, savedSet],
+  );
   const feedbackTotal = feedbackList.length;
   const contrabassTotal = useMemo(
     () => visibleItems.filter((it) => it.products.includes("CONTRABASS")).length,
@@ -858,18 +869,14 @@ export default function PreSpecPage() {
           </div>
         </header>
 
-        <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
+        <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400 sm:text-xs">
           {canAdmin ? (
-            <ul className="list-inside list-disc space-y-0.5">
-              <li>지금 수집은 즉시 나라장터 데이터를 가져옵니다.</li>
-              <li>자동 수집은 매일 08:30에 실행됩니다.</li>
-            </ul>
+            <p>지금 수집 · 자동 수집 매일 08:30 · 전체 수집본은 관리자 전용</p>
           ) : (
-            <ul className="list-inside list-disc space-y-0.5">
-              <li>자동 수집은 매일 08:30에 실행됩니다.</li>
-              <li>새로고침은 저장된 공고를 다시 불러옵니다.</li>
-              <li>수집은 관리자와 서버 자동수집만 수행합니다.</li>
-            </ul>
+            <p>
+              자동 수집 매일 08:30 · 일반 사용자는 조회/검색/피드백만 · 새로고침은 저장된
+              공고 재조회
+            </p>
           )}
         </div>
 
@@ -1111,184 +1118,185 @@ export default function PreSpecPage() {
           </div>
         </div>
 
-        {/* 필터 영역 */}
-        <section className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-slate-900/70 sm:px-5 sm:py-3.5">
-          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
+        {/* 필터 — 4행 구조 */}
+        <section className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-slate-900/70 sm:px-5 sm:py-4">
+          {/* 1행: 검색 · 새로고침 · 필터 초기화 */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="사전규격명 / 기관 / 키워드 검색"
-              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-100 dark:placeholder:text-slate-500 lg:max-w-md"
+              className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-100 dark:placeholder:text-slate-500"
             />
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowSavedOnly((p) => !p)}
-                className={`inline-flex h-9 items-center justify-center rounded-full px-3.5 text-xs font-semibold sm:text-sm ${
-                  showSavedOnly
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10"
-                }`}
-              >
-                {showSavedOnly ? "★ 관심만 (켜짐)" : "☆ 관심만"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowImminentOnly((p) => !p)}
-                className={`inline-flex h-9 items-center justify-center rounded-full px-3 text-xs font-semibold sm:text-sm ${
-                  showImminentOnly
-                    ? "bg-rose-600 text-white"
-                    : "bg-rose-50 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30"
-                }`}
-                disabled={imminentTotal === 0 && !showImminentOnly}
-              >
-                의견마감 {imminentTotal}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowNewOnly((p) => !p)}
-                disabled={newTotal === 0 && !showNewOnly}
-                className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
-                  showNewOnly
-                    ? "bg-emerald-600 text-white"
-                    : newTotal > 0
-                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
-                      : "cursor-not-allowed bg-slate-50 text-slate-400 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-500 dark:ring-white/10"
-                }`}
-              >
-                ● 신규 {newTotal}
-              </button>
-              {newTotal > 0 && (
-                <button
-                  type="button"
-                  onClick={handleResetNew}
-                  className="text-[11px] font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400"
-                >
-                  신규 표시 초기화
-                </button>
-              )}
-              <span aria-hidden className="hidden h-6 w-px bg-slate-200 dark:bg-white/10 lg:inline-block" />
-              <ProductFilterPill
-                label="CONTRABASS"
-                count={contrabassTotal}
-                active={productFilter === "CONTRABASS"}
-                onClick={() =>
-                  setProductFilter((p) => (p === "CONTRABASS" ? "ALL" : "CONTRABASS"))
-                }
-              />
-              <ProductFilterPill
-                label="VIOLA"
-                count={violaTotal}
-                active={productFilter === "VIOLA"}
-                onClick={() => setProductFilter((p) => (p === "VIOLA" ? "ALL" : "VIOLA"))}
-              />
-              <ProductFilterPill
-                label="CMP"
-                count={cmpTotal}
-                active={productFilter === "CMP"}
-                onClick={() => setProductFilter((p) => (p === "CMP" ? "ALL" : "CMP"))}
-              />
-
-              <select
-                value={territoryFilter}
-                onChange={(e) => setTerritoryFilter(e.target.value)}
-                className="h-9 rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-xs font-semibold text-slate-700 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-200 sm:text-sm"
-              >
-                <option value="all">담당본부 · 전체</option>
-                {territoryOptions.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-                <option value="__missing__">미매칭</option>
-              </select>
-
-              <BudgetFilter value={budgetFilter} onChange={setBudgetFilter} />
-
-              <button
-                type="button"
-                onClick={() => setShowFeedbackOnly((p) => !p)}
-                disabled={feedbackTotal === 0 && !showFeedbackOnly}
-                className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
-                  showFeedbackOnly
-                    ? "bg-violet-600 text-white"
-                    : feedbackTotal > 0
-                      ? "bg-violet-50 text-violet-700 ring-1 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30"
-                      : "cursor-not-allowed bg-slate-50 text-slate-400 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-500 dark:ring-white/10"
-                }`}
-              >
-                💬 피드백 {feedbackTotal}
-              </button>
-
-              {canAdmin && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setViewMode((m) => (m === "all" ? "matched" : "all"))
-                  }
-                  title={
-                    viewMode === "all"
-                      ? "수집된 전체 사전규격을 표시 중입니다. 클릭하면 키워드 매칭 항목만 보기로 돌아갑니다."
-                      : "수집된 사전규격 전체를 표시합니다 (키워드 미매칭 포함)."
-                  }
-                  className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
-                    viewMode === "all"
-                      ? "bg-slate-700 text-white dark:bg-slate-600"
-                      : "bg-slate-50 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-400 dark:ring-white/10"
-                  }`}
-                >
-                  {viewMode === "all" ? "전체 수집본 (켜짐)" : "전체 수집본 보기"}
-                </button>
-              )}
-
-              {/* "지금 수집" / "캐시 초기화" — profiles.role=admin 확정 후에만 노출 */}
-              {canAdmin && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleManualCollect}
-                    disabled={collectStatus === "running"}
-                    className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold sm:text-sm ${
-                      collectStatus === "running"
-                        ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
-                        : "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500"
-                    }`}
-                  >
-                    {collectStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
-                  </button>
-                  <button
-                    type="button"
-                    title="사전규격공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심 등록은 보존됩니다."
-                    onClick={() => {
-                      if (
-                        typeof window !== "undefined" &&
-                        !window.confirm(
-                          "사전규격공고 캐시를 비웁니다. 다음 수집부터 새로 저장됩니다. 계속할까요?",
-                        )
-                      ) {
-                        return;
-                      }
-                      clearPreSpecLocalCache();
-                      window.location.reload();
-                    }}
-                    className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 sm:text-sm"
-                  >
-                    캐시 초기화
-                  </button>
-                </>
-              )}
+            <div className="flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => void handleRefresh()}
                 disabled={refreshStatus === "running" || collectStatus === "running"}
-                title="Supabase DB에서 목록만 다시 읽습니다. G2B 수집은 실행하지 않습니다."
-                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 disabled:opacity-50 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 sm:text-sm"
+                title="저장된 공고를 DB에서 다시 불러옵니다 (수집 없음)"
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 sm:text-sm"
               >
                 {refreshStatus === "running" ? "⏳ 조회 중…" : "⟳ 새로고침"}
               </button>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-4 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 sm:text-sm"
+              >
+                필터 초기화
+              </button>
             </div>
           </div>
+
+          {/* 2행: 목록 필터 (radio) */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 sm:w-auto sm:mr-1">
+              목록
+            </span>
+            <FilterPill
+              label="추천공고"
+              count={matchedTotal}
+              active={listFilter === "recommended"}
+              onClick={() => setListFilter("recommended")}
+            />
+            <FilterPill
+              label="관심공고"
+              count={savedTotal}
+              active={listFilter === "saved"}
+              onClick={() => setListFilter("saved")}
+              disabled={savedTotal === 0 && listFilter !== "saved"}
+            />
+            <FilterPill
+              label="신규"
+              count={newTotal}
+              active={listFilter === "new"}
+              onClick={() => setListFilter("new")}
+              disabled={newTotal === 0 && listFilter !== "new"}
+            />
+            <FilterPill
+              label="의견마감 임박"
+              count={imminentTotal}
+              active={listFilter === "imminent"}
+              onClick={() => setListFilter("imminent")}
+              disabled={imminentTotal === 0 && listFilter !== "imminent"}
+            />
+            {newTotal > 0 && listFilter === "new" && (
+              <button
+                type="button"
+                onClick={handleResetNew}
+                className="text-[11px] font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400"
+              >
+                신규 표시 초기화
+              </button>
+            )}
+          </div>
+
+          {/* 3행: 제품 필터 (radio) */}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 sm:w-auto sm:mr-1">
+              제품
+            </span>
+            <FilterPill
+              label="전체 제품"
+              active={productFilter === "ALL"}
+              onClick={() => selectProductFilter("ALL")}
+            />
+            <FilterPill
+              label="CONTRABASS"
+              count={contrabassTotal}
+              active={productFilter === "CONTRABASS"}
+              onClick={() => selectProductFilter("CONTRABASS")}
+            />
+            <FilterPill
+              label="VIOLA"
+              count={violaTotal}
+              active={productFilter === "VIOLA"}
+              onClick={() => selectProductFilter("VIOLA")}
+            />
+            <FilterPill
+              label="CMP"
+              count={cmpTotal}
+              active={productFilter === "CMP"}
+              onClick={() => selectProductFilter("CMP")}
+            />
+          </div>
+
+          {/* 4행: 담당본부 · 예산 */}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 sm:w-auto sm:mr-1">
+              조건
+            </span>
+            <select
+              value={territoryFilter}
+              onChange={(e) => setTerritoryFilter(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-xs font-semibold text-slate-700 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-200 sm:text-sm"
+            >
+              <option value="all">담당본부 · 전체</option>
+              {territoryOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+              <option value="__missing__">미매칭</option>
+            </select>
+            <BudgetFilter value={budgetFilter} onChange={setBudgetFilter} />
+          </div>
+
+          {/* admin 전용: 수집 · 전체 수집본 */}
+          {canAdmin && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-white/5">
+              <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 sm:w-auto sm:mr-1">
+                관리
+              </span>
+              <button
+                type="button"
+                onClick={() => setViewMode((m) => (m === "all" ? "matched" : "all"))}
+                title={
+                  viewMode === "all"
+                    ? "키워드 매칭 추천공고만 보기"
+                    : "수집된 사전규격 전체 (미매칭 포함)"
+                }
+                className={`inline-flex h-9 items-center justify-center rounded-full px-3 text-xs font-semibold sm:text-sm ${
+                  viewMode === "all"
+                    ? "bg-slate-700 text-white dark:bg-slate-600"
+                    : "bg-slate-50 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-400 dark:ring-white/10"
+                }`}
+              >
+                {viewMode === "all" ? "전체 수집본 (켜짐)" : "전체 수집본"}
+              </button>
+              <button
+                type="button"
+                onClick={handleManualCollect}
+                disabled={collectStatus === "running"}
+                className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold sm:text-sm ${
+                  collectStatus === "running"
+                    ? "cursor-not-allowed bg-blue-200 text-blue-700 dark:bg-blue-500/30 dark:text-blue-200"
+                    : "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500"
+                }`}
+              >
+                {collectStatus === "running" ? "⏳ 수집 중…" : "지금 수집"}
+              </button>
+              <button
+                type="button"
+                title="화면 캐시 초기화"
+                onClick={() => {
+                  if (
+                    typeof window !== "undefined" &&
+                    !window.confirm("사전규격 캐시를 비웁니다. 계속할까요?")
+                  ) {
+                    return;
+                  }
+                  clearPreSpecLocalCache();
+                  window.location.reload();
+                }}
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-white px-3 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900/60 dark:text-slate-300 dark:ring-white/10 sm:text-sm"
+              >
+                캐시 초기화
+              </button>
+            </div>
+          )}
+
           {canAdmin && collectMessage && (
             <p
               className={`mt-2 text-[11px] ${
@@ -1414,28 +1422,34 @@ function SummaryCard({
   );
 }
 
-function ProductFilterPill({
+function FilterPill({
   label,
   count,
   active,
   onClick,
+  disabled = false,
 }: {
   label: string;
-  count: number;
+  count?: number;
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`inline-flex h-9 items-center justify-center gap-1 rounded-full px-3 text-xs font-semibold sm:text-sm ${
-        active
-          ? "bg-indigo-600 text-white"
-          : "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-400/30"
+        disabled
+          ? "cursor-not-allowed bg-slate-50 text-slate-400 ring-1 ring-slate-200 dark:bg-slate-800/40 dark:text-slate-500 dark:ring-white/10"
+          : active
+            ? "bg-blue-600 text-white shadow-sm"
+            : "bg-slate-100 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800"
       }`}
     >
-      {label} <span className="tabular-nums">{count}</span>
+      {label}
+      {count != null && <span className="tabular-nums opacity-80">{count}</span>}
     </button>
   );
 }

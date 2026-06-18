@@ -215,9 +215,9 @@ export default function PreSpecTable({
                       </div>
                     </td>
                     <td className="whitespace-normal break-keep px-3 py-3 align-top leading-6">
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      <div className="min-w-0">
+                        <div className="flex items-start gap-1.5">
+                          <p className="min-w-0 flex-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
                             {item.isNew && (
                               <span className="mr-1.5 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-400/20 px-2 py-0.5 align-middle text-[11px] font-extrabold text-amber-700 ring-1 ring-inset ring-amber-400/60 dark:text-amber-200 dark:ring-amber-300/60">
                                 <span aria-hidden>★</span>
@@ -226,24 +226,44 @@ export default function PreSpecTable({
                             )}
                             {item.title}
                           </p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => void onCopyTitle(item)}
-                              title="사전규격명 복사"
-                              className={`${ACTION_BTN} bg-slate-100 text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-slate-800/60 dark:text-slate-200 dark:ring-white/10`}
-                            >
-                              복사
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void onSearchG2b(item)}
-                              title="사전규격명을 복사한 뒤 나라장터 사전규격 검색 페이지를 새 탭으로 엽니다"
-                              className={`${ACTION_BTN} bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500`}
-                            >
-                              검색
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onToggleSave(item.announcementKey)}
+                            aria-label={isSaved ? "관심 해제" : "관심 등록"}
+                            title={isSaved ? "관심 해제" : "관심 등록"}
+                            className={`shrink-0 text-base leading-none ${
+                              isSaved ? "text-amber-500" : "text-slate-300 hover:text-amber-400"
+                            }`}
+                          >
+                            {isSaved ? "★" : "☆"}
+                          </button>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void onCopyTitle(item)}
+                            title="사전규격명 복사"
+                            className={`${ACTION_BTN} bg-slate-100 text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-slate-800/60 dark:text-slate-200 dark:ring-white/10`}
+                          >
+                            복사
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void onSearchG2b(item)}
+                            title="나라장터 사전규격 검색 (제목 복사 후 새 탭)"
+                            className={`${ACTION_BTN} bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500`}
+                          >
+                            검색
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onOpenFeedback(item)}
+                            title={hasFeedback ? "피드백 보기/수정" : "피드백 작성"}
+                            className="text-[11px] font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-300"
+                          >
+                            {hasFeedback ? "피드백 ✓" : "피드백"}
+                          </button>
+                        </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1">
                             {item.bsnsDivLabel && (
                               <span className="whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
@@ -274,34 +294,6 @@ export default function PreSpecTable({
                             </div>
                           )}
                         </div>
-                        <div className="flex shrink-0 flex-col items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => onToggleSave(item.announcementKey)}
-                            aria-label={isSaved ? "관심 해제" : "관심 저장"}
-                            title={isSaved ? "관심 해제" : "관심 저장"}
-                            className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-base transition ${
-                              isSaved
-                                ? "bg-amber-50 text-amber-600 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
-                                : "text-slate-400 ring-1 ring-slate-200 hover:bg-slate-50 dark:text-slate-500 dark:ring-white/10 dark:hover:bg-slate-800"
-                            }`}
-                          >
-                            {isSaved ? "★" : "☆"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onOpenFeedback(item)}
-                            title={hasFeedback ? "피드백 보기/수정" : "피드백 작성"}
-                            className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2 text-[11px] font-semibold transition ${
-                              hasFeedback
-                                ? "bg-violet-600 text-white ring-1 ring-violet-500 hover:bg-violet-700 dark:bg-violet-500"
-                                : "bg-violet-50 text-violet-700 ring-1 ring-violet-200 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30"
-                            }`}
-                          >
-                            {hasFeedback ? "✓" : "💬"}
-                          </button>
-                        </div>
-                      </div>
                     </td>
                     <td className="px-3 py-3 align-top text-right">
                       {budget.amount != null ? (
