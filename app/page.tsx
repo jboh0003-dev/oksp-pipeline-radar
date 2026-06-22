@@ -13,6 +13,7 @@ import Header from "@/components/Header";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import { useAuth } from "@/lib/auth";
 import { authedFetch } from "@/lib/authedFetch";
+import { parseApiResponse } from "@/lib/apiResponse";
 import NoticeCard from "@/components/NoticeCard";
 import NoticeTable from "@/components/NoticeTable";
 import ProductFilter from "@/components/ProductFilter";
@@ -72,6 +73,7 @@ import {
 } from "@/lib/newState";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
+import { isIsoStaleSinceMorningCutoff } from "@/lib/freshness";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
@@ -349,6 +351,21 @@ export default function Home() {
   );
 
   const auth = useAuth();
+  const canAdmin =
+    auth.status === "authed" &&
+    auth.profileStatus === "ready" &&
+    auth.role === "admin";
+
+  /**
+   * 일반 사용자용 짧은 안내 토스트 (검색/조회 중 부가 API 실패 등).
+   * 기존 공고 데이터는 유지하고, 시스템 오류처럼 보이지 않게 한다.
+   */
+  const [userNoticeToast, setUserNoticeToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!userNoticeToast) return;
+    const id = window.setTimeout(() => setUserNoticeToast(null), 5_000);
+    return () => window.clearTimeout(id);
+  }, [userNoticeToast]);
 
   /**
    * 페이지네이션 — 페이지당 50/100/200/전체.
@@ -397,9 +414,9 @@ export default function Home() {
    * 반환값: 이번 갱신에서 "처음 본" 공고 수 — 수집 직후 toast 메시지에 사용.
    * 동시에 두 번 호출되면 두 번째 호출은 즉시 { newCount: 0 } 으로 무시한다.
    */
-  const loadNotices = useCallback(async (): Promise<{ newCount: number }> => {
+  const loadNotices = useCallback(async (): Promise<{ newCount: number; matchError: string | null }> => {
     if (fetchInFlightRef.current) {
-      return { newCount: 0 };
+      return { newCount: 0, matchError: null };
     }
     fetchInFlightRef.current = true;
     try {
@@ -426,11 +443,22 @@ export default function Home() {
       saveNoticesCache(result.notices, result.source);
       // 백그라운드 fetch 가 끝났으니 이후로는 cache 표시를 끈다.
       setFromCache(false);
-      return { newCount: newKeys.length };
+      return { newCount: newKeys.length, matchError: result.matchError };
     } finally {
       fetchInFlightRef.current = false;
     }
   }, []);
+
+  const notifyMatchApiFailure = useCallback(
+    (matchError: string | null) => {
+      if (!matchError) return;
+      console.error("[page] customer match API failed", { error: matchError });
+      if (!canAdmin) {
+        setUserNoticeToast("검색 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+      }
+    },
+    [canAdmin],
+  );
 
   const loadLastRun = useCallback(async () => {
     // last attempt + last success 를 병렬 조회. last success 가 stale 판정 기준이 된다.
@@ -476,7 +504,8 @@ export default function Home() {
       if (!cached) setIsLoading(true);
       setIsLastRunLoading(true);
       try {
-        await Promise.all([loadNotices(), loadLastRun()]);
+        const [{ matchError }] = await Promise.all([loadNotices(), loadLastRun()]);
+        notifyMatchApiFailure(matchError);
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -490,7 +519,7 @@ export default function Home() {
     return () => {
       isMounted = false;
     };
-  }, [loadNotices, loadLastRun]);
+  }, [loadNotices, loadLastRun, notifyMatchApiFailure]);
 
   /** 첫 마운트에 localStorage 에서 입찰공고용 피드백만 읽어 메모리에 캐싱. */
   useEffect(() => {
@@ -667,6 +696,7 @@ export default function Home() {
    * 0건이면 panel 자체가 렌더되지 않는다.
    */
   const collectionErrors: CollectionError[] = useMemo(() => {
+    if (!canAdmin) return [];
     const list: CollectionError[] = [];
     if (dataSource === "sample" && errorMessage) {
       list.push(
@@ -708,7 +738,15 @@ export default function Home() {
       }
     }
     return list;
-  }, [dataSource, errorMessage, manualStatus, manualMessage, lastRun]);
+  }, [canAdmin, dataSource, errorMessage, manualStatus, manualMessage, lastRun]);
+
+  /** 일반 사용자 — 저장된 데이터는 있으나 최신 수집이 지연된 경우만 약한 안내. */
+  const showUserStaleHint = useMemo(() => {
+    if (canAdmin || dataSource !== "supabase" || notices.length === 0) return false;
+    const stale = isIsoStaleSinceMorningCutoff(lastSuccessRun?.finished_at ?? null);
+    const lastAttemptFailed = Boolean(lastRun && !lastRun.ok);
+    return stale || lastAttemptFailed;
+  }, [canAdmin, dataSource, notices.length, lastSuccessRun, lastRun]);
 
   // 필터/검색/페이지사이즈가 바뀌면 1페이지로 리셋.
   useEffect(() => {
@@ -787,16 +825,31 @@ export default function Home() {
     try {
       const res = await authedFetch("/api/collect-now", { method: "POST" });
       httpStatus = res.status;
-      resp = (await res.json()) as ManualResp;
+      const parsed = await parseApiResponse<ManualResp>(res, {
+        route: "/api/collect-now POST",
+      });
+      if (!parsed.ok) {
+        setManualStatus("error");
+        setManualMessage(`수집 실패: ${parsed.error}`);
+        console.error("[page] manual collect failed", {
+          status: parsed.status,
+          error: parsed.error,
+          detail: parsed.detail,
+        });
+        return;
+      }
+      resp = parsed.data;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       setManualStatus("error");
       setManualMessage(`수집 실패: 네트워크 오류 (${reason})`);
+      console.error("[page] manual collect exception:", err);
       return;
     }
 
     // 어쨌든 끝났으니 화면 데이터는 다시 읽어온다. (DB 로그가 안 남았더라도 notices 는 갱신됐을 수 있음)
-    const [{ newCount }] = await Promise.all([loadNotices(), loadLastRun()]);
+    const [{ newCount, matchError }] = await Promise.all([loadNotices(), loadLastRun()]);
+    notifyMatchApiFailure(matchError);
 
     if (!resp) {
       setManualStatus("error");
@@ -893,7 +946,7 @@ export default function Home() {
           </div>
         )}
 
-        {dataSource === "sample" && errorMessage && (
+        {dataSource === "sample" && errorMessage && canAdmin && (
           <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200">
             <p className="font-semibold">
               Supabase 연결에 실패해 샘플 데이터를 표시하고 있습니다.
@@ -904,27 +957,53 @@ export default function Home() {
           </div>
         )}
 
+        {userNoticeToast && (
+          <div
+            role="status"
+            className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow-sm dark:border-amber-400/30 dark:bg-amber-500/15 dark:text-amber-200 sm:text-sm"
+          >
+            <span>{userNoticeToast}</span>
+            <button
+              type="button"
+              onClick={() => setUserNoticeToast(null)}
+              className="text-[11px] font-medium text-amber-700/80 hover:text-amber-900 dark:text-amber-200/80"
+            >
+              닫기
+            </button>
+          </div>
+        )}
+
+        {!canAdmin && showUserStaleHint && (
+          <p
+            role="status"
+            className="mb-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200"
+          >
+            일부 최신 데이터 갱신이 지연될 수 있습니다. 기존 데이터는 정상 조회 가능합니다.
+          </p>
+        )}
+
         {/*
           구조화된 수집 오류 패널 — admin 에게만 노출.
           일반 사용자에겐 운영성 메시지(수집 실패 / 환경변수 누락 등)를 보여주지 않는다.
         */}
-        {auth.isAdmin && (
+        {canAdmin && (
           <CollectionErrorPanel errors={collectionErrors} title="입찰공고 수집 오류" />
         )}
 
-        <LastCollectionRunCard
-          run={lastRun}
-          error={lastRunError}
-          isLoading={isLastRunLoading}
-          lastSuccess={lastSuccessRun}
-        />
+        {canAdmin && (
+          <LastCollectionRunCard
+            run={lastRun}
+            error={lastRunError}
+            isLoading={isLastRunLoading}
+            lastSuccess={lastSuccessRun}
+          />
+        )}
 
         {/*
           관리자 전용 수집 진단 패널 — 일반 사용자에게는 보이지 않는다.
-          마지막 시도 / 마지막 성공 / 환경 점검 / Vercel cron 안내 등이 한 곳에 모인다.
-          isLastRunLoading 동안에는 아직 데이터가 없으므로 패널을 띄우지 않는다 (깜빡임 방지).
+          기본 접힘 상태로 운영 화면을 깔끔하게 유지한다.
         */}
-        {auth.isAdmin && !isLastRunLoading && (
+        {canAdmin && !isLastRunLoading && (
           <CollectionDiagnosticsPanel
             lastAttempt={lastRun}
             lastSuccess={lastSuccessRun}
@@ -1063,7 +1142,7 @@ export default function Home() {
                 "지금 수집" 버튼은 admin 만 노출.
                 일반 사용자는 자동수집(매일 08:30) 결과를 그대로 본다.
               */}
-              {auth.isAdmin && (
+              {canAdmin && (
                 <button
                   type="button"
                   onClick={handleManualCollect}
@@ -1089,7 +1168,7 @@ export default function Home() {
               </button>
 
               {/* "캐시 초기화" 는 운영성 도구이므로 admin 에게만 노출. */}
-              {auth.isAdmin && (
+              {canAdmin && (
                 <button
                   type="button"
                   title="입찰공고 화면 캐시(localStorage) 와 lastFetchAt / NEW snapshot 을 모두 비우고 새로 시작합니다. 피드백/관심/DB 데이터는 보존됩니다."
@@ -1113,7 +1192,7 @@ export default function Home() {
             </div>
           </div>
 
-          {auth.isAdmin && manualMessage && (
+          {canAdmin && manualMessage && (
             <p
               className={`mt-2 text-[11px] ${
                 manualStatus === "error"

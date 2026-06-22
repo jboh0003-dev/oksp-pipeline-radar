@@ -137,7 +137,7 @@ function missingEnvResponse(missing: string[]): NextResponse<TestG2bResponse> {
 
 export async function GET(request: NextRequest): Promise<NextResponse<TestG2bResponse>> {
   const auth = await requireAdmin(request);
-  if (!auth.ok) return adminFailResponse(auth) as NextResponse<TestG2bResponse>;
+  if (!auth.ok) return adminFailResponse(auth) as unknown as NextResponse<TestG2bResponse>;
 
   const missing = getMissingEnvVars();
   if (missing.length > 0) {

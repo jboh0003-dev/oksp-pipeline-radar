@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runCollect, type CollectResponse } from "@/app/api/collect-g2b-keywords/route";
 import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
+import { jsonFail, withApiRoute } from "@/lib/apiResponse";
 import { getMissingSyncEnvVars, getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -321,7 +322,7 @@ async function handleManual(request: NextRequest) {
  *
  * admin 만 호출 가능.
  */
-export async function GET(request: NextRequest) {
+async function handleEnvProbe(request: NextRequest) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return adminFailResponse(auth);
 
@@ -346,16 +347,23 @@ export async function GET(request: NextRequest) {
   const cooldownRemainingMs = Math.max(0, COOLDOWN_MS - (Date.now() - lastFinishedAt));
 
   return NextResponse.json({
-    ready: missingEnv.length === 0 && collectionRunsAccessible,
-    missingEnv,
-    isRunning,
-    cooldownRemainingMs: lastFinishedAt > 0 ? cooldownRemainingMs : 0,
-    collectionRunsAccessible,
-    collectionRunsError,
-    defaults: MANUAL_DEFAULTS,
+    ok: true,
+    data: {
+      ready: missingEnv.length === 0 && collectionRunsAccessible,
+      missingEnv,
+      isRunning,
+      cooldownRemainingMs: lastFinishedAt > 0 ? cooldownRemainingMs : 0,
+      collectionRunsAccessible,
+      collectionRunsError,
+      defaults: MANUAL_DEFAULTS,
+    },
   });
 }
 
 export async function POST(request: NextRequest) {
-  return handleManual(request);
+  return withApiRoute("/api/collect-now POST", () => handleManual(request));
+}
+
+export async function GET(request: NextRequest) {
+  return withApiRoute("/api/collect-now GET", () => handleEnvProbe(request));
 }

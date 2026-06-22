@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from "react";
 import { authedFetch } from "@/lib/authedFetch";
+import { parseApiResponse } from "@/lib/apiResponse";
 import {
   formatRelativeKstAgo,
   isIsoStaleSinceMorningCutoff,
@@ -96,23 +97,32 @@ export default function CollectionDiagnosticsPanel({
   const [envProbe, setEnvProbe] = useState<EnvProbe | null>(null);
   const [envProbeError, setEnvProbeError] = useState<string | null>(null);
   const [envProbeLoading, setEnvProbeLoading] = useState(true);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   const refreshProbe = async () => {
     setEnvProbeLoading(true);
     try {
       const res = await authedFetch("/api/collect-now", { method: "GET" });
-      if (!res.ok) {
+      const parsed = await parseApiResponse<EnvProbe>(res, {
+        route: "/api/collect-now GET",
+      });
+      if (!parsed.ok) {
         setEnvProbe(null);
-        setEnvProbeError(`HTTP ${res.status}`);
+        setEnvProbeError(parsed.error);
+        console.error("[CollectionDiagnosticsPanel] env probe failed", {
+          status: parsed.status,
+          error: parsed.error,
+          detail: parsed.detail,
+        });
       } else {
-        const json = (await res.json()) as EnvProbe;
-        setEnvProbe(json);
+        setEnvProbe(parsed.data);
         setEnvProbeError(null);
       }
     } catch (err) {
       setEnvProbe(null);
-      setEnvProbeError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setEnvProbeError(message);
+      console.error("[CollectionDiagnosticsPanel] env probe exception:", err);
     } finally {
       setEnvProbeLoading(false);
     }

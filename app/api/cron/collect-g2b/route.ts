@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runCollect, type CollectResponse } from "@/app/api/collect-g2b-keywords/route";
+import { withApiRoute } from "@/lib/apiResponse";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { getServerSupabaseDebugInfo } from "@/lib/supabaseDebug";
 import {
@@ -666,9 +667,9 @@ async function handleCron(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  return handleCron(request);
+  return withApiRoute("/api/cron/collect-g2b GET", () => handleCron(request));
 }
 
 export async function POST(request: NextRequest) {
-  return handleCron(request);
+  return withApiRoute("/api/cron/collect-g2b POST", () => handleCron(request));
 }

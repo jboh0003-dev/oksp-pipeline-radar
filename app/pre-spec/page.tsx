@@ -11,6 +11,7 @@ import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import PreSpecTable from "@/components/PreSpecTable";
 import { useAuth } from "@/lib/auth";
 import { authedFetch } from "@/lib/authedFetch";
+import { parseApiResponse } from "@/lib/apiResponse";
 import { clearPreSpecLocalCache } from "@/lib/cacheReset";
 import { fetchPreSpecNotices } from "@/lib/fetchPreSpecNotices";
 import {
@@ -174,9 +175,13 @@ async function applyCustomerMatching(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agencies: slice }),
       });
-      if (!res.ok) continue;
-      const json = (await res.json()) as { matches?: Record<string, CustomerMatchPayload> };
-      Object.assign(matches, json.matches ?? {});
+      const parsed = await parseApiResponse<{ matches?: Record<string, CustomerMatchPayload> }>(
+        res,
+        { route: "/api/customer-accounts/match", params: { chunk: slice.length } },
+      );
+      if (parsed.ok) {
+        Object.assign(matches, parsed.data.matches ?? {});
+      }
     } catch {
       // 네트워크 오류 무시 — 매칭 없이도 화면은 떠야 한다.
     }
@@ -398,7 +403,27 @@ export default function PreSpecPage() {
     }
     try {
       const res = await authedFetch("/api/pre-spec/collect?days=7", { method: "GET" });
-      const json = (await res.json()) as CollectResp;
+      const parsed = await parseApiResponse<CollectResp>(res, {
+        route: "/api/pre-spec/collect",
+      });
+      if (!parsed.ok) {
+        const fatal = parsed.error ?? "사전규격 수집에 실패했습니다. 관리자에게 문의해 주세요.";
+        console.error("[pre-spec] collect API failed", {
+          status: parsed.status,
+          error: parsed.error,
+          detail: parsed.detail,
+        });
+        setErrorMessage(fatal);
+        setInfoMessage(null);
+        return {
+          ok: false,
+          itemsCount: 0,
+          warningsCount: 0,
+          errorMessage: fatal,
+          successMessage: null,
+        };
+      }
+      const json = parsed.data;
 
       setApiErrors(json.errors ?? []);
       setCollectionErrors(json.collectionErrors ?? []);
@@ -922,14 +947,16 @@ export default function PreSpecPage() {
           </div>
         )}
 
-        <LastCollectionRunCard
-          title="최근 사전규격 수집"
-          run={lastPreSpecRun}
-          error={lastPreSpecRunError}
-          isLoading={lastPreSpecRunLoading}
-          lastSuccess={lastPreSpecSuccess}
-          showManualCollectHint={canAdmin}
-        />
+        {canAdmin && (
+          <LastCollectionRunCard
+            title="최근 사전규격 수집"
+            run={lastPreSpecRun}
+            error={lastPreSpecRunError}
+            isLoading={lastPreSpecRunLoading}
+            lastSuccess={lastPreSpecSuccess}
+            showManualCollectHint={canAdmin}
+          />
+        )}
 
         {canAdmin && (
           <p className="mb-3 font-mono text-[10px] text-slate-400 dark:text-slate-500">

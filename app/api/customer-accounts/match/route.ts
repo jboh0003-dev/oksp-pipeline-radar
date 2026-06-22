@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   buildCustomerLookup,
   CONTAINS_MIN_LEN,
@@ -9,6 +9,7 @@ import {
   normalizeCustomerName,
   type MatchedCustomer,
 } from "@/lib/customerMatching";
+import { jsonFail, jsonOk, withApiRoute } from "@/lib/apiResponse";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { CustomerAccountRow } from "@/lib/supabase";
 
@@ -138,11 +139,15 @@ async function getAllCustomerRows(supabase: AdminClient): Promise<{
 }
 
 export async function POST(request: NextRequest) {
+  return withApiRoute("/api/customer-accounts/match", async () => handleMatch(request));
+}
+
+async function handleMatch(request: NextRequest) {
   let parsed: unknown;
   try {
     parsed = await request.json();
   } catch {
-    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+    return jsonFail("요청 본문이 올바른 JSON 형식이 아닙니다.", { status: 400 });
   }
 
   const inputAgencies = Array.isArray((parsed as { agencies?: unknown }).agencies)
@@ -155,10 +160,10 @@ export async function POST(request: NextRequest) {
     .filter((s) => s.length > 0);
 
   if (cleaned.length > MAX_AGENCIES) {
-    return NextResponse.json(
-      { error: `too many agencies (max ${MAX_AGENCIES})` },
-      { status: 400 },
-    );
+    return jsonFail(`요청 기관 수가 너무 많습니다. (최대 ${MAX_AGENCIES}건)`, {
+      status: 400,
+      detail: `received=${cleaned.length}`,
+    });
   }
 
   if (cleaned.length === 0) {
@@ -170,7 +175,7 @@ export async function POST(request: NextRequest) {
         breakdown: { exact: 0, normalized: 0, alias: 0, contains: 0, fuzzy: 0, none: 0 },
       },
     };
-    return NextResponse.json(empty);
+    return jsonOk(empty, { message: "매칭할 기관이 없습니다." });
   }
 
   const uniqueAgencies = [...new Set(cleaned)];
@@ -186,10 +191,10 @@ export async function POST(request: NextRequest) {
 
   const supabase = getSupabaseAdmin();
   if (!supabase) {
-    return NextResponse.json(
-      { error: "Supabase service role client unavailable" },
-      { status: 500 },
-    );
+    return jsonFail("고객사 매칭 서비스를 사용할 수 없습니다.", {
+      status: 500,
+      detail: "Supabase service role client unavailable",
+    });
   }
 
   // 1단계 + 2단계: exact / normalized — 청크 .in() 으로 가져온다.
@@ -203,7 +208,10 @@ export async function POST(request: NextRequest) {
   if (exactRes.error || normRes.error) {
     const msg = exactRes.error ?? normRes.error;
     console.error("[/api/customer-accounts/match] supabase error:", msg);
-    return NextResponse.json({ error: msg ?? "customer_accounts 조회 실패" }, { status: 500 });
+    return jsonFail("고객사 정보 조회에 실패했습니다.", {
+      status: 500,
+      detail: msg ?? "customer_accounts 조회 실패",
+    });
   }
 
   const lookupRows = new Map<string, CustomerAccountRow>();
@@ -351,5 +359,5 @@ export async function POST(request: NextRequest) {
       },
     },
   };
-  return NextResponse.json(response);
+  return jsonOk(response);
 }

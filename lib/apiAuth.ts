@@ -17,7 +17,8 @@
  *              호출부는 NextResponse.json(...) 으로 즉시 반환하면 된다.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { jsonFail } from "@/lib/apiResponse";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export type RequireAdminOk = {
@@ -122,9 +123,6 @@ export async function requireAdmin(request: NextRequest): Promise<RequireAdminRe
  *   const r = await requireAdmin(request);
  *   if (!r.ok) return adminFailResponse(r);
  */
-export function adminFailResponse(result: RequireAdminFail): NextResponse {
-  return NextResponse.json(
-    { ok: false, error: result.reason },
-    { status: result.status },
-  );
+export function adminFailResponse(result: RequireAdminFail) {
+  return jsonFail(result.reason, { status: result.status });
 }

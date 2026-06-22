@@ -1,5 +1,6 @@
 import { sampleNotices, type Notice, type NoticeCustomerInfo } from "@/data/sampleNotices";
 import { extractAttachments, summarizeAttachments } from "@/lib/attachments";
+import { parseApiResponse } from "@/lib/apiResponse";
 import { evaluateMatchGrade } from "@/lib/noticeGrades";
 import { buildNegativeSearchText, detectNegativeSignals } from "@/lib/noticeMatching";
 import { isNoticeVisible, sortNoticesForDisplay } from "@/lib/noticeVisibility";
@@ -24,11 +25,15 @@ type CustomerMatchPayload = {
   matchType: "exact" | "normalized" | "alias" | "contains" | "fuzzy";
 };
 
+type CustomerMatchData = {
+  matches?: Record<string, CustomerMatchPayload>;
+};
+
 async function fetchMatchedCustomers(
   agencies: string[],
-): Promise<Record<string, CustomerMatchPayload>> {
+): Promise<{ matches: Record<string, CustomerMatchPayload>; error: string | null }> {
   const unique = [...new Set(agencies.filter((a) => a && a.trim().length > 0))];
-  if (unique.length === 0) return {};
+  if (unique.length === 0) return { matches: {}, error: null };
 
   try {
     const res = await fetch("/api/customer-accounts/match", {
@@ -37,15 +42,23 @@ async function fetchMatchedCustomers(
       body: JSON.stringify({ agencies: unique }),
       cache: "no-store",
     });
-    if (!res.ok) {
-      console.warn("[fetchNotices] /api/customer-accounts/match 실패:", res.status);
-      return {};
+    const parsed = await parseApiResponse<CustomerMatchData>(res, {
+      route: "/api/customer-accounts/match",
+      params: { agencyCount: unique.length },
+    });
+    if (!parsed.ok) {
+      console.warn("[fetchNotices] /api/customer-accounts/match 실패:", {
+        status: parsed.status,
+        error: parsed.error,
+        detail: parsed.detail,
+      });
+      return { matches: {}, error: parsed.error };
     }
-    const json = (await res.json()) as { matches?: Record<string, CustomerMatchPayload> };
-    return json.matches ?? {};
+    return { matches: parsed.data.matches ?? {}, error: null };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.warn("[fetchNotices] /api/customer-accounts/match 호출 예외:", err);
-    return {};
+    return { matches: {}, error: message };
   }
 }
 
@@ -55,6 +68,8 @@ export type FetchNoticesResult = {
   notices: Notice[];
   source: NoticeDataSource;
   error: string | null;
+  /** 고객사 매칭 API 호출 실패 시 사용자 안내용 (공고 목록 자체는 유지). */
+  matchError: string | null;
 };
 
 /** 화면에 표시할 source_type: g2b, g2b_keyword, g2b_active_core, null·빈 문자열 */
@@ -248,14 +263,14 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
   const configError = getSupabaseConfigError();
   if (configError) {
     console.error("[fetchNotices] Supabase config error:", configError);
-    return { notices: filterVisibleSample(), source: "sample", error: configError };
+    return { notices: filterVisibleSample(), source: "sample", error: configError, matchError: null };
   }
 
   const supabase = getSupabaseClient();
   if (!supabase) {
     const message = "Supabase 클라이언트를 생성하지 못했습니다.";
     console.error("[fetchNotices]", message);
-    return { notices: filterVisibleSample(), source: "sample", error: message };
+    return { notices: filterVisibleSample(), source: "sample", error: message, matchError: null };
   }
 
   try {
@@ -280,7 +295,7 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
     // 화면에 보일 후보 공고들의 기관명만 추려 서버 라우트에 보내고
     // 매칭된 항목만 응답으로 받는다. 고객사 마스터 자체는 브라우저에 노출되지 않는다.
     const agencies = rows.map((r) => (r.agency ?? "").trim()).filter((a) => a.length > 0);
-    const matches = await fetchMatchedCustomers(agencies);
+    const { matches, error: matchError } = await fetchMatchedCustomers(agencies);
 
     const notices = sortNoticesForDisplay(rows.map((row) => mapRowToNotice(row, matches)));
 
@@ -288,10 +303,11 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
       notices,
       source: "supabase",
       error: null,
+      matchError,
     };
   } catch (error) {
     const message = formatError(error);
     console.error("[fetchNotices] Supabase request failed:", error);
-    return { notices: filterVisibleSample(), source: "sample", error: message };
+    return { notices: filterVisibleSample(), source: "sample", error: message, matchError: null };
   }
 }

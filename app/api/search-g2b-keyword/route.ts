@@ -275,7 +275,7 @@ function emptyResponse(partial: Partial<SearchG2bKeywordResponse> & Pick<SearchG
 
 export async function GET(request: NextRequest): Promise<NextResponse<SearchG2bKeywordResponse>> {
   const auth = await requireAdmin(request);
-  if (!auth.ok) return adminFailResponse(auth) as NextResponse<SearchG2bKeywordResponse>;
+  if (!auth.ok) return adminFailResponse(auth) as unknown as NextResponse<SearchG2bKeywordResponse>;
 
   const keyword = request.nextUrl.searchParams.get("keyword")?.trim() ?? "";
 
