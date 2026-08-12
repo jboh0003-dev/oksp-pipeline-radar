@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
+import { resolveBidBaseUrl } from "@/lib/g2b/baseUrl";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -144,13 +145,13 @@ function getEnv() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   const g2bServiceKey = process.env.G2B_SERVICE_KEY?.trim();
-  const g2bBaseUrl = process.env.G2B_API_BASE_URL?.trim();
+  // 환경변수를 우선하며, 없으면 공식 HTTP 입찰공고 주소를 사용한다.
+  const g2bBaseUrl = resolveBidBaseUrl();
 
   const missing = [];
   if (!supabaseUrl) missing.push("NEXT_PUBLIC_SUPABASE_URL");
   if (!serviceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
   if (!g2bServiceKey) missing.push("G2B_SERVICE_KEY");
-  if (!g2bBaseUrl) missing.push("G2B_API_BASE_URL");
 
   return { supabaseUrl, serviceRoleKey, g2bServiceKey, g2bBaseUrl, missing };
 }

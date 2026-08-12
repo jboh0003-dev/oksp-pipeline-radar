@@ -65,6 +65,24 @@ export function makeCollectionError(input: {
   };
 }
 
+/**
+ * 수집 오류 메시지 목록에서 같은 내용을 제거한다.
+ *
+ * 502 처럼 여러 페이지에서 동일하게 실패하면 "…p1: HTTP 502", "…p2: HTTP 502" 가 각각 쌓여
+ * 화면과 collection_runs 에 같은 내용이 반복 저장된다. 페이지 번호만 다른 메시지는
+ * 하나로 합쳐 첫 메시지만 남긴다.
+ */
+export function dedupeCollectionMessages(messages: string[]): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of messages) {
+    const message = raw.trim();
+    if (!message) continue;
+    const key = message.replace(/\bp\d+\b/g, "p*").slice(0, 300);
+    if (!seen.has(key)) seen.set(key, message);
+  }
+  return [...seen.values()];
+}
+
 const KIND_LABEL: Record<CollectionErrorKind, string> = {
   API_KEY_MISSING: "API 키 누락",
   API_TIMEOUT: "API 응답 timeout",

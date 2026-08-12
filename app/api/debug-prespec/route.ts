@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolvePreSpecBaseUrl } from "@/lib/g2b/baseUrl";
 import { buildG2bUrl, fetchG2bApi } from "@/lib/g2b/client";
 import { parseG2bResponse } from "@/lib/g2b/normalize";
 import {
@@ -47,9 +48,7 @@ import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const DEFAULT_BASE_URL =
-  process.env.G2B_PRESPEC_BASE_URL ??
-  "http://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService";
+const DEFAULT_BASE_URL = resolvePreSpecBaseUrl();
 
 const ALLOWED_ENDPOINTS = new Set<string>([
   // 운영 endpoint

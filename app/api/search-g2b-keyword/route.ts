@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
 import { extractG2bHeader } from "@/lib/g2b/api";
+import { resolveBidBaseUrl } from "@/lib/g2b/baseUrl";
 import {
   G2B_ENDPOINTS,
   G2B_NUM_OF_ROWS,
@@ -302,7 +303,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<SearchG2bK
   }
 
   const serviceKey = process.env.G2B_SERVICE_KEY!.trim();
-  const baseUrl = process.env.G2B_API_BASE_URL!.trim();
+  const baseUrl = resolveBidBaseUrl();
   const dateRange = getG2bInquiryDateRangeForDays(SEARCH_TEST_INQUIRY_DAYS);
   const checkedEndpoints = Object.values(G2B_ENDPOINTS);
   const errors: string[] = [];

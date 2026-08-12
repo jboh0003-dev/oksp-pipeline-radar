@@ -52,6 +52,8 @@ export type G2bPagedOptions = {
   timeoutMs?: number;
   /** retry 횟수. 기본 3. */
   retries?: number;
+  /** true 면 endpoint 첫 페이지 요청 직전에 protocol/hostname/pathname을 로그로 남긴다. */
+  logRequest?: boolean;
 };
 
 /** 작업 N개를 concurrency 제한으로 실행. */
@@ -89,7 +91,9 @@ async function fetchOnePage(
   const requestOptions: G2bRequestOptions = {
     timeoutMs: options.timeoutMs,
     retries: options.retries,
-    label: options.sourceApi ?? endpoint,
+    label: endpoint,
+    // 페이지마다 찍으면 로그가 과해지므로 endpoint 당 1페이지에서만 남긴다.
+    logRequest: options.logRequest === true && pageNo === 1,
   };
   const result = await fetchG2bApi(url, requestOptions);
   const durationMs = Date.now() - startedAt;

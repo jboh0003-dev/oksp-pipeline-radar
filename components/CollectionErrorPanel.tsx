@@ -98,8 +98,11 @@ export default function CollectionErrorPanel({ errors, title }: Props) {
             ))}
           </div>
           <ul className="max-h-64 list-disc space-y-1 overflow-y-auto rounded-md bg-white px-3 py-2 pl-5 dark:bg-slate-900/60">
-            {errors.slice(0, 80).map((err) => (
-              <li key={err.id} className="text-[11px] leading-5">
+            {errors.slice(0, 80).map((err, index) => (
+              <li
+                key={`${err.id}|${err.endpoint ?? ""}|${err.createdAt}|${index}`}
+                className="text-[11px] leading-5"
+              >
                 <span
                   className={`mr-1 inline-flex items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${
                     KIND_BADGE[err.kind] ?? KIND_BADGE.UNKNOWN_ERROR

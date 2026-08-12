@@ -14,6 +14,8 @@
  * 처리할 수 있게 throw 대신 결과 객체로 전달한다.
  */
 
+import { describeG2bRequest, maskServiceKey } from "@/lib/g2b/baseUrl";
+
 export type G2bResultHeader = {
   resultCode?: string;
   resultMsg?: string;
@@ -38,6 +40,8 @@ export type G2bRequestOptions = {
   timeoutMs?: number;
   /** retry 시도 횟수. 기본 3. (최초 1회 + 추가 retry 2회) */
   retries?: number;
+  /** 요청 직전 protocol/hostname/pathname 로그를 남길지. query와 serviceKey는 출력하지 않는다. */
+  logRequest?: boolean;
   /** retry 사이 base delay(ms). 실제 delay 는 base * 2^attempt + jitter. */
   retryBaseDelayMs?: number;
   /** UA / Accept 등 추가 헤더. */
@@ -83,6 +87,12 @@ export type G2bResult<T = G2bResponse> = G2bSuccess<T> | G2bFailure;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRIES = 3;
 const DEFAULT_BASE_DELAY_MS = 600;
+
+/**
+ * 공공데이터포털이 5xx(주로 502 Bad Gateway) 를 돌려줄 때의 재시도 정책.
+ * 최대 2회, 간격은 2초 → 5초. 그래도 실패하면 해당 호출만 실패로 처리하고 반환한다.
+ */
+const SERVER_ERROR_RETRY_DELAYS_MS = [2_000, 5_000];
 
 /**
  * 이미 URL-encoded 된 serviceKey 가 들어와도 그대로 보존하기 위해 manual 한 query string 을 만든다.
@@ -165,7 +175,8 @@ function buildDebug(
   const header = readHeader(parsed);
   const totalCount = readTotalCount(parsed);
   return {
-    url,
+    // debug 는 API 응답/로그로 흘러갈 수 있으므로 serviceKey 는 항상 마스킹한다.
+    url: maskServiceKey(url),
     attempts,
     durationMs,
     status,
@@ -202,6 +213,31 @@ export async function fetchG2bApi(
   let lastErrorKind: G2bFailure["errorKind"] = "UNKNOWN_ERROR";
   let lastStatus: number | null = null;
   const startedAt = Date.now();
+  // 5xx 재시도는 SERVER_ERROR_RETRY_DELAYS_MS 길이(=2회) 로 별도 제한한다.
+  let serverErrorRetries = 0;
+
+  if (options.logRequest) {
+    const { protocol, hostname, pathname } = describeG2bRequest(url);
+    console.log("[G2B_REQUEST]", { protocol, hostname, pathname });
+  }
+
+  /**
+   * 5xx 재시도 여부 판단. 재시도 가능하면 정해진 간격만큼 대기 후 true 를 반환한다.
+   */
+  const waitForServerErrorRetry = async (attempt: number, status: number): Promise<boolean> => {
+    if (attempt >= retries) return false;
+    if (serverErrorRetries >= SERVER_ERROR_RETRY_DELAYS_MS.length) return false;
+    const delay = SERVER_ERROR_RETRY_DELAYS_MS[serverErrorRetries];
+    serverErrorRetries += 1;
+    console.warn("[G2B_RETRY]", {
+      ...describeG2bRequest(url),
+      status,
+      attempt,
+      retryInMs: delay,
+    });
+    await sleep(delay);
+    return true;
+  };
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     const controller = new AbortController();
@@ -238,10 +274,7 @@ export async function fetchG2bApi(
         if (status >= 500) {
           lastError = `HTTP ${status} (JSON 아닌 응답): ${text.slice(0, 120)}`;
           lastErrorKind = "API_RESPONSE_ERROR";
-          if (attempt < retries) {
-            await sleep(baseDelay * 2 ** (attempt - 1) + Math.random() * 200);
-            continue;
-          }
+          if (await waitForServerErrorRetry(attempt, status)) continue;
           return {
             ok: false,
             errorKind: lastErrorKind,
@@ -259,12 +292,9 @@ export async function fetchG2bApi(
 
       const header = readHeader(parsed);
       if (status >= 500) {
-        lastError = `HTTP ${status} · ${header?.resultMsg ?? ""}`;
+        lastError = `HTTP ${status} · ${header?.resultMsg ?? "공공데이터포털 응답 오류"}`.trim();
         lastErrorKind = "API_RESPONSE_ERROR";
-        if (attempt < retries) {
-          await sleep(baseDelay * 2 ** (attempt - 1) + Math.random() * 200);
-          continue;
-        }
+        if (await waitForServerErrorRetry(attempt, status)) continue;
         return {
           ok: false,
           errorKind: lastErrorKind,

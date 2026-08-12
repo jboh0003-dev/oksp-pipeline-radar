@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminFailResponse, requireAdmin } from "@/lib/apiAuth";
+import { resolveBidBaseUrl } from "@/lib/g2b/baseUrl";
 
 export const runtime = "nodejs";
 
@@ -145,7 +146,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<TestG2bRes
   }
 
   const serviceKey = process.env.G2B_SERVICE_KEY!.trim();
-  const baseUrl = process.env.G2B_API_BASE_URL!.trim();
+  const baseUrl = resolveBidBaseUrl();
   const { inqryBgnDt, inqryEndDt } = getInquiryDateRange();
   const { requestUrl, requestUrlWithoutKey } = buildG2bRequestUrls(
     baseUrl,

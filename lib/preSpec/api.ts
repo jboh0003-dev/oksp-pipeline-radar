@@ -22,11 +22,8 @@
  *   - 페이지 별 결과를 PreSpecFetchPage 로 그대로 노출 → 호출부에서 CollectionError 로 매핑.
  */
 
+import { resolvePreSpecBaseUrl } from "@/lib/g2b/baseUrl";
 import { fetchG2bPaged, type G2bPagedPage } from "@/lib/g2b/fetchPaged";
-
-const DEFAULT_BASE_URL =
-  process.env.G2B_PRESPEC_BASE_URL ??
-  "http://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService";
 
 export type PreSpecCategory = "servc" | "thng" | "cnstwk" | "frgcpt";
 
@@ -134,11 +131,13 @@ async function fetchOneCategoryWithFallback(
   };
   const allPages: PreSpecFetchPage[] = [];
   let lastTotalCount: number | null = null;
+  const baseUrl = resolvePreSpecBaseUrl();
 
   for (const endpoint of candidates) {
     const result = await fetchG2bPaged({
-      baseUrl: DEFAULT_BASE_URL,
+      baseUrl,
       endpoint,
+      logRequest: true,
       sourceApi: `${sourceApi}/${endpoint}`,
       serviceKey,
       baseParams,
@@ -178,6 +177,7 @@ export async function fetchPreSpecAnnouncements(
 ): Promise<PreSpecFetchResult> {
   const categories = options.categories ?? DEFAULT_PRE_SPEC_CATEGORIES;
   const errors: string[] = [];
+  const seenErrorMessages = new Set<string>();
   const pageErrors: PreSpecFetchResult["pageErrors"] = [];
   const totalsByCategory: Partial<Record<PreSpecCategory, number>> = {};
   const allPages: PreSpecFetchPage[] = [];
@@ -195,6 +195,10 @@ export async function fetchPreSpecAnnouncements(
     for (const p of r.pages) {
       if (p.error) {
         const message = `[${cat}/${p.endpoint}/p${p.pageNo}] ${p.error}`;
+        // 같은 endpoint 가 여러 페이지에서 동일하게 실패하면 메시지가 중복 저장된다 → 한 번만 남긴다.
+        const dedupeKey = message.replace(/\bp\d+\b/g, "p*");
+        if (seenErrorMessages.has(dedupeKey)) continue;
+        seenErrorMessages.add(dedupeKey);
         errors.push(message);
         pageErrors.push({
           category: cat,

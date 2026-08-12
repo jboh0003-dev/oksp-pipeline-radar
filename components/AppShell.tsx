@@ -10,9 +10,10 @@ import { useAuth } from "@/lib/auth";
  * 사이드바 네비게이션 — CS-G2B 의 모든 화면이 공통으로 갖는 좌측 메뉴.
  *
  * 메뉴:
- *  - 입찰공고     (/)            : 기존 나라장터 입찰공고 대시보드
- *  - 사전규격공고 (/pre-spec)    : 사전규격 단계의 공고 (조달청 사전규격정보서비스)
- *  - 피드백       (/feedback)    : 영업이 남긴 피드백 모아보기
+ *  - 입찰공고       (/)                     : 기존 나라장터 입찰공고 대시보드
+ *  - 사전규격공고   (/pre-spec)             : 사전규격 단계의 공고 (조달청 사전규격정보서비스)
+ *  - 수주·경쟁분석  (/competitive-analysis) : 경쟁사 수주·SI 협업 분석
+ *  - 피드백         (/feedback)             : 영업이 남긴 피드백 모아보기
  *
  * 데스크톱(lg+): 사이드바 고정(240px), 본문은 우측에 grid 로 배치.
  * 모바일(<lg)  : 햄버거 토글 → fixed overlay 형태로 슬라이드.
@@ -42,7 +43,7 @@ type NavItem = {
 
 /**
  * 일반(user) + 관리자(admin) 가 모두 보는 공통 메뉴.
- *  - 입찰공고 / 사전규격공고 / 피드백 현황.
+ *  - 입찰공고 / 사전규격공고 / 수주·경쟁분석 / 피드백 현황.
  */
 const NAV_ITEMS: NavItem[] = [
   {
@@ -67,6 +68,19 @@ const NAV_ITEMS: NavItem[] = [
         <path d="M14 2v6h6" />
         <path d="M9 13h6" />
         <path d="M9 17h4" />
+      </svg>
+    ),
+  },
+  {
+    href: "/competitive-analysis",
+    label: "수주·경쟁분석",
+    description: "경쟁사 수주·SI 협업 분석",
+    scope: "all",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M18 20V10" />
+        <path d="M12 20V4" />
+        <path d="M6 20v-6" />
       </svg>
     ),
   },
