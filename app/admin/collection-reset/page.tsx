@@ -1,7 +1,7 @@
 import AdminPlaceholder from "@/components/AdminPlaceholder";
 
 export const metadata = {
-  title: "수집 상태 초기화 · CS-G2B",
+  title: "수집 상태 초기화 · Pipeline Maker",
 };
 
 export default function AdminCollectionResetPage() {
