@@ -11,11 +11,11 @@
  *  - 그 후에 환경변수 NEXT_PUBLIC_APP_URL 을 같은 값으로 맞춰주면 된다.
  */
 
-export const APP_NAME = "CS-G2B";
-export const APP_FULL_NAME = "OKESTRO CS-G2B";
-export const APP_TITLE = "나라장터 공고 대시보드";
+export const APP_NAME = "Pipeline Maker";
+export const APP_FULL_NAME = "OKESTRO Pipeline Maker";
+export const APP_TITLE = "나라장터";
 export const APP_DESCRIPTION =
-  "공공기관 조달 공고 조회 · 고객사·담당본부 기준 자동 매칭";
+  "나라장터 공고 탐색 · 영업기회 발굴 · 고객사·담당본부 기준 자동 매칭";
 
 const DEFAULT_APP_URL = "https://csg2b.okestro.com";
 
