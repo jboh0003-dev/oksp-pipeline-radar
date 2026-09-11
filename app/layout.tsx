@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/AppShell";
+import PipelineBrandingSync from "@/components/PipelineBrandingSync";
 import {
   APP_DESCRIPTION,
   APP_FULL_NAME,
@@ -64,8 +65,6 @@ export default function RootLayout({
   return (
     <html
       lang="ko"
-      // suppressHydrationWarning: inline script 가 SSR HTML 에 없는 .dark 를 붙일 수 있으므로
-      // <html> 한 곳에서만 hydration 경고를 무시한다.
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
@@ -73,6 +72,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-full flex flex-col">
+        <PipelineBrandingSync />
         <AppShell>{children}</AppShell>
       </body>
     </html>
