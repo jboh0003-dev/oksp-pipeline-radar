@@ -1,7 +1,7 @@
 import AdminPlaceholder from "@/components/AdminPlaceholder";
 
 export const metadata = {
-  title: "키워드 규칙 · CS-G2B",
+  title: "키워드 규칙 · Pipeline Maker",
 };
 
 export default function AdminKeywordsPage() {
