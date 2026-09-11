@@ -3,24 +3,8 @@
 import { useState } from "react";
 import OkestroWordmark from "@/components/OkestroWordmark";
 
-/**
- * Supabase Auth 이메일/비밀번호 로그인 화면.
- *
- *  - 이번 phase: 이메일/비밀번호로만 로그인. SSO / OAuth / 회원가입 / 비밀번호 재설정은 다음 단계.
- *  - 환경변수가 빠져 있으면 configError 메시지를 그대로 안내 — 로그인 시도는 막는다.
- *  - 디자인 톤은 입찰공고 헤더와 동일한 dark-navy + cyan 액센트로 통일 (csg2b-header-bg 사용 X —
- *    로그인 화면은 별도 카드 형태). 헤더 / 사이드바 디자인은 일절 손대지 않는다.
- */
-
 type Props = {
-  /**
-   * Supabase 환경변수가 빠진 경우 안내 메시지. null 이면 정상적으로 로그인 폼을 보여준다.
-   */
   configError: string | null;
-  /**
-   * AppShell.useAuth().signInWithPassword 와 동일한 시그니처.
-   * 성공 시 onAuthStateChange 가 위에서 세션을 갱신해 LoginScreen 이 자동으로 사라진다.
-   */
   signInWithPassword: (
     email: string,
     password: string,
@@ -45,7 +29,6 @@ export default function LoginScreen({ configError, signInWithPassword }: Props) 
       if (!result.ok) {
         setErrorMessage(result.error ?? "로그인에 실패했습니다.");
       }
-      // 성공 시 onAuthStateChange 가 화면을 자동 전환.
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -56,21 +39,19 @@ export default function LoginScreen({ configError, signInWithPassword }: Props) 
   return (
     <div className="min-h-screen w-full bg-slate-950 px-4 py-10 text-slate-100">
       <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-md flex-col justify-center">
-        {/* 브랜드 */}
         <div className="mb-6 flex items-center gap-3">
           <OkestroWordmark />
           <div className="hidden h-9 w-px bg-gradient-to-b from-transparent via-white/20 to-transparent sm:block" />
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">
-              OKESTRO CS-G2B
+              Pipeline Maker
             </p>
             <p className="mt-0.5 text-base font-bold tracking-tight text-white">
-              나라장터 공고 대시보드
+              나라장터
             </p>
           </div>
         </div>
 
-        {/* 카드 */}
         <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-6 shadow-xl backdrop-blur-sm sm:p-7">
           <h1 className="text-lg font-bold text-white">로그인</h1>
           <p className="mt-1 text-xs text-slate-400">
