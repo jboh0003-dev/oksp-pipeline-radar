@@ -1,7 +1,7 @@
 import AdminPlaceholder from "@/components/AdminPlaceholder";
 
 export const metadata = {
-  title: "사용자 관리 · CS-G2B",
+  title: "사용자 관리 · Pipeline Maker",
 };
 
 export default function AdminUsersPage() {
