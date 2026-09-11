@@ -7,10 +7,10 @@ import LoginScreen from "@/components/LoginScreen";
 import { useAuth } from "@/lib/auth";
 
 /**
- * 사이드바 네비게이션 — CS-G2B 의 모든 화면이 공통으로 갖는 좌측 메뉴.
+ * 사이드바 네비게이션 — Pipeline Maker의 모든 화면이 공통으로 갖는 좌측 메뉴.
  *
  * 메뉴:
- *  - 입찰공고       (/)                     : 기존 나라장터 입찰공고 대시보드
+ *  - 입찰공고       (/)                     : 나라장터 입찰공고
  *  - 사전규격공고   (/pre-spec)             : 사전규격 단계의 공고 (조달청 사전규격정보서비스)
  *  - 수주·경쟁분석  (/competitive-analysis) : 경쟁사 수주·SI 협업 분석
  *  - 피드백         (/feedback)             : 영업이 남긴 피드백 모아보기
@@ -21,13 +21,13 @@ import { useAuth } from "@/lib/auth";
  * 디자인 톤:
  *  - 다크 navy 패널 (입찰 대시보드 헤더 톤과 통일).
  *  - 활성 메뉴: 좌측 4px cyan 강조선 + 살짝 밝은 배경.
- *  - 상단에는 OKESTRO 로고 + CS-G2B 브랜드 워드마크.
+ *  - 상단에는 Pipeline Maker 브랜드와 나라장터 보조명을 표시.
  *
- * 인증 게이트 (이번 phase 추가):
+ * 인증 게이트:
  *  - useAuth() 가 status="authed" 일 때만 사이드바+본문을 렌더한다.
  *  - "loading"   : 화면 깜빡임을 줄이기 위한 미니 스플래시.
- *  - "unauthed"  : LoginScreen 만 노출 (대시보드 내용 전체 차단).
- *  - "missing-config" : LoginScreen 에 안내 메시지 노출 (로그인 시도 차단).
+ *  - "unauthed"  : LoginScreen 만 노출.
+ *  - "missing-config" : LoginScreen 에 안내 메시지 노출.
  *  - 로그인 성공 후 좌측 하단에 사용자 이메일 + 로그아웃 버튼이 표시된다.
  */
 
@@ -35,16 +35,10 @@ type NavItem = {
   href: string;
   label: string;
   description: string;
-  /** 아이콘 (간단한 SVG) */
   icon: React.ReactNode;
-  /** "admin" 이면 admin role 만 보인다. 기본은 모두에게 보이는 일반 메뉴. */
   scope?: "all" | "admin";
 };
 
-/**
- * 일반(user) + 관리자(admin) 가 모두 보는 공통 메뉴.
- *  - 입찰공고 / 사전규격공고 / 수주·경쟁분석 / 피드백 현황.
- */
 const NAV_ITEMS: NavItem[] = [
   {
     href: "/",
@@ -97,11 +91,6 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
-/**
- * admin 전용 메뉴 — profiles.role === "admin" 사용자에게만 노출.
- *  - 이번 phase 는 메뉴 노출 제어만. 페이지는 placeholder ("준비 중") 로 안내.
- *  - 관리자 권한 강제(서버측 RLS / API guard) 는 다음 phase.
- */
 const ADMIN_NAV_ITEMS: NavItem[] = [
   {
     href: "/admin",
@@ -162,25 +151,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const auth = useAuth();
 
-  /**
-   * 활성 메뉴 판단:
-   *  - 정확히 매칭되거나
-   *  - 메뉴가 "/" 가 아닌 경우, 현재 경로가 그 메뉴 경로로 시작하면 활성.
-   */
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
-  /*
-   * 인증 게이트.
-   *  - status==="loading" : 짧은 스플래시(아주 미니멀). 이후 즉시 분기.
-   *  - 비로그인 / 환경변수 미설정 : LoginScreen 으로 전체 화면 교체.
-   *  - 인증 완료: 기존 사이드바 + 본문 그대로 렌더.
-   *
-   * 디자인 변경 금지 조건을 지키기 위해 사이드바 / 본문 마크업은 그대로 두고,
-   * 좌측 하단의 footer 라인만 "이메일 + 로그아웃" 으로 교체한다.
-   */
   if (auth.status === "loading") {
     return (
       <div
@@ -201,22 +176,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const userEmail = auth.session?.user?.email ?? "(이메일 없음)";
-  const role = auth.role; // "admin" | "user"
+  const role = auth.role;
   const isAdmin = auth.isAdmin;
-
-  /**
-   * 사이드바에 노출할 메뉴 — role 별 분기.
-   *  - 공통 메뉴(NAV_ITEMS) 는 admin / user 모두 노출.
-   *  - admin 전용 메뉴(ADMIN_NAV_ITEMS) 는 isAdmin 일 때만 노출.
-   *  - profile fetch 가 끝나기 전(role 폴백 "user")엔 admin 메뉴가 잠시 숨겨졌다가 격상 후 등장.
-   */
   const visibleNavItems = NAV_ITEMS;
   const visibleAdminItems = isAdmin ? ADMIN_NAV_ITEMS : [];
 
-  /**
-   * 메뉴 렌더링 — Link 항목 한 줄을 그리는 helper.
-   * 디자인 / className 은 기존 그대로, 분기 위해 함수로만 추출.
-   */
   function renderNavLink(item: NavItem) {
     const active = isActive(item.href);
     return (
@@ -263,7 +227,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      {/* 모바일 상단 스트립 — 사이드바 토글 + 브랜드 */}
       <header className="sticky top-0 z-30 flex h-12 items-center justify-between border-b border-slate-900/10 bg-slate-950 px-4 text-white shadow-sm backdrop-blur lg:hidden dark:border-white/10">
         <button
           type="button"
@@ -273,40 +236,33 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         >
           {mobileOpen ? "✕" : "☰"}
         </button>
-        <span className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200">
-          CS-G2B
+        <span className="text-xs font-bold tracking-[0.08em] text-cyan-200">
+          Pipeline Maker
         </span>
         <span className="w-9" aria-hidden />
       </header>
 
-      {/* 사이드바 */}
       <aside
         className={`${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         } fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-slate-950 text-white shadow-xl ring-1 ring-white/10 transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:w-60 lg:translate-x-0 lg:shadow-none`}
       >
-        {/* 브랜드 영역 */}
         <div className="border-b border-white/10 px-5 py-5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/80">
-            OKESTRO CS-G2B
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/80">
+            Pipeline Maker
           </p>
           <p className="mt-0.5 text-base font-bold tracking-tight text-white">
-            나라장터 공고 조회
+            나라장터
           </p>
           <p className="mt-1 text-[11px] leading-snug text-slate-400">
-            공공기관 조달 공고 조회 ·<br />
-            사전규격 조기탐지 · 담당본부 자동 매칭
+            공고 탐색 · 영업기회 발굴 ·<br />
+            고객사·담당본부 자동 매칭
           </p>
         </div>
 
-        {/* 메뉴 */}
         <nav className="flex-1 space-y-1 px-3 py-4">
           {visibleNavItems.map(renderNavLink)}
 
-          {/*
-            관리자 섹션 — admin role 사용자에게만 노출.
-            그룹 헤더("관리자")로 시각적으로 분리해 일반 메뉴와 구분.
-          */}
           {visibleAdminItems.length > 0 && (
             <div className="pt-3">
               <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
@@ -319,12 +275,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/*
-          좌측 하단 — 사용자 이메일 + 로그아웃.
-          - 디자인 톤은 기존 footer(slate-500, 10px) 와 동일하게 유지.
-          - 이메일은 truncate, title 로 전체값 노출.
-          - 로그아웃은 작은 ghost 버튼.
-        */}
         <div className="border-t border-white/10 px-4 py-3 text-[10px] text-slate-400">
           <div
             className="flex items-center gap-2"
@@ -339,10 +289,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <span className="min-w-0 flex-1 truncate text-[11px] text-slate-300">
               {userEmail}
             </span>
-            {/*
-              role 배지 — admin 은 amber, user 는 slate. profile fetch 가 끝나지 않은
-              짧은 순간엔 "user" 로 표기되었다가 admin 이면 자동 격상된다.
-            */}
             <span
               className={
                 role === "admin"
@@ -369,7 +315,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* 모바일에서 사이드바 열렸을 때 backdrop */}
       {mobileOpen && (
         <button
           type="button"
@@ -379,7 +324,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      {/* 본문 */}
       <main className="min-w-0 flex-1">{children}</main>
     </div>
   );
