@@ -67,7 +67,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/competitive-analysis",
-    label: "수주·경쟁분석",
+    label: "수주 이력·경쟁분석",
     description: "경쟁사 수주·SI 협업 분석",
     scope: "all",
     icon: (

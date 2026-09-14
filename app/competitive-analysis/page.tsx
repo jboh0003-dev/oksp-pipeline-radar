@@ -205,12 +205,6 @@ const VERIFIED_WINS: VerifiedWin[] = [
 const YEAR_OPTIONS = ["전체", "2026", "2025", "2024", "2023"] as const;
 const COMPETITOR_OPTIONS = ["전체", "이노그리드", "에이블클라우드"] as const;
 
-function formatWon(value: number): string {
-  if (value >= 100_000_000) {
-    return `${(value / 100_000_000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억원`;
-  }
-  return `${value.toLocaleString("ko-KR")}원`;
-}
 
 export default function CompetitiveAnalysisPage() {
   const [year, setYear] = useState<(typeof YEAR_OPTIONS)[number]>("전체");
@@ -232,12 +226,12 @@ export default function CompetitiveAnalysisPage() {
 
   const summary = useMemo(() => {
     const knownAmounts = filtered.filter((item) => item.amountWon != null);
-    const knownAmountTotal = knownAmounts.reduce((sum, item) => sum + (item.amountWon ?? 0), 0);
+
     return {
       count: filtered.length,
       companies: new Set(filtered.map((item) => item.competitor)).size,
       knownAmountCount: knownAmounts.length,
-      knownAmountTotal,
+
     };
   }, [filtered]);
 
@@ -245,21 +239,43 @@ export default function CompetitiveAnalysisPage() {
     return (COMPETITOR_OPTIONS.filter((name) => name !== "전체") as Array<"이노그리드" | "에이블클라우드">).map(
       (name) => {
         const wins = filtered.filter((item) => item.competitor === name);
-        const knownAmount = wins.reduce((sum, item) => sum + (item.amountWon ?? 0), 0);
-        return { name, count: wins.length, knownAmount };
+
+        return { name, count: wins.length };
       },
     );
   }, [filtered]);
+
+  const history = useMemo(() => Array.from(new Set(filtered.map((row) => row.year)))
+    .sort((a, b) => b - a).map((value) => ({
+      year: value,
+      rows: filtered.filter((row) => row.year === value),
+    })), [filtered]);
+  const customers = useMemo(() => Array.from(new Set(filtered.map((row) => row.customer)))
+    .map((name) => ({ name, rows: filtered.filter((row) => row.customer === name) }))
+    .sort((a, b) => b.rows.length - a.rows.length || a.name.localeCompare(b.name, "ko")), [filtered]);
+
+  function exportHistory() {
+    const escape = (value: unknown) => {
+      const raw = String(value ?? "");
+      const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replaceAll('"', '""')}"`;
+    };
+    const rows = [["연도", "월", "경쟁사", "사업명", "고객기관", "역할", "금액 원문", "확인 근거", "출처"],
+      ...filtered.map((row) => [row.year, row.month, row.competitor, row.project, row.customer, row.role, row.amountLabel, row.evidence, row.sourceUrl])];
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + rows.map((row) => row.map(escape).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a"); link.href = url; link.download = "수주이력_경쟁분석.csv"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   return (
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 sm:py-7">
         <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
           <div className="relative flex min-h-[160px] flex-col justify-center px-5 py-7 sm:min-h-[190px] sm:px-7 sm:py-9">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">OKESTRO CS-G2B</p>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-white drop-shadow-sm sm:text-2xl">수주·경쟁분석</h1>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">파이프라인 메이커 · 나라장터</p>
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-white drop-shadow-sm sm:text-2xl">과거 수주 이력·경쟁분석</h1>
             <p className="mt-1 max-w-3xl text-xs text-slate-200/85 sm:text-sm">
-              추정 키워드 매칭은 전부 제외하고, 회사 공식 자료에서 실제 수주·공급 사실이 확인되는 실적만 표시합니다.
+              공식 자료에 기록된 사업 이력을 연도·경쟁사·고객기관별로 비교하고, 후속 영업 검토에 활용합니다.
             </p>
           </div>
         </header>
@@ -268,11 +284,11 @@ export default function CompetitiveAnalysisPage() {
           <SummaryCard label="확인 수주 실적" value={`${summary.count}건`} note="공식 출처 확인 기준" />
           <SummaryCard label="확인 경쟁사" value={`${summary.companies}개사`} note="제품명은 회사와 분리" />
           <SummaryCard label="금액 공개 실적" value={`${summary.knownAmountCount}건`} note="출처에 금액이 명시된 건" />
-          <SummaryCard label="공개 금액 합계" value={summary.knownAmountTotal ? formatWon(summary.knownAmountTotal) : "-"} note="자사분 비공개 금액 제외" />
+          <SummaryCard label="고객기관" value={`${new Set(filtered.map((item) => item.customer)).size}곳`} note="검색 결과에 포함된 기관" />
         </section>
 
         <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 shadow-sm dark:border-amber-300/20 dark:bg-amber-400/10 dark:text-amber-100 sm:text-sm">
-          <strong>정리 기준:</strong> ‘에이블스택(ABLESTACK)’은 경쟁사명이 아니라 에이블클라우드의 제품명이므로 별도 회사로 집계하지 않습니다. 팝콘사는 공식 회사 소개 기준 AUTOSAR·자동차 SW 기업으로 확인되어 현재 클라우드/HCI 경쟁 수주 집계에서 제외했습니다.
+          <strong>조회 범위:</strong> 등록된 공식 수주·공급 사례 기준이며 전체 조달시장의 전수 집계가 아닙니다. 사업비·계약금액·공급사 매출은 서로 다를 수 있어 금액을 합산하지 않습니다. 각 사례의 원문과 역할을 함께 확인하세요.
         </section>
 
         <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
@@ -300,13 +316,36 @@ export default function CompetitiveAnalysisPage() {
           </div>
         </section>
 
+        <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="font-bold">과거 사업 이력</h2><p className="mt-1 text-xs text-slate-500">선택한 연도·경쟁사·검색어가 이력과 기관 목록에 함께 적용됩니다.</p></div>
+            <button onClick={exportHistory} disabled={!filtered.length} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">검색 결과 CSV 다운로드</button>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {history.map((item) => <div key={item.year} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
+              <p className="font-bold">{item.year}년 · {item.rows.length}건</p>
+              <p className="mt-1 text-xs text-slate-500">{new Set(item.rows.map((row) => row.customer)).size}개 고객기관</p>
+              <p className="mt-2 text-xs">{Array.from(new Set(item.rows.map((row) => row.competitor))).join(" · ")}</p>
+            </div>)}
+          </div>
+          {!history.length && <p className="mt-3 text-sm text-slate-500">조건에 맞는 등록 이력이 없습니다. 실제 수주가 없다는 의미는 아닙니다.</p>}
+          <details className="mt-4 border-t border-slate-100 pt-3 dark:border-white/10">
+            <summary className="cursor-pointer text-sm font-semibold">고객기관별 사업 이력 ({customers.length}곳)</summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">{customers.map((item) => <div key={item.name} className="rounded-lg border border-slate-200 p-3 dark:border-white/10">
+              <p className="text-sm font-bold">{item.name} · {item.rows.length}건</p>
+              {item.rows.map((row) => <p key={row.id} className="mt-1 text-xs text-slate-500">{row.year}.{String(row.month).padStart(2, "0")} · {row.competitor} · {row.project}</p>)}
+            </div>)}</div>
+          </details>
+          <p className="mt-4 text-xs leading-5 text-slate-500">영업 검토: 기존 공급사와 사업 주제를 확인한 뒤, 후속 공고·교체 수요·협력 가능한 파트너를 검토합니다. 이력만으로 재발주나 수주 가능성을 단정하지 않습니다.</p>
+        </section>
+
         <section className="mb-5 grid gap-3 md:grid-cols-2">
           {companySummary.map((item) => (
             <div key={item.name} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
               <p className="text-sm font-bold text-slate-900 dark:text-white">{item.name}</p>
               <div className="mt-2 flex items-baseline gap-4">
                 <span className="text-2xl font-bold text-blue-600 dark:text-blue-300">{item.count}건</span>
-                <span className="text-xs text-slate-500 dark:text-slate-400">공개 금액 {item.knownAmount ? formatWon(item.knownAmount) : "-"}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">고객기관 {new Set(filtered.filter((row) => row.competitor === item.name).map((row) => row.customer)).size}곳</span>
               </div>
             </div>
           ))}
