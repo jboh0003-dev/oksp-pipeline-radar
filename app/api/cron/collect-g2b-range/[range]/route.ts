@@ -26,37 +26,74 @@ function parseRange(request: NextRequest): { start: number; end: number } | null
   return { start, end };
 }
 
+type Aggregate = {
+  fetchedPages: number;
+  fetchedCount: number;
+  matchedCount: number;
+  savedCount: number;
+  insertedCount: number;
+  updatedCount: number;
+  activeProductMatchedCount: number;
+  skippedExpiredCount: number;
+  skippedNoProductCount: number;
+};
+
+function emptyAggregate(): Aggregate {
+  return {
+    fetchedPages: 0,
+    fetchedCount: 0,
+    matchedCount: 0,
+    savedCount: 0,
+    insertedCount: 0,
+    updatedCount: 0,
+    activeProductMatchedCount: 0,
+    skippedExpiredCount: 0,
+    skippedNoProductCount: 0,
+  };
+}
+
+function addBody(aggregate: Aggregate, body: CollectResponse) {
+  aggregate.fetchedPages += body.fetchedPages ?? 0;
+  aggregate.fetchedCount += body.fetchedCount ?? 0;
+  aggregate.matchedCount += body.matchedCount ?? 0;
+  aggregate.savedCount += body.savedCount ?? 0;
+  aggregate.insertedCount += body.insertedCount ?? 0;
+  aggregate.updatedCount += body.updatedCount ?? 0;
+  aggregate.activeProductMatchedCount += body.activeProductMatchedCount ?? 0;
+  aggregate.skippedExpiredCount += body.skippedExpiredCount ?? 0;
+  aggregate.skippedNoProductCount += body.skippedNoProductCount ?? 0;
+}
+
 async function recordRun(args: {
   start: number;
   end: number;
   startedAt: string;
   finishedAt: string;
-  body: CollectResponse | null;
+  aggregate: Aggregate;
   errors: string[];
 }) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return "Supabase admin client unavailable";
 
-  const body = args.body;
   const payload = {
     source: `cron:collect-g2b:range:${String(args.start).padStart(2, "0")}-${String(args.end).padStart(2, "0")}`,
     mode: "auto",
     started_at: args.startedAt,
     finished_at: args.finishedAt,
     ok: args.errors.length === 0,
-    target_count: body?.targetCount ?? 1,
+    target_count: 1,
     page_start: args.start,
     page_end: args.end,
-    fetched_count: body?.fetchedCount ?? 0,
-    matched_count: body?.matchedCount ?? 0,
-    saved_count: body?.savedCount ?? 0,
-    inserted_count: body?.insertedCount ?? 0,
-    updated_count: body?.updatedCount ?? 0,
-    skipped_expired_count: body?.skippedExpiredCount ?? 0,
-    skipped_no_product_count: body?.skippedNoProductCount ?? 0,
+    fetched_count: args.aggregate.fetchedCount,
+    matched_count: args.aggregate.matchedCount,
+    saved_count: args.aggregate.savedCount,
+    inserted_count: args.aggregate.insertedCount,
+    updated_count: args.aggregate.updatedCount,
+    skipped_expired_count: args.aggregate.skippedExpiredCount,
+    skipped_no_product_count: args.aggregate.skippedNoProductCount,
     errors: args.errors,
     warnings: [
-      `sharded-range=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · Vercel timeout isolation`,
+      `sharded-range=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · page-parallel timeout isolation`,
     ],
     message: `자동수집 page ${args.start}-${args.end}`,
   };
@@ -87,31 +124,47 @@ async function handle(request: NextRequest) {
   }
 
   const startedAt = new Date().toISOString();
-  let body: CollectResponse | null = null;
-  let runtimeError: string | null = null;
+  const pages = Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i);
+  const aggregate = emptyAggregate();
+  const errors: string[] = [];
 
-  try {
-    const result = await runCollect({
-      targetCount: 1,
-      lookbackDays: LOOKBACK_DAYS,
-      pageStart: range.start,
-      pageEnd: range.end,
-    });
-    body = result.body;
-  } catch (error) {
-    runtimeError = error instanceof Error ? error.message : String(error);
+  // 5페이지를 한 runCollect 안에서 직렬 처리하면 외부 API 지연 시 300초를 넘길 수 있다.
+  // 각 페이지를 독립 실행해 동시에 처리하면 한 페이지 장애가 다른 페이지를 막지 않고,
+  // 전체 wall-clock 시간을 페이지 수만큼 누적하지 않는다.
+  const pageResults = await Promise.allSettled(
+    pages.map(async (page) => {
+      const result = await runCollect({
+        targetCount: 1,
+        lookbackDays: LOOKBACK_DAYS,
+        pageStart: page,
+        pageEnd: page,
+      });
+      return { page, body: result.body };
+    }),
+  );
+
+  for (let i = 0; i < pageResults.length; i += 1) {
+    const result = pageResults[i];
+    const page = pages[i];
+    if (result.status === "rejected") {
+      const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      errors.push(`page ${page} runCollect 예외: ${message}`);
+      continue;
+    }
+
+    addBody(aggregate, result.value.body);
+    for (const error of result.value.body.errors ?? []) {
+      errors.push(`page ${page}: ${error}`);
+    }
   }
 
   const finishedAt = new Date().toISOString();
-  const errors = [...(body?.errors ?? [])];
-  if (runtimeError) errors.push(`runCollect 예외: ${runtimeError}`);
-
   const dbLogError = await recordRun({
     start: range.start,
     end: range.end,
     startedAt,
     finishedAt,
-    body,
+    aggregate,
     errors,
   });
 
@@ -119,10 +172,11 @@ async function handle(request: NextRequest) {
   console.log("[/api/cron/collect-g2b-range] done", {
     range: `${range.start}-${range.end}`,
     ok,
-    fetched: body?.fetchedCount ?? 0,
-    matched: body?.matchedCount ?? 0,
-    inserted: body?.insertedCount ?? 0,
-    updated: body?.updatedCount ?? 0,
+    fetchedPages: aggregate.fetchedPages,
+    fetched: aggregate.fetchedCount,
+    matched: aggregate.matchedCount,
+    inserted: aggregate.insertedCount,
+    updated: aggregate.updatedCount,
     errorCount: errors.length,
     dbLogError,
   });
@@ -132,12 +186,13 @@ async function handle(request: NextRequest) {
     range,
     startedAt,
     finishedAt,
-    fetchedCount: body?.fetchedCount ?? 0,
-    matchedCount: body?.matchedCount ?? 0,
-    savedCount: body?.savedCount ?? 0,
-    insertedCount: body?.insertedCount ?? 0,
-    updatedCount: body?.updatedCount ?? 0,
-    activeProductMatchedCount: body?.activeProductMatchedCount ?? 0,
+    fetchedPages: aggregate.fetchedPages,
+    fetchedCount: aggregate.fetchedCount,
+    matchedCount: aggregate.matchedCount,
+    savedCount: aggregate.savedCount,
+    insertedCount: aggregate.insertedCount,
+    updatedCount: aggregate.updatedCount,
+    activeProductMatchedCount: aggregate.activeProductMatchedCount,
     errors,
     dbLogError,
   });
