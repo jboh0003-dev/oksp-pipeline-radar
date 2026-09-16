@@ -6,6 +6,7 @@
  * 보장하는 동작:
  *  - timeout (AbortController 기반, 기본 15s)
  *  - retry (지수 백오프, 기본 3회)
+ *  - 입찰공고 수집은 Vercel 함수 timeout을 피하기 위해 요청당 12s / 최대 2회로 상한
  *  - resultCode/resultMsg 검사 (header.resultCode !== "00" 이면 에러)
  *  - JSON 파싱 실패 캐치
  *  - serviceKey 인코딩 이슈 대응 (이미 인코딩된 키가 들어와도 다시 인코딩하지 않음)
@@ -38,7 +39,7 @@ export type G2bResponse = {
 export type G2bRequestOptions = {
   /** 요청별 timeout(ms). 기본 15000. */
   timeoutMs?: number;
-  /** retry 시도 횟수. 기본 3. (최초 1회 + 추가 retry 2회) */
+  /** retry 시도 횟수. 기본 3. (최초 호출을 포함한 총 시도 횟수) */
   retries?: number;
   /** 요청 직전 protocol/hostname/pathname 로그를 남길지. query와 serviceKey는 출력하지 않는다. */
   logRequest?: boolean;
@@ -89,6 +90,13 @@ const DEFAULT_RETRIES = 3;
 const DEFAULT_BASE_DELAY_MS = 600;
 
 /**
+ * 입찰공고 4개 엔드포인트는 한 수집 안에서 연속 호출되므로, 외부 API가 느릴 때
+ * 요청 하나가 60초 이상을 잡아먹지 않도록 별도 상한을 둔다.
+ */
+const BID_REQUEST_TIMEOUT_CAP_MS = 12_000;
+const BID_REQUEST_RETRY_CAP = 2;
+
+/**
  * 공공데이터포털이 5xx(주로 502 Bad Gateway) 를 돌려줄 때의 재시도 정책.
  * 최대 2회, 간격은 2초 → 5초. 그래도 실패하면 해당 호출만 실패로 처리하고 반환한다.
  */
@@ -110,7 +118,6 @@ function buildQueryString(params: Record<string, string | number | undefined>): 
     const value = String(raw);
     let encoded: string;
     if (key === "serviceKey" && /%[0-9A-Fa-f]{2}/.test(value)) {
-      // 이미 URL-encoded 된 키 — 두 번 인코딩 방지.
       encoded = value;
     } else {
       encoded = encodeURIComponent(value);
@@ -175,7 +182,6 @@ function buildDebug(
   const header = readHeader(parsed);
   const totalCount = readTotalCount(parsed);
   return {
-    // debug 는 API 응답/로그로 흘러갈 수 있으므로 serviceKey 는 항상 마스킹한다.
     url: maskServiceKey(url),
     attempts,
     durationMs,
@@ -193,15 +199,20 @@ function buildDebug(
  *  - 5xx / 네트워크 / timeout 에는 retry. 4xx 는 즉시 실패 처리.
  *  - HTTP 200 + body.header.resultCode !== "00" 도 실패 처리.
  *  - parsing 실패 시 JSON_PARSE_ERROR.
- *
- *  반환: G2bResult — 성공이면 data, 실패면 error/errorKind. 어느 쪽이든 debug 가 채워진다.
  */
 export async function fetchG2bApi(
   url: string,
   options: G2bRequestOptions = {},
 ): Promise<G2bResult> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const retries = Math.max(1, options.retries ?? DEFAULT_RETRIES);
+  const requestedTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const requestedRetries = Math.max(1, options.retries ?? DEFAULT_RETRIES);
+  const isBidCollectionRequest = options.label?.startsWith("getBidPblancListInfo") ?? false;
+  const timeoutMs = isBidCollectionRequest
+    ? Math.min(requestedTimeoutMs, BID_REQUEST_TIMEOUT_CAP_MS)
+    : requestedTimeoutMs;
+  const retries = isBidCollectionRequest
+    ? Math.min(requestedRetries, BID_REQUEST_RETRY_CAP)
+    : requestedRetries;
   const baseDelay = options.retryBaseDelayMs ?? DEFAULT_BASE_DELAY_MS;
 
   const headers: Record<string, string> = {
@@ -213,7 +224,6 @@ export async function fetchG2bApi(
   let lastErrorKind: G2bFailure["errorKind"] = "UNKNOWN_ERROR";
   let lastStatus: number | null = null;
   const startedAt = Date.now();
-  // 5xx 재시도는 SERVER_ERROR_RETRY_DELAYS_MS 길이(=2회) 로 별도 제한한다.
   let serverErrorRetries = 0;
 
   if (options.logRequest) {
@@ -221,9 +231,6 @@ export async function fetchG2bApi(
     console.log("[G2B_REQUEST]", { protocol, hostname, pathname });
   }
 
-  /**
-   * 5xx 재시도 여부 판단. 재시도 가능하면 정해진 간격만큼 대기 후 true 를 반환한다.
-   */
   const waitForServerErrorRetry = async (attempt: number, status: number): Promise<boolean> => {
     if (attempt >= retries) return false;
     if (serverErrorRetries >= SERVER_ERROR_RETRY_DELAYS_MS.length) return false;
@@ -255,7 +262,6 @@ export async function fetchG2bApi(
       lastStatus = status;
       const text = await response.text();
 
-      // 4xx 는 retry 의미가 없음 → 즉시 종료.
       if (status >= 400 && status < 500) {
         return {
           ok: false,
@@ -265,12 +271,10 @@ export async function fetchG2bApi(
         };
       }
 
-      // 5xx / 200 모두 일단 파싱 시도.
       let parsed: unknown;
       try {
         parsed = JSON.parse(text);
       } catch {
-        // body 가 XML 등 — 파싱 불가. 5xx 면 retry, 200 이면 즉시 JSON_PARSE_ERROR.
         if (status >= 500) {
           lastError = `HTTP ${status} (JSON 아닌 응답): ${text.slice(0, 120)}`;
           lastErrorKind = "API_RESPONSE_ERROR";
@@ -303,9 +307,7 @@ export async function fetchG2bApi(
         };
       }
 
-      // resultCode 검사 — "00" 이외는 실패. (단, 일부 응답은 header 자체가 비어 있을 수 있음 → 그대로 ok)
       if (header && header.resultCode && header.resultCode !== "00") {
-        // 30/12/11 등 키 미인증 / 일일 한도 초과 — 호출부가 errorKind 으로 분기 가능.
         const code = header.resultCode;
         const kind: G2bFailure["errorKind"] =
           code === "30" || code === "31" ? "API_KEY_MISSING" : "API_RESPONSE_ERROR";
@@ -317,7 +319,6 @@ export async function fetchG2bApi(
         };
       }
 
-      // 정상 응답.
       return {
         ok: true,
         data: parsed as G2bResponse,
@@ -346,7 +347,6 @@ export async function fetchG2bApi(
     }
   }
 
-  // 도달 불가 — 안전 fallback.
   return {
     ok: false,
     errorKind: lastErrorKind,
@@ -355,10 +355,6 @@ export async function fetchG2bApi(
   };
 }
 
-/**
- * `(parsed) => items[]` 형태의 정규화 함수와 함께 호출 — 자주 쓰는 한 번 더 감싼 helper.
- * items 정규화는 lib/g2b/normalize.ts 의 normalizeItems 를 사용한다.
- */
 export function getResponseHeader(parsed: unknown): G2bResultHeader | null {
   return readHeader(parsed);
 }
