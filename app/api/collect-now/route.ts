@@ -14,6 +14,8 @@ const RESPONSE_SCHEMA_VERSION = 2;
  *
  * - 화면의 "지금 수집" 버튼이 호출한다 (admin 사용자만 보임).
  * - 자동수집(cron) 과 동일한 runCollect 로직을 재사용한다.
+ * - 자동 수집은 여러 page range 로 나눠 전체 범위를 훑고,
+ *   수동 수집은 최근 5개 page 만 빠르게 갱신해 300초 timeout 을 피한다.
  * - admin 인증 필요: Authorization: Bearer <Supabase access_token>.
  *   profile.role !== 'admin' 이면 403.
  * - 추가로 abuse 방지를 위해
@@ -31,10 +33,10 @@ let isRunning = false;
 let lastFinishedAt = 0;
 
 const MANUAL_DEFAULTS = {
-  targetCount: 100,
+  targetCount: 20,
   lookbackDays: 30,
   pageStart: 1,
-  pageEnd: 20,
+  pageEnd: 5,
 } as const;
 
 type ManualResult = {
@@ -242,12 +244,12 @@ async function handleManual(request: NextRequest) {
   const collectOk = body?.ok ?? false;
 
   const warnings: string[] = [
-    `mode=manual · pages ${pageStart}-${pageEnd} · lookback ${lookbackDays}일 · target ${targetCount}`,
+    `mode=manual-quick · pages ${pageStart}-${pageEnd} · lookback ${lookbackDays}일 · target ${targetCount}`,
   ];
 
   let message: string | null = null;
   if (ok && activeProductMatchedCount < targetCount) {
-    message = "목표 건수에는 도달하지 못했지만, 수동 수집은 정상 실행되었습니다.";
+    message = "최근 공고 빠른 갱신은 정상 실행되었습니다.";
   }
 
   const insertResult = await recordRun({
