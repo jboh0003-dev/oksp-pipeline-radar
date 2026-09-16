@@ -38,8 +38,9 @@ async function recordRun(args: {
   if (!supabase) return "Supabase admin client unavailable";
 
   const body = args.body;
-  const { error } = await supabase.from("collection_runs").insert({
+  const payload = {
     source: `cron:collect-g2b:range:${String(args.start).padStart(2, "0")}-${String(args.end).padStart(2, "0")}`,
+    mode: "auto",
     started_at: args.startedAt,
     finished_at: args.finishedAt,
     ok: args.errors.length === 0,
@@ -49,14 +50,18 @@ async function recordRun(args: {
     fetched_count: body?.fetchedCount ?? 0,
     matched_count: body?.matchedCount ?? 0,
     saved_count: body?.savedCount ?? 0,
+    inserted_count: body?.insertedCount ?? 0,
+    updated_count: body?.updatedCount ?? 0,
     skipped_expired_count: body?.skippedExpiredCount ?? 0,
     skipped_no_product_count: body?.skippedNoProductCount ?? 0,
     errors: args.errors,
     warnings: [
       `sharded-range=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · Vercel timeout isolation`,
     ],
-  } as never);
+    message: `자동수집 page ${args.start}-${args.end}`,
+  };
 
+  const { error } = await supabase.from("collection_runs").insert(payload as never);
   if (!error) return null;
   return [error.message, error.code, error.details, error.hint].filter(Boolean).join(" | ");
 }
@@ -116,7 +121,8 @@ async function handle(request: NextRequest) {
     ok,
     fetched: body?.fetchedCount ?? 0,
     matched: body?.matchedCount ?? 0,
-    saved: body?.savedCount ?? 0,
+    inserted: body?.insertedCount ?? 0,
+    updated: body?.updatedCount ?? 0,
     errorCount: errors.length,
     dbLogError,
   });
