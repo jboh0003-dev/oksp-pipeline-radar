@@ -11,11 +11,6 @@ import {
   type NoticeRow,
 } from "@/lib/supabase";
 
-/**
- * 서버 라우트(`/api/customer-accounts/match`)를 통해 매칭 결과만 받는다.
- * 고객사 마스터 전체가 브라우저에 노출되지 않도록, 화면에 보이는 공고들의
- * 기관명 목록만 서버에 보내고 매칭된 항목만 응답으로 받는다.
- */
 type CustomerMatchPayload = {
   customerName: string;
   accountType: string | null;
@@ -72,12 +67,8 @@ export type FetchNoticesResult = {
   matchError: string | null;
 };
 
-/** 화면에 표시할 source_type: g2b, g2b_keyword, g2b_active_core, null·빈 문자열 */
 const DISPLAY_SOURCE_TYPES = new Set(["g2b", "g2b_keyword", "g2b_active_core"]);
-
-/** Supabase 에서 가져올 최대 건수. 매칭된 공고를 모두 화면 페이지네이션으로 도달 가능하도록 넉넉히. */
 export const DISPLAY_FETCH_LIMIT = 1000;
-
 const DISPLAY_SOURCE_OR_FILTER =
   "source_type.eq.g2b,source_type.eq.g2b_keyword,source_type.eq.g2b_active_core,source_type.is.null,source_type.eq.";
 
@@ -88,6 +79,18 @@ function isDisplayableSourceType(sourceType: string | null | undefined): boolean
 function isTestNotice(row: NoticeRow): boolean {
   const url = (row.original_url ?? "").toLowerCase();
   return url.includes("example.com");
+}
+
+function getKstTodayDateString(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
 function formatDueDate(value: string): string {
@@ -187,8 +190,6 @@ function mapRowToNotice(
   const dueRaw = row.due_date;
   const keywords = parseStringArray(row.keywords);
 
-  // 하드웨어 납품성 / 단순 구매 시그널을 검사해 등급을 다운그레이드.
-  // 점수(match_score)는 그대로 유지하고, matchGrade 만 negativeWeight 를 반영해 결정.
   const negativeText = buildNegativeSearchText({
     title: row.title,
     agency: row.agency,
@@ -198,7 +199,6 @@ function mapRowToNotice(
   });
   const { weight: negativeWeight } = detectNegativeSignals(negativeText);
 
-  // 내부 고객사 매칭은 서버에서 이미 처리되어 매칭된 항목만 내려왔다.
   const matched = row.agency ? matches[row.agency.trim()] : undefined;
   let customer: NoticeCustomerInfo | undefined;
   if (matched) {
@@ -212,11 +212,9 @@ function mapRowToNotice(
     };
   }
 
-  // 첨부파일 / RFP / 규격서 / 과업지시서 — raw_data 에서 한 번 추출.
   const attachments = extractAttachments(row.raw_data ?? null);
   const att = summarizeAttachments(attachments);
 
-  // 원문 URL 결정: 직접 저장된 original_url 이 있으면 우선 사용, 없으면 bidNtceNo 로 검색 fallback.
   const rawData = (row.raw_data ?? null) as Record<string, unknown> | null;
   const bidNtceNo =
     rawData && typeof rawData["bidNtceNo"] === "string"
@@ -245,8 +243,7 @@ function mapRowToNotice(
     matchGrade: evaluateMatchGrade(fitScore, negativeWeight),
     keywords,
     summary: row.summary ?? undefined,
-    sourceUrl:
-      sourceUrlInfo.url ?? row.original_url ?? "https://www.g2b.go.kr/",
+    sourceUrl: sourceUrlInfo.url ?? row.original_url ?? "https://www.g2b.go.kr/",
     customer,
     attachments,
     hasRfp: att.hasRfp,
@@ -274,10 +271,12 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
   }
 
   try {
+    const todayKst = getKstTodayDateString();
     const { data, error } = await supabase
       .from("notices")
       .select("*")
       .eq("status", "open")
+      .gte("due_date", todayKst)
       .or(DISPLAY_SOURCE_OR_FILTER)
       .order("match_score", { ascending: false, nullsFirst: false })
       .order("due_date", { ascending: true })
@@ -292,8 +291,6 @@ export async function fetchNotices(): Promise<FetchNoticesResult> {
       (row) => isDisplayableSourceType(row.source_type) && !isTestNotice(row),
     );
 
-    // 화면에 보일 후보 공고들의 기관명만 추려 서버 라우트에 보내고
-    // 매칭된 항목만 응답으로 받는다. 고객사 마스터 자체는 브라우저에 노출되지 않는다.
     const agencies = rows.map((r) => (r.agency ?? "").trim()).filter((a) => a.length > 0);
     const { matches, error: matchError } = await fetchMatchedCustomers(agencies);
 
