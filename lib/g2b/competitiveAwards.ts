@@ -4,9 +4,17 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 const BASE_URL = "https://apis.data.go.kr/1230000/as/ScsbidInfoService";
 export const G2B_AWARD_SOURCE_URL = "https://www.data.go.kr/data/15129397/openapi.do";
 
+export type CompetitiveAwardCompany =
+  | "이노그리드"
+  | "에이블클라우드"
+  | "오케스트로"
+  | "오케스트로클라우드";
+
 export const COMPETITIVE_AWARD_COMPANIES = [
   { competitor: "이노그리드" as const, bizno: "2208736743" },
   { competitor: "에이블클라우드" as const, bizno: "8868602158" },
+  { competitor: "오케스트로" as const, bizno: "6748801017" },
+  { competitor: "오케스트로클라우드" as const, bizno: "6318603620" },
 ] as const;
 
 const AWARD_KINDS = [
@@ -18,7 +26,7 @@ const AWARD_KINDS = [
 
 export type CompetitiveAwardRow = {
   external_key: string;
-  competitor: "이노그리드" | "에이블클라우드";
+  competitor: CompetitiveAwardCompany;
   winner_name: string;
   winner_business_no: string;
   award_date: string | null;
@@ -47,6 +55,14 @@ type FetchTask = {
   window: MonthWindow;
 };
 
+type FetchTaskResult = {
+  rows: CompetitiveAwardRow[];
+  fetched: number;
+  requests: number;
+  mismatches: number;
+  errors: string[];
+};
+
 export type CompetitiveAwardCollectResult = {
   ok: boolean;
   startDate: string;
@@ -58,6 +74,9 @@ export type CompetitiveAwardCollectResult = {
   insertedCount: number;
   updatedCount: number;
   skippedMismatchCount: number;
+  retriedTaskCount: number;
+  failedTaskCount: number;
+  companyCounts: Record<CompetitiveAwardCompany, number>;
   errors: string[];
   rows: CompetitiveAwardRow[];
 };
@@ -210,7 +229,7 @@ function normalizeAward(task: FetchTask, item: RawItem): CompetitiveAwardRow | n
   };
 }
 
-async function fetchTask(task: FetchTask, serviceKey: string): Promise<{ rows: CompetitiveAwardRow[]; fetched: number; requests: number; mismatches: number; errors: string[] }> {
+async function fetchTask(task: FetchTask, serviceKey: string): Promise<FetchTaskResult> {
   const pageSize = 999;
   const makeUrl = (pageNo: number) => buildG2bUrl(BASE_URL, task.kind.endpoint, {
     serviceKey,
@@ -267,9 +286,11 @@ async function fetchTask(task: FetchTask, serviceKey: string): Promise<{ rows: C
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  if (items.length === 0) return [];
   const out = new Array<R>(items.length);
   let index = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+  const workerCount = Math.max(1, Math.min(Math.floor(concurrency) || 1, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
     while (true) {
       const current = index++;
       if (current >= items.length) break;
@@ -316,6 +337,15 @@ async function persistRows(rows: CompetitiveAwardRow[]): Promise<{ inserted: num
   return { inserted, updated };
 }
 
+function blankCompanyCounts(): Record<CompetitiveAwardCompany, number> {
+  return {
+    이노그리드: 0,
+    에이블클라우드: 0,
+    오케스트로: 0,
+    오케스트로클라우드: 0,
+  };
+}
+
 export async function collectCompetitiveAwards(options: {
   startDate: string;
   endDate: string;
@@ -333,12 +363,36 @@ export async function collectCompetitiveAwards(options: {
     }
   }
 
-  const results = await mapWithConcurrency(tasks, options.concurrency ?? 6, (task) => fetchTask(task, serviceKey));
-  const errors = results.flatMap((result) => result.errors);
-  const requestCount = results.reduce((sum, result) => sum + result.requests, 0);
-  const fetchedCount = results.reduce((sum, result) => sum + result.fetched, 0);
-  const skippedMismatchCount = results.reduce((sum, result) => sum + result.mismatches, 0);
-  const verifiedRows = results.flatMap((result) => result.rows);
+  type TaskRun = { task: FetchTask; result: FetchTaskResult };
+  const concurrency = options.concurrency ?? 6;
+  let runs = await mapWithConcurrency(tasks, concurrency, async (task): Promise<TaskRun> => ({
+    task,
+    result: await fetchTask(task, serviceKey),
+  }));
+
+  let requestCount = runs.reduce((sum, run) => sum + run.result.requests, 0);
+  const failedIndexes = runs.flatMap((run, index) => run.result.errors.length ? [index] : []);
+  const retriedTaskCount = failedIndexes.length;
+
+  if (failedIndexes.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const retryRuns = await mapWithConcurrency(
+      failedIndexes.map((index) => runs[index].task),
+      Math.min(3, concurrency),
+      async (task): Promise<TaskRun> => ({ task, result: await fetchTask(task, serviceKey) }),
+    );
+    requestCount += retryRuns.reduce((sum, run) => sum + run.result.requests, 0);
+    runs = runs.map((run, index) => {
+      const retryIndex = failedIndexes.indexOf(index);
+      return retryIndex >= 0 ? retryRuns[retryIndex] : run;
+    });
+  }
+
+  const errors = runs.flatMap((run) => run.result.errors);
+  const failedTaskCount = runs.filter((run) => run.result.errors.length > 0).length;
+  const fetchedCount = runs.reduce((sum, run) => sum + run.result.fetched, 0);
+  const skippedMismatchCount = runs.reduce((sum, run) => sum + run.result.mismatches, 0);
+  const verifiedRows = runs.flatMap((run) => run.result.rows);
 
   const dedupedMap = new Map<string, CompetitiveAwardRow>();
   for (const row of verifiedRows) dedupedMap.set(row.external_key, row);
@@ -349,11 +403,14 @@ export async function collectCompetitiveAwards(options: {
 
   let insertedCount = 0;
   let updatedCount = 0;
-  if ((options.persist ?? true) && errors.length === 0) {
+  if ((options.persist ?? true) && rows.length > 0) {
     const persisted = await persistRows(rows);
     insertedCount = persisted.inserted;
     updatedCount = persisted.updated;
   }
+
+  const companyCounts = blankCompanyCounts();
+  for (const row of rows) companyCounts[row.competitor] += 1;
 
   return {
     ok: errors.length === 0,
@@ -366,6 +423,9 @@ export async function collectCompetitiveAwards(options: {
     insertedCount,
     updatedCount,
     skippedMismatchCount,
+    retriedTaskCount,
+    failedTaskCount,
+    companyCounts,
     errors,
     rows,
   };
