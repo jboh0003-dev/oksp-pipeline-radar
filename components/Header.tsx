@@ -1,5 +1,4 @@
 import OkestroWordmark from "./OkestroWordmark";
-import ThemeToggle from "./ThemeToggle";
 
 type HeaderProps = {
   /**
@@ -17,10 +16,6 @@ type HeaderProps = {
   fromCache?: boolean;
 };
 
-/**
- * 좌측: OKESTRO 로고 + Pipeline Maker 브랜드 + 나라장터 보조 타이틀.
- * 우측: 진행중 카운트 칩(단일 숫자) + 라이트/다크 토글.
- */
 export default function Header({ matchedCount, fromCache }: HeaderProps) {
   return (
     <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
@@ -53,7 +48,7 @@ export default function Header({ matchedCount, fromCache }: HeaderProps) {
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2 pr-24 sm:pr-28">
           <div className="inline-flex flex-col items-end gap-0.5 rounded-xl border border-white/20 bg-white/15 px-3 py-1.5 text-white shadow-sm backdrop-blur-sm">
             <div className="flex items-center gap-1.5 text-xs sm:text-sm">
               <span className="text-slate-100/80">진행중</span>
@@ -71,7 +66,6 @@ export default function Header({ matchedCount, fromCache }: HeaderProps) {
               )}
             </p>
           </div>
-          <ThemeToggle />
         </div>
       </div>
     </header>
