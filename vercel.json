@@ -2,39 +2,39 @@
   "crons": [
     {
       "path": "/api/cron/collect-prespec",
-      "schedule": "30 20 * * *"
+      "schedule": "20 23 * * *"
     },
     {
       "path": "/api/cron/collect-g2b-range/1-5",
-      "schedule": "0 21 * * *"
-    },
-    {
-      "path": "/api/cron/collect-g2b-range/6-10",
-      "schedule": "30 21 * * *"
-    },
-    {
-      "path": "/api/cron/collect-g2b-range/11-15",
-      "schedule": "0 22 * * *"
-    },
-    {
-      "path": "/api/cron/collect-g2b-range/16-20",
-      "schedule": "30 22 * * *"
-    },
-    {
-      "path": "/api/cron/collect-g2b-range/21-25",
-      "schedule": "0 23 * * *"
-    },
-    {
-      "path": "/api/cron/collect-g2b-range/26-30",
       "schedule": "30 23 * * *"
     },
     {
-      "path": "/api/cron/collect-g2b-range/31-35",
+      "path": "/api/cron/collect-g2b-range/6-10",
+      "schedule": "40 23 * * *"
+    },
+    {
+      "path": "/api/cron/collect-g2b-range/11-15",
+      "schedule": "50 23 * * *"
+    },
+    {
+      "path": "/api/cron/collect-g2b-range/16-20",
       "schedule": "0 0 * * *"
     },
     {
-      "path": "/api/cron/collect-g2b-range/36-40",
+      "path": "/api/cron/collect-g2b-range/21-25",
+      "schedule": "10 0 * * *"
+    },
+    {
+      "path": "/api/cron/collect-g2b-range/26-30",
+      "schedule": "20 0 * * *"
+    },
+    {
+      "path": "/api/cron/collect-g2b-range/31-35",
       "schedule": "30 0 * * *"
+    },
+    {
+      "path": "/api/cron/collect-g2b-range/36-40",
+      "schedule": "40 0 * * *"
     }
   ]
 }
