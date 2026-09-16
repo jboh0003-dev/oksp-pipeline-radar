@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/AppShell";
 import PipelineBrandingSync from "@/components/PipelineBrandingSync";
+import ThemeToggle from "@/components/ThemeToggle";
 import {
   APP_DESCRIPTION,
   APP_FULL_NAME,
@@ -35,15 +36,6 @@ export const metadata: Metadata = {
   },
 };
 
-/*
-  hydration 직전에 동기적으로 .dark 클래스를 붙여두는 inline script.
-  - 첫 페인트에서 라이트→다크로 깜빡이는 FOUC 방지
-  - 사용자가 직접 선택한 값이 가장 우선
-  - 저장값이 없을 때만 prefers-color-scheme: dark 를 따른다.
-  - 키 이름:
-      - 새 이름: 'cs-g2b-theme'
-      - 구 이름: 'oksp-theme' (마이그레이션 호환용. 새 키가 비어 있으면 fallback 으로 읽음)
-*/
 const themeInitScript = `(() => {
   try {
     var theme = localStorage.getItem('cs-g2b-theme') || localStorage.getItem('oksp-theme');
@@ -73,6 +65,9 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <PipelineBrandingSync />
+        <div className="fixed right-3 top-2 z-[100] sm:right-5 sm:top-4">
+          <ThemeToggle />
+        </div>
         <AppShell>{children}</AppShell>
       </body>
     </html>
