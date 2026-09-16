@@ -94,8 +94,8 @@ export default function LastCollectionRunCard(props: Props) {
           </>
         ) : (
           <span className="whitespace-nowrap text-slate-500 dark:text-slate-400">
-            저장
-            <span className="ml-1 font-semibold tabular-nums text-blue-600 dark:text-blue-300">
+            신규
+            <span className="ml-1 font-semibold tabular-nums text-emerald-600 dark:text-emerald-300">
               {formatNumber(displayRun.saved_count)}
             </span>
           </span>
