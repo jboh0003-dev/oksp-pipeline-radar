@@ -3,19 +3,10 @@ import { isIsoStaleSinceMorningCutoff } from "@/lib/freshness";
 
 type Props = {
   run: CollectionRunRow | null;
-  /** Supabase 조회 자체가 실패한 경우만 채운다. (이력 없음과 구분) */
   error: string | null;
-  /** 첫 마운트 시 fetchLastCollectionRun 을 기다리는 동안 true. */
   isLoading: boolean;
-  /**
-   * 마지막 "성공" 수집 row. lastRun.ok=true 면 동일하지만, 마지막 시도가 실패면
-   * 이 값은 더 과거의 성공 row 를 가리킨다. stale 판정은 이 값 기준.
-   *  - undefined / null 이면 lastRun.ok=true 인 경우 lastRun 으로 폴백.
-   */
   lastSuccess?: CollectionRunRow | null;
-  /** 카드 제목. 기본 "최근 수집". */
   title?: string;
-  /** false 이면 '지금 수집' 안내 문구를 숨긴다 (일반 사용자 화면). */
   showManualCollectHint?: boolean;
 };
 
@@ -32,7 +23,6 @@ function formatKstShort(value: string | null): string {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-  // ex) "06-05 12:32"
   return KST_FORMATTER.format(date)
     .replace(/\. /g, "-")
     .replace(/\.$/, "")
@@ -46,6 +36,7 @@ function pickItems(value: string[] | null | undefined): string[] {
 
 function extractSlotLabel(source: string | null | undefined): string | null {
   if (!source) return null;
+  if (source.includes(":range:")) return "분산";
   if (source.endsWith(":daily")) return "daily";
   if (source.endsWith(":morning")) return "morning";
   if (source.endsWith(":afternoon")) return "afternoon";
@@ -65,7 +56,6 @@ function formatNumber(value: number | null | undefined): string {
   return value.toLocaleString("ko-KR");
 }
 
-/** mode 또는 source 에서 자동/수동을 판별. */
 function resolveMode(
   mode: CollectionRunRow["mode"],
   source: string | null | undefined,
@@ -109,11 +99,9 @@ export default function LastCollectionRunCard({
     return (
       <Shell title={title}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-slate-700 dark:text-slate-200">
-            {title}
-          </span>
+          <span className="font-semibold text-slate-700 dark:text-slate-200">{title}</span>
           <span className="hidden text-[11px] font-normal text-slate-400 dark:text-slate-500 sm:inline">
-            (업데이트 주기 매일 08:30)
+            (오전 분산 자동수집)
           </span>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
             이력 없음
@@ -132,19 +120,14 @@ export default function LastCollectionRunCard({
   const warnings = pickItems(run.warnings);
   const hasMessage = Boolean(run.message);
 
-  // "업데이트 필요" 판정 — 마지막 성공 수집이 직전 08:30 KST 이전이면 stale.
-  // lastSuccess prop 이 있으면 그것 기준, 없으면 run 자체가 ok=true 일 때만 신선도 평가.
   const successRunForStale = lastSuccess ?? (run.ok ? run : null);
-  const isStale = isIsoStaleSinceMorningCutoff(
-    successRunForStale?.finished_at ?? null,
-  );
-  // lastSuccess 가 명시적으로 null 인 경우 = 성공 이력이 한 번도 없음 → 항상 stale.
+  const isStale = isIsoStaleSinceMorningCutoff(successRunForStale?.finished_at ?? null);
   const noSuccessEver = lastSuccess === null && !run.ok;
 
-  // warnings 첫 줄 컨텍스트("slot=... · ..." 또는 "mode=manual · ...") 는 우측 메타에 따로 그리므로
-  // 메시지 카운트에서 제외.
   const isContextLine = (msg: string) =>
-    /^slot=(daily|morning|afternoon|noon)\s*·/.test(msg) || /^mode=(auto|manual)\s*·/.test(msg);
+    /^slot=(daily|morning|afternoon|noon)\s*·/.test(msg) ||
+    /^mode=(auto|manual)\s*·/.test(msg) ||
+    /^sharded-range=/.test(msg);
   const filteredWarnings = warnings.filter((m) => !isContextLine(m));
   const noticeCount = errors.length + filteredWarnings.length + (hasMessage ? 1 : 0);
 
@@ -177,9 +160,7 @@ export default function LastCollectionRunCard({
     </span>
   );
 
-  // saved_count 가 있으면 신규/업데이트 분해 표시 (둘 다 있을 때만; 마이그 전 환경 보호).
-  const showInsertedUpdated =
-    run.inserted_count != null || run.updated_count != null;
+  const showInsertedUpdated = run.inserted_count != null || run.updated_count != null;
 
   return (
     <Shell title={title}>
@@ -188,7 +169,7 @@ export default function LastCollectionRunCard({
           <span aria-hidden className="text-blue-500 dark:text-blue-400">●</span>
           {title}
           <span className="ml-1 hidden text-[11px] font-normal text-slate-400 dark:text-slate-500 sm:inline">
-            (업데이트 주기 매일 08:30)
+            (오전 분산 자동수집)
           </span>
         </span>
         {modeBadge}
@@ -201,11 +182,11 @@ export default function LastCollectionRunCard({
             title={
               noSuccessEver
                 ? showManualCollectHint
-                  ? "성공한 수집 이력이 없습니다. 우측 '지금 수집' 버튼을 눌러 직접 수집해 보세요."
-                  : "성공한 자동 수집 이력이 없습니다. 매일 08:30에 자동 수집됩니다."
+                  ? "성공한 수집 이력이 없습니다. 자동수집 상태를 확인하거나 필요 시 '지금 수집'을 사용하세요."
+                  : "성공한 자동 수집 이력이 없습니다. 오전 자동수집 상태를 확인해 주세요."
                 : showManualCollectHint
-                  ? "마지막 성공 수집이 오늘 08:30 KST 이전입니다. 자동 수집이 동작하지 않았을 수 있어요."
-                  : "마지막 자동 수집이 오늘 08:30 KST 이전입니다. 잠시 후 새로고침해 주세요."
+                  ? "오늘 오전 자동수집 시작 이후 성공 이력이 없습니다. 자동수집 상태를 확인해 주세요."
+                  : "오늘 오전 자동수집 시작 이후 성공 이력이 없습니다. 잠시 후 새로고침해 주세요."
             }
             className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
           >
@@ -263,9 +244,7 @@ export default function LastCollectionRunCard({
 
         {noticeCount > 0 && (
           <span
-            title={[...errors, ...filteredWarnings, ...(run.message ? [run.message] : [])].join(
-              "\n",
-            )}
+            title={[...errors, ...filteredWarnings, ...(run.message ? [run.message] : [])].join("\n")}
             className={`ml-auto inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${
               errors.length > 0
                 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
@@ -277,7 +256,6 @@ export default function LastCollectionRunCard({
         )}
       </div>
 
-      {/* 실패 사유는 카드 하단에 좀 더 눈에 띄게 별도 라인으로 표시. */}
       {!run.ok && errors.length > 0 && (
         <p className="mt-2 break-words text-[11px] leading-5 text-rose-700 dark:text-rose-300">
           <span className="font-semibold">실패 사유:</span>{" "}
