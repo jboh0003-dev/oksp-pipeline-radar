@@ -3,6 +3,28 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 
+type AwardRow = {
+  customer?: string | null;
+  project?: string | null;
+  [key: string]: unknown;
+};
+
+function isActualAward(row: AwardRow): boolean {
+  const customer = String(row.customer ?? "").trim();
+  const project = String(row.project ?? "").replace(/\s+/g, " ").trim();
+
+  // '각 수요기관'은 특정 고객의 실제 수주가 아니라 제3자단가·디지털서비스 등
+  // 카탈로그/기본계약 등록 건으로 확인되어 수주실적 집계에서 제외한다.
+  if (customer === "각 수요기관") return false;
+
+  // 수요기관 값이 비어 있으면서 계약등록 성격이 명확한 레코드도 방어적으로 제외한다.
+  if (!customer && /(제\s*3자\s*단가|3자단가|디지털서비스[_\s,]|상용SW\s*제3자단가)/i.test(project)) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function GET() {
   const supabase = getSupabaseAdmin();
   if (!supabase) {
@@ -21,5 +43,13 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: "나라장터 낙찰 데이터 조회에 실패했습니다." }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, rows: data ?? [] });
+  const rawRows = (data ?? []) as AwardRow[];
+  const rows = rawRows.filter(isActualAward);
+
+  return NextResponse.json({
+    ok: true,
+    rows,
+    rawCount: rawRows.length,
+    excludedCatalogRegistrationCount: rawRows.length - rows.length,
+  });
 }
