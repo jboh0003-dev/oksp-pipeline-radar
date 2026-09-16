@@ -5,13 +5,9 @@ import {
 } from "@/lib/supabase";
 
 export type LastCollectionRunResult = {
-  /** 가장 최근 collection_runs row. 한 건도 없거나 조회 실패 시 null. */
+  /** 가장 최근 입찰공고 collection_runs row. 한 건도 없거나 조회 실패 시 null. */
   run: CollectionRunRow | null;
-  /**
-   * 조회 자체가 실패한 경우의 에러 메시지.
-   * 예) 테이블 미생성, RLS, 환경변수 누락.
-   * UI 에서는 "이력 없음" 과 "조회 실패" 를 구분해서 보여주려고 별도 필드로 둔다.
-   */
+  /** 조회 자체가 실패한 경우의 에러 메시지. */
   error: string | null;
 };
 
@@ -66,8 +62,6 @@ export function normalizeCollectionRunRow(raw: Record<string, unknown>): Collect
     skipped_expired_count: pickNumber(raw.skipped_expired_count),
     skipped_no_product_count: pickNumber(raw.skipped_no_product_count),
     errors: pickStringArray(raw.errors),
-    // warnings / message 컬럼이 아직 마이그레이션 안 된 환경에서도
-    // undefined 가 들어가도록 안전하게 추출.
     warnings: pickStringArray(raw.warnings),
     message: pickString(raw.message),
     created_at: pickString(raw.created_at),
@@ -75,49 +69,21 @@ export function normalizeCollectionRunRow(raw: Record<string, unknown>): Collect
 }
 
 /**
- * collection_runs 테이블에서 가장 최근 1건을 가져온다.
- * - finished_at 우선, finished_at 이 null 인 row 는 created_at 기준으로 fallback 정렬.
- * - 일부 컬럼(warnings/message)이 마이그레이션되지 않은 환경에서도 깨지지 않도록
- *   `select('*')` 로 가져오고 클라이언트에서 키 존재 여부에 안전하게 매핑한다.
+ * 메인 입찰공고 화면의 신선도에는 입찰 수집 이력만 사용한다.
+ *
+ * 기존 구현은 source 구분 없이 collection_runs 최신 1건을 읽어서,
+ * 사전규격(pre_spec) 수집이 성공하면 입찰 자동수집이 실패해도 메인 화면을
+ * "정상/최신"으로 오인할 수 있었다.
  */
-export async function fetchLastCollectionRun(): Promise<LastCollectionRunResult> {
-  const configError = getSupabaseConfigError();
-  if (configError) {
-    return { run: null, error: configError };
-  }
-
-  const supabase = getSupabaseClient();
-  if (!supabase) {
-    return { run: null, error: "Supabase 클라이언트를 생성하지 못했습니다." };
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from("collection_runs")
-      .select("*")
-      .order("finished_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false, nullsFirst: false })
-      .limit(1);
-
-    if (error) {
-      return { run: null, error: formatSupabaseError(error) };
-    }
-
-    const rows = (data ?? []) as Array<Record<string, unknown>>;
-    if (rows.length === 0) return { run: null, error: null };
-    return { run: normalizeCollectionRunRow(rows[0]), error: null };
-  } catch (error) {
-    return { run: null, error: formatSupabaseError(error) };
-  }
+function isBidCollectionSource(raw: Record<string, unknown>): boolean {
+  const source = pickString(raw.source);
+  if (!source) return false;
+  if (source === "manual:collect-now") return true;
+  if (!source.startsWith("cron:collect-g2b:")) return false;
+  return !source.includes(":prespec");
 }
 
-/**
- * collection_runs 에서 가장 최근 "성공"한 (ok=true) row 1건.
- *  - 화면의 "마지막 성공 수집" 표시 / stale 판정에 쓴다.
- *  - last attempt 와 별개로 추적하므로, 마지막 시도가 실패하더라도
- *    "데이터의 신선도" 는 마지막 성공 기준으로 계산할 수 있다.
- */
-export async function fetchLastSuccessfulRun(): Promise<LastCollectionRunResult> {
+async function fetchRecentBidRun(successOnly: boolean): Promise<LastCollectionRunResult> {
   const configError = getSupabaseConfigError();
   if (configError) return { run: null, error: configError };
 
@@ -127,20 +93,33 @@ export async function fetchLastSuccessfulRun(): Promise<LastCollectionRunResult>
   }
 
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from("collection_runs")
       .select("*")
-      .eq("ok", true)
       .order("finished_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false, nullsFirst: false })
-      .limit(1);
+      .limit(100);
 
+    if (successOnly) query = query.eq("ok", true);
+
+    const { data, error } = await query;
     if (error) return { run: null, error: formatSupabaseError(error) };
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    if (rows.length === 0) return { run: null, error: null };
-    return { run: normalizeCollectionRunRow(rows[0]), error: null };
+    const row = rows.find(isBidCollectionSource);
+    if (!row) return { run: null, error: null };
+    return { run: normalizeCollectionRunRow(row), error: null };
   } catch (error) {
     return { run: null, error: formatSupabaseError(error) };
   }
+}
+
+/** 가장 최근 입찰공고 수집 시도 1건. */
+export async function fetchLastCollectionRun(): Promise<LastCollectionRunResult> {
+  return fetchRecentBidRun(false);
+}
+
+/** 가장 최근 성공한 입찰공고 수집 1건. */
+export async function fetchLastSuccessfulRun(): Promise<LastCollectionRunResult> {
+  return fetchRecentBidRun(true);
 }
