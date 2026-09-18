@@ -9,7 +9,7 @@ import {
 } from "@/lib/preSpec/api";
 import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
 import { upsertPreSpecNotices } from "@/lib/preSpec/persist";
-import { recordPreSpecSnapshot, summarizePreSpecSnapshot } from "@/lib/preSpec/snapshot";
+import { recordPreSpecSnapshot, summarizeCurrentPreSpecDbSnapshot } from "@/lib/preSpec/snapshot";
 import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
 
   const startedAt = Date.now();
   const url = new URL(request.url);
-  const days = parseInt(url.searchParams.get("days"), 30, 1, 90);
+  const days = parseInt(url.searchParams.get("days"), 7, 1, 90);
   const cats = parseCats(url.searchParams.get("cats"));
 
   // 사전규격 전용 키를 우선 사용 (NARA_PRESPEC_API_KEY > G2B_PRESPEC_SERVICE_KEY > G2B_SERVICE_KEY).
@@ -223,9 +223,7 @@ export async function GET(request: NextRequest) {
    */
   const apiRawCount = result.items.length;
   const normalizedCount = items.length;
-  const snapshot = summarizePreSpecSnapshot(items, apiRawCount);
-  const matchedCount = snapshot.relatedCount;
-  await recordPreSpecSnapshot({ source: "manual", counts: snapshot });
+  let matchedCount = 0;
 
   const durationMs = Date.now() - startedAt;
 
@@ -286,6 +284,10 @@ export async function GET(request: NextRequest) {
       );
     }
   }
+
+  const snapshot = await summarizeCurrentPreSpecDbSnapshot(apiRawCount);
+  matchedCount = snapshot.relatedCount;
+  await recordPreSpecSnapshot({ source: "manual", counts: snapshot });
 
   // 단계별 공공 로그 — vercel logs / dev console 어디서든 한 줄로 카운터 추적 가능.
   console.log(
