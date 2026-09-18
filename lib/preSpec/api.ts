@@ -45,7 +45,7 @@ export const PRE_SPEC_CATEGORY_LABEL: Record<PreSpecCategory, string> = {
   frgcpt: "외자",
 };
 
-export const DEFAULT_PRE_SPEC_CATEGORIES: PreSpecCategory[] = ["servc", "thng"];
+export const DEFAULT_PRE_SPEC_CATEGORIES: PreSpecCategory[] = ["servc", "thng", "cnstwk", "frgcpt"];
 
 export const PRE_SPEC_NUM_OF_ROWS = 100;
 
@@ -66,7 +66,7 @@ export type PreSpecFetchOptions = {
   inqryBgnDt: string;
   /** 조회 종료일 (yyyymmddHHMM). */
   inqryEndDt: string;
-  /** 한 카테고리당 최대 페이지 수. */
+  /** 한 카테고리당 최대 페이지 수. 생략하면 totalCount 기준 전체 페이지 조회. */
   maxPagesPerCategory?: number;
   /** 사용할 카테고리. 기본 ["servc","thng"]. */
   categories?: PreSpecCategory[];
@@ -142,7 +142,7 @@ async function fetchOneCategoryWithFallback(
       serviceKey,
       baseParams,
       numOfRows: PRE_SPEC_NUM_OF_ROWS,
-      maxPages: options.maxPagesPerCategory ?? 5,
+      maxPages: options.maxPagesPerCategory,
       concurrency: options.concurrency ?? 3,
       timeoutMs: options.timeoutMs,
       retries: options.retries,
