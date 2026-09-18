@@ -3,7 +3,7 @@ import { DEFAULT_PRE_SPEC_CATEGORIES, fetchPreSpecAnnouncements, getInquiryRange
 import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
 import { upsertPreSpecNotices } from "@/lib/preSpec/persist";
 import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
-import { recordPreSpecSnapshot, summarizePreSpecSnapshot } from "@/lib/preSpec/snapshot";
+import { recordPreSpecSnapshot, summarizeCurrentPreSpecDbSnapshot } from "@/lib/preSpec/snapshot";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "pre-spec service key missing" }, { status: 500 });
   }
 
-  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(30);
+  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(7);
   const raw = await fetchPreSpecAnnouncements(key.key, {
     inqryBgnDt,
     inqryEndDt,
@@ -48,8 +48,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const snapshot = summarizePreSpecSnapshot(items, raw.items.length);
   const upsert = await upsertPreSpecNotices(items);
+  const snapshot = await summarizeCurrentPreSpecDbSnapshot(raw.items.length);
   await recordPreSpecSnapshot({ source: "manual", counts: snapshot });
 
   return NextResponse.json({
