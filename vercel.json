@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/collect-prespec",
-      "schedule": "20 23 * * *"
+      "schedule": "30 23 * * *"
     },
     {
       "path": "/api/cron/collect-g2b-range/1-5",
