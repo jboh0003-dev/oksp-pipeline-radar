@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DEFAULT_PRE_SPEC_CATEGORIES, fetchPreSpecAnnouncements, getInquiryRangeYyyymmdd } from "@/lib/preSpec/api";
+import { fetchPreSpecAnnouncements, getInquiryRangeYyyymmdd, type PreSpecCategory } from "@/lib/preSpec/api";
 import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
 import { upsertPreSpecNotices } from "@/lib/preSpec/persist";
 import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
@@ -7,13 +7,27 @@ import { recordPreSpecSnapshot, summarizeCurrentPreSpecDbSnapshot } from "@/lib/
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 120;
 
-const TOKEN = "pm-prespec-full-20260918-v1";
+const TOKEN = "pm-prespec-full-20260918-v2";
+const CATS = new Set<PreSpecCategory>(["servc","thng","cnstwk","frgcpt"]);
 
 export async function GET(request: NextRequest) {
   if (request.nextUrl.searchParams.get("token") !== TOKEN) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const mode = request.nextUrl.searchParams.get("mode") ?? "collect";
+  if (mode === "snapshot") {
+    const fetchedCount = Math.max(0, Number(request.nextUrl.searchParams.get("fetched") ?? "0") || 0);
+    const snapshot = await summarizeCurrentPreSpecDbSnapshot(fetchedCount);
+    await recordPreSpecSnapshot({ source: "manual", counts: snapshot });
+    return NextResponse.json({ ok: true, ...snapshot });
+  }
+
+  const cat = request.nextUrl.searchParams.get("cat") as PreSpecCategory | null;
+  if (!cat || !CATS.has(cat)) {
+    return NextResponse.json({ ok: false, error: "cat required" }, { status: 400 });
   }
 
   const key = resolvePreSpecServiceKey();
@@ -25,7 +39,7 @@ export async function GET(request: NextRequest) {
   const raw = await fetchPreSpecAnnouncements(key.key, {
     inqryBgnDt,
     inqryEndDt,
-    categories: DEFAULT_PRE_SPEC_CATEGORIES,
+    categories: [cat],
     concurrency: 8,
   });
 
@@ -36,7 +50,7 @@ export async function GET(request: NextRequest) {
   for (const rawItem of raw.items) {
     try {
       const meta = rawItem as { __sourceApi?: string; __sourceEndpoint?: string };
-      const item = normalizePreSpecItem(rawItem, `pre-spec-${i++}`, {
+      const item = normalizePreSpecItem(rawItem, `pre-spec-${cat}-${i++}`, {
         sourceApi: meta.__sourceApi,
         sourceEndpoint: meta.__sourceEndpoint,
       });
@@ -49,16 +63,11 @@ export async function GET(request: NextRequest) {
   }
 
   const upsert = await upsertPreSpecNotices(items);
-  const snapshot = await summarizeCurrentPreSpecDbSnapshot(raw.items.length);
-  await recordPreSpecSnapshot({ source: "manual", counts: snapshot });
-
   return NextResponse.json({
     ok: raw.errors.length === 0 && normalizeErrors.length === 0 && upsert.errors.length === 0,
+    category: cat,
     fetchedCount: raw.items.length,
     normalizedCount: items.length,
-    relatedCount: snapshot.relatedCount,
-    contrabassCount: snapshot.contrabassCount,
-    violaCount: snapshot.violaCount,
     totalByCategory: raw.totalsByCategory,
     pageCount: raw.pages.length,
     insertedCount: upsert.inserted,
