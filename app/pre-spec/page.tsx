@@ -1009,23 +1009,7 @@ export default function PreSpecPage() {
           </div>
         )}
 
-        {canAdmin && (
-          <LastCollectionRunCard
-            title="최근 사전규격 수집"
-            run={lastPreSpecRun}
-            error={lastPreSpecRunError}
-            isLoading={lastPreSpecRunLoading}
-            lastSuccess={lastPreSpecSuccess}
-            showManualCollectHint={canAdmin}
-          />
-        )}
 
-        {canAdmin && (
-          <p className="mb-3 font-mono text-[10px] text-slate-400 dark:text-slate-500">
-            env={clientDebug.nodeEnv} · supabase={clientDebug.maskedUrl ?? "(unset)"} · dbRows=
-            {dbRowCount ?? "-"} · role={auth.role ?? "-"}
-          </p>
-        )}
 
         {canAdmin && (apiErrors.length > 0 || debugInfo) && !errorMessage && (
           <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400">
@@ -1071,115 +1055,67 @@ export default function PreSpecPage() {
           </div>
         )}
 
-        {/*
-          상단 카드 — 입찰공고와 동일 정의.
-            - 진행중   : 마감 제외 unique 공고 수
-            - 의견마감 임박 / 신규 / 피드백 : 보조지표
-          제품별 카드 (CONTRABASS / VIOLA / CMP) 는 products.includes 기준 (중복 포함).
-        */}
-        <section className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-          <SummaryCard label="진행중" value={activeTotal} note="마감 제외 · 중복제거" tone="blue" />
-          <SummaryCard label="의견마감 임박" value={imminentTotal} note="3일 이내" tone="rose" />
-          <SummaryCard label="신규" value={newTotal} note="이번 수집에 새로 등장" tone="amber" />
-          <SummaryCard label="피드백" value={feedbackTotal} note="등록된 의견" tone="violet" />
-        </section>
-
-        {/* 제품별 카드 — CONTRABASS / VIOLA 만 */}
-        <section className="mb-4 grid grid-cols-2 gap-2.5">
-          <SummaryCard label="CONTRABASS" value={contrabassTotal} note="인프라·클라우드·가상화" tone="indigo" />
-          <SummaryCard label="VIOLA" value={violaTotal} note="플랫폼·쿠버네티스·컨테이너" tone="cyan" />
-        </section>
-
-        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:text-sm">
-          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600 dark:text-slate-300">
-            <span>
-              <span className="text-slate-500 dark:text-slate-400">조회 </span>
-              <span className="font-semibold tabular-nums">{rawTotal.toLocaleString("ko-KR")}</span>
-            </span>
-            <span>
-              <span className="text-slate-500 dark:text-slate-400">진행중 </span>
-              <span className="font-semibold tabular-nums">{activeTotal.toLocaleString("ko-KR")}</span>
-            </span>
-            <span>
-              <span className="text-slate-500 dark:text-slate-400">추천 </span>
-              <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
-                {recommendedTotal.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            <span>
-              <span className="text-slate-500 dark:text-slate-400">현재 표시 </span>
-              <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-                {totalFiltered.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            <span>
-              <span className="text-slate-500 dark:text-slate-400">제외 </span>
-              <span className="font-semibold tabular-nums text-slate-500">
-                {excludedTotal.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            {fromCache && (
-              <span className="rounded-full bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-700 ring-1 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-400/30">
-                cache
-              </span>
+        <div className="mb-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
+          <p className="font-semibold text-slate-800 dark:text-slate-100">
+            최근 30일 나라장터 사전규격 전체 조회 → CONTRABASS/VIOLA 관련 공고만 선별
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+            {simpleSummary?.latest ? (
+              <>
+                최신 수집 {new Date(simpleSummary.latest.collectedAt).toLocaleString("ko-KR")}
+                {simpleSummary.previous && (
+                  <> · 신규는 이전 기준 {new Date(simpleSummary.previous.collectedAt).toLocaleString("ko-KR")} 대비</>
+                )}
+              </>
+            ) : (
+              <>수집 결과 집계 중</>
             )}
           </p>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            적용 필터: <span className="font-medium text-slate-700 dark:text-slate-200">{appliedFilterLabel}</span>
-            {lastFetchAt && (
-              <span className="ml-2 text-slate-400 dark:text-slate-500">
-                · 업데이트 주기 매일 08:30 · 마지막 수집{" "}
-                {new Date(lastFetchAt).toLocaleString("ko-KR")}
-                {lastDurationMs && ` (${Math.round(lastDurationMs / 1000)}s)`}
-              </span>
-            )}
-            {lastFetchAt && canAdmin && isStaleSinceMorningCutoff(lastFetchAt) && (
-              <span
-                title="오늘 08:30 KST 이전에 받은 데이터입니다 — 지금 수집을 눌러 새로 받아오세요"
-                className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+        </div>
+
+        <section className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+          <SummaryCard label="전체 조회" value={collectedTotal} note="최근 30일 나라장터 전체" tone="blue" />
+          <SummaryCard label="관련 공고" value={relatedTotal} note="CONTRABASS 또는 VIOLA" tone="emerald" />
+          <SummaryCard label="CONTRABASS" value={collectedContrabassTotal} note="제품 키워드 매칭" tone="indigo" />
+          <SummaryCard label="VIOLA" value={collectedViolaTotal} note="제품 키워드 매칭" tone="cyan" />
+          <SummaryCard label="신규" value={newTotal} note="이전 일자 수집 대비" tone="amber" />
+        </section>
+
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400">
+          <span>표시는 관련 공고 기준</span>
+          {fromCache && <span className="rounded-full bg-cyan-50 px-1.5 py-0.5 font-semibold text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">cache</span>}
+          <span className="ml-auto">페이지당</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="h-8 rounded-md border border-slate-200 bg-white px-2 pr-6 text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-200"
+          >
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={0}>전체</option>
+          </select>
+          {pageSize !== 0 && totalPages > 1 && (
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300"
               >
-                업데이트 필요
-              </span>
-            )}
-          </p>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <label className="inline-flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-500 dark:text-slate-400 sm:text-xs">페이지당</span>
-              <select
-                value={pageSize}
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="h-8 rounded-md border border-slate-200 bg-white px-2 pr-6 text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-200"
+                ← 이전
+              </button>
+              <span className="px-1 tabular-nums">{safePage} / {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300"
               >
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={200}>200</option>
-                <option value={0}>전체</option>
-              </select>
-            </label>
-            {pageSize !== 0 && totalPages > 1 && (
-              <div className="inline-flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                  className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300"
-                >
-                  ← 이전
-                </button>
-                <span className="px-1 text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
-                  {safePage} / {totalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
-                  className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 disabled:opacity-40 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300"
-                >
-                  다음 →
-                </button>
-              </div>
-            )}
-          </div>
+                다음 →
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 필터 — 4행 구조 */}
