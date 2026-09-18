@@ -27,12 +27,34 @@ type AwardRow = {
   updated_at: string;
 };
 
+type ProductProjectRow = {
+  id: string;
+  external_key: string;
+  company: CompanyName;
+  product: string;
+  project_year: number;
+  project_date: string | null;
+  project: string;
+  customer: string;
+  sector: string;
+  verification_level: "vendor_official" | "public_crosscheck" | "g2b_verified";
+  source_label: string;
+  source_url: string;
+  public_source_label: string | null;
+  public_source_url: string | null;
+  bid_no: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ApiResponse =
   | {
       ok: true;
       rows: AwardRow[];
       rawCount?: number;
       excludedCatalogRegistrationCount?: number;
+      productProjects?: ProductProjectRow[];
     }
   | { ok: false; error: string };
 
@@ -67,8 +89,15 @@ function formatDate(value: string | null) {
   }).format(date);
 }
 
+function verificationLabel(level: ProductProjectRow["verification_level"]) {
+  if (level === "g2b_verified") return "나라장터 근거";
+  if (level === "public_crosscheck") return "공공사업 교차확인";
+  return "업체 공식 구축이력";
+}
+
 export default function CompetitiveAnalysisPage() {
   const [rows, setRows] = useState<AwardRow[]>([]);
+  const [productProjects, setProductProjects] = useState<ProductProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [year, setYear] = useState(RECENT_3Y);
@@ -88,10 +117,11 @@ export default function CompetitiveAnalysisPage() {
         if (!response.ok || !body.ok) throw new Error(body.ok ? "조회 실패" : body.error);
         if (!cancelled) {
           setRows(body.rows.filter((row) => row.source_type === "g2b_award"));
+          setProductProjects(body.productProjects ?? []);
           setExcludedCount(body.excludedCatalogRegistrationCount ?? 0);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "나라장터 낙찰 데이터를 불러오지 못했습니다.");
+        if (!cancelled) setError(err instanceof Error ? err.message : "경쟁분석 데이터를 불러오지 못했습니다.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -101,15 +131,17 @@ export default function CompetitiveAnalysisPage() {
     };
   }, []);
 
-  const availableYears = useMemo(
-    () =>
-      Array.from(
-        new Set(rows.map((row) => row.award_date?.slice(0, 4)).filter(Boolean) as string[]),
-      ).sort((a, b) => Number(b) - Number(a)),
-    [rows],
-  );
+  const availableYears = useMemo(() => {
+    const values = new Set<string>();
+    for (const row of rows) {
+      const y = row.award_date?.slice(0, 4);
+      if (y) values.add(y);
+    }
+    for (const row of productProjects) values.add(String(row.project_year));
+    return Array.from(values).sort((a, b) => Number(b) - Number(a));
+  }, [rows, productProjects]);
 
-  const filtered = useMemo(() => {
+  const filteredAwards = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((row) => {
       const rowYear = Number(row.award_date?.slice(0, 4) ?? 0);
@@ -125,39 +157,80 @@ export default function CompetitiveAnalysisPage() {
     });
   }, [rows, year, company, query, currentYear, recentStartYear]);
 
-  const summary = useMemo(
-    () => ({
-      count: filtered.length,
-      companies: new Set(filtered.map((row) => row.competitor)).size,
-      amountKnown: filtered.filter((row) => row.amount != null).length,
-      customers: new Set(filtered.map((row) => row.customer).filter(Boolean)).size,
-    }),
-    [filtered],
-  );
+  const filteredProjects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return productProjects.filter((row) => {
+      if (year === RECENT_3Y && (row.project_year < recentStartYear || row.project_year > currentYear)) return false;
+      if (year !== RECENT_3Y && year !== ALL_YEARS && String(row.project_year) !== year) return false;
+      if (company !== "전체" && row.company !== company) return false;
+      if (!q) return true;
+      return [row.project, row.customer, row.company, row.product, row.bid_no, row.source_label, row.public_source_label]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [productProjects, year, company, query, currentYear, recentStartYear]);
+
+  const summary = useMemo(() => {
+    const customers = new Set<string>();
+    filteredAwards.forEach((row) => {
+      if (row.customer) customers.add(row.customer);
+    });
+    filteredProjects.forEach((row) => {
+      if (row.customer) customers.add(row.customer);
+    });
+    return {
+      directAwards: filteredAwards.length,
+      productProjects: filteredProjects.length,
+      companies: new Set([
+        ...filteredAwards.map((row) => row.competitor),
+        ...filteredProjects.map((row) => row.company),
+      ]).size,
+      customers: customers.size,
+    };
+  }, [filteredAwards, filteredProjects]);
 
   const history = useMemo(() => {
     const map = new Map<string, AwardRow[]>();
-    for (const row of filtered) {
+    for (const row of filteredAwards) {
       const y = row.award_date?.slice(0, 4) ?? "일자 미상";
       map.set(y, [...(map.get(y) ?? []), row]);
     }
     return Array.from(map.entries())
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([label, values]) => ({ label, rows: values }));
-  }, [filtered]);
+  }, [filteredAwards]);
+
+  const productHistory = useMemo(() => {
+    const map = new Map<number, ProductProjectRow[]>();
+    for (const row of filteredProjects) {
+      map.set(row.project_year, [...(map.get(row.project_year) ?? []), row]);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => b - a)
+      .map(([label, values]) => ({ label, rows: values }));
+  }, [filteredProjects]);
 
   const companySummary = useMemo(
     () =>
       COMPANY_ORDER.map((name) => {
-        const companyRows = filtered.filter((row) => row.competitor === name);
+        const awardRows = filteredAwards.filter((row) => row.competitor === name);
+        const projectRows = filteredProjects.filter((row) => row.company === name);
+        const productDataAvailable = productProjects.some((row) => row.company === name);
         return {
           name,
           kind: companyKind(name),
-          count: companyRows.length,
-          customers: new Set(companyRows.map((row) => row.customer).filter(Boolean)).size,
+          directCount: awardRows.length,
+          productCount: projectRows.length,
+          productDataAvailable,
+          customers: new Set([
+            ...awardRows.map((row) => row.customer).filter(Boolean),
+            ...projectRows.map((row) => row.customer).filter(Boolean),
+          ]).size,
         };
       }),
-    [filtered],
+    [filteredAwards, filteredProjects, productProjects],
   );
 
   function exportCsv() {
@@ -168,7 +241,7 @@ export default function CompetitiveAnalysisPage() {
     };
     const csvRows: unknown[][] = [
       ["낙찰일", "구분", "업체", "최종낙찰업체", "사업자등록번호", "공고번호", "차수", "사업명", "수요기관", "최종낙찰금액", "낙찰률", "업무구분", "근거", "출처"],
-      ...filtered.map((row) => [
+      ...filteredAwards.map((row) => [
         row.award_date,
         companyKind(row.competitor),
         row.competitor,
@@ -192,7 +265,7 @@ export default function CompetitiveAnalysisPage() {
     );
     const a = document.createElement("a");
     a.href = url;
-    a.download = `나라장터_업체별_실제수주_${year.replaceAll(" ", "_")}.csv`;
+    a.download = `나라장터_업체별_직접낙찰_${year.replaceAll(" ", "_")}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -204,19 +277,19 @@ export default function CompetitiveAnalysisPage() {
           <div className="relative flex min-h-[160px] flex-col justify-center px-5 py-7 pr-28 sm:min-h-[190px] sm:px-7 sm:py-9 sm:pr-32">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">파이프라인 메이커 · 나라장터</p>
             <h1 className="mt-1 text-xl font-bold tracking-tight text-white drop-shadow-sm sm:text-2xl">과거 수주 이력·경쟁분석</h1>
-            <p className="mt-1 max-w-4xl text-xs text-slate-200/85 sm:text-sm">오케스트로 그룹과 주요 경쟁사의 나라장터 실제 최종낙찰 결과를 동일 기준으로 비교합니다.</p>
+            <p className="mt-1 max-w-4xl text-xs text-slate-200/85 sm:text-sm">나라장터 직접낙찰과 제조사 제품 적용·구축 실적을 분리해 확인합니다.</p>
           </div>
         </header>
 
         <section className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          <SummaryCard label="실제 수주 확인" value={loading ? "-" : `${summary.count}건`} note={year === RECENT_3Y ? `${recentStartYear}~${currentYear}년 기본` : `${year} 기준`} />
-          <SummaryCard label="확인 업체" value={loading ? "-" : `${summary.companies}개사`} note="회사 사업자번호 기준" />
-          <SummaryCard label="낙찰금액 확인" value={loading ? "-" : `${summary.amountKnown}건`} note="나라장터 최종낙찰금액" />
-          <SummaryCard label="수요기관" value={loading ? "-" : `${summary.customers}곳`} note="현재 조회조건 기준" />
+          <SummaryCard label="나라장터 직접 낙찰" value={loading ? "-" : `${summary.directAwards}건`} note={year === RECENT_3Y ? `${recentStartYear}~${currentYear}년` : `${year} 기준`} />
+          <SummaryCard label="제품 적용·구축 확인" value={loading ? "-" : `${summary.productProjects}건`} note="직접낙찰과 별도 집계" />
+          <SummaryCard label="확인 업체" value={loading ? "-" : `${summary.companies}개사`} note="현재 조회조건 기준" />
+          <SummaryCard label="확인 고객·기관" value={loading ? "-" : `${summary.customers}곳`} note="중복 고객 제외" />
         </section>
 
         <section className="mb-4 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-xs leading-5 text-cyan-900 shadow-sm dark:text-cyan-100 sm:text-sm">
-          <strong>검증 기준:</strong> 조달청 나라장터 최종낙찰업체와 회사 사업자번호가 직접 일치한 건만 사용하며, <strong>‘각 수요기관’으로 표시되는 제3자단가·디지털서비스 등 카탈로그/기본계약 등록은 실제 수주 건수에서 제외</strong>합니다. 현재 원본 보관자료 중 이 기준으로 제외된 건은 {excludedCount.toLocaleString("ko-KR")}건입니다.
+          <strong>집계 기준:</strong> <strong>직접 낙찰</strong>은 나라장터 최종낙찰업체 사업자번호가 해당 회사와 직접 일치한 건만 집계합니다. <strong>제품 적용·구축</strong>은 제조사가 공개한 구축이력 중 공공 고객·사업을 별도 관리하며, 파트너·컨소시엄이 최종낙찰사인 사업도 포함될 수 있어 직접 낙찰 건수와 합산하지 않습니다. 제3자단가·디지털서비스의 단순 등록 {excludedCount.toLocaleString("ko-KR")}건은 직접 낙찰 집계에서 제외했습니다.
         </section>
 
         {error && <section className="mb-4 rounded-2xl border border-red-300/30 bg-red-400/10 px-4 py-3 text-sm text-red-700 dark:text-red-200">{error}</section>}
@@ -239,19 +312,43 @@ export default function CompetitiveAnalysisPage() {
             </label>
             <label className="flex flex-1 flex-col gap-1 md:max-w-xl">
               <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">검색</span>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="사업명·수요기관·공고번호·낙찰업체 검색" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-white/10 dark:bg-slate-900 dark:text-slate-100" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="사업명·수요기관·공고번호·제품명 검색" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-white/10 dark:bg-slate-900 dark:text-slate-100" />
             </label>
             <button type="button" onClick={() => { setYear(RECENT_3Y); setCompany("전체"); setQuery(""); }} className="h-9 rounded-lg bg-slate-100 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">초기화</button>
           </div>
         </section>
 
+        <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {companySummary.map((item) => (
+            <div key={item.name} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-bold text-slate-900 dark:text-white">{item.name}</p>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">{item.kind}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] text-slate-400">직접 낙찰</p>
+                  <p className="mt-0.5 text-xl font-bold text-blue-600 dark:text-blue-300">{item.directCount}건</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400">제품 적용·구축</p>
+                  <p className="mt-0.5 text-xl font-bold text-cyan-600 dark:text-cyan-300">
+                    {item.productDataAvailable ? `${item.productCount}건` : "-"}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">확인 고객·기관 {item.customers}곳{!item.productDataAvailable ? " · 제품실적 데이터 미구축" : ""}</p>
+            </div>
+          ))}
+        </section>
+
         <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-bold">나라장터 실제 수주 이력</h2>
-              <p className="mt-1 text-xs text-slate-500">조회년도·업체·검색어 조건이 아래 이력과 요약에 함께 적용됩니다.</p>
+              <h2 className="font-bold">나라장터 직접 낙찰 이력</h2>
+              <p className="mt-1 text-xs text-slate-500">최종낙찰업체 사업자번호가 해당 회사와 직접 일치한 건만 표시합니다.</p>
             </div>
-            <button onClick={exportCsv} disabled={!filtered.length} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">검색 결과 CSV 다운로드</button>
+            <button onClick={exportCsv} disabled={!filteredAwards.length} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">직접 낙찰 CSV 다운로드</button>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {history.map((item) => (
@@ -262,28 +359,75 @@ export default function CompetitiveAnalysisPage() {
               </div>
             ))}
           </div>
-          {!loading && !history.length && <p className="mt-3 text-sm text-slate-500">현재 조건에서 확인된 실제 수주가 없습니다.</p>}
+          {!loading && !history.length && <p className="mt-3 text-sm text-slate-500">현재 조건에서 확인된 직접 낙찰이 없습니다.</p>}
         </section>
 
-        <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {companySummary.map((item) => (
-            <div key={item.name} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{item.name}</p>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">{item.kind}</span>
+        <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
+          <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">제품 적용·구축 실적</h2>
+            <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">제조사 공식 구축이력을 기준으로 공공 고객·사업을 정리한 보완 지표입니다. 직접 낙찰사와 제조사가 다른 사업을 놓치지 않기 위한 데이터이며 직접 낙찰 건수에는 합산하지 않습니다.</p>
+          </div>
+          <div className="grid gap-3 border-b border-slate-100 p-4 dark:border-white/10 sm:grid-cols-2 lg:grid-cols-3">
+            {productHistory.map((item) => (
+              <div key={item.label} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
+                <p className="font-bold">{item.label}년 · {item.rows.length}건</p>
+                <p className="mt-1 text-xs text-slate-500">{new Set(item.rows.map((row) => row.customer)).size}개 고객·기관</p>
               </div>
-              <div className="mt-2 flex items-baseline gap-4">
-                <span className="text-2xl font-bold text-blue-600 dark:text-blue-300">{item.count}건</span>
-                <span className="text-xs text-slate-500 dark:text-slate-400">수요기관 {item.customers}곳</span>
-              </div>
-            </div>
-          ))}
+            ))}
+            {!loading && !productHistory.length && <p className="text-sm text-slate-500">현재 조건에서 확인된 제품 적용·구축 데이터가 없습니다.</p>}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-800/40 dark:text-slate-400">
+                  <th className="whitespace-nowrap px-4 py-3">연도</th>
+                  <th className="whitespace-nowrap px-4 py-3">업체 / 제품</th>
+                  <th className="whitespace-nowrap px-4 py-3">고객·기관</th>
+                  <th className="min-w-[380px] px-4 py-3">사업·구축내용</th>
+                  <th className="whitespace-nowrap px-4 py-3">검증상태</th>
+                  <th className="whitespace-nowrap px-4 py-3">근거</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredProjects.map((item) => (
+                  <tr key={item.external_key} className="border-b border-slate-100 last:border-b-0 dark:border-white/5">
+                    <td className="whitespace-nowrap px-4 py-3.5 font-semibold text-slate-700 dark:text-slate-200">{item.project_year}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5">
+                      <p className="font-semibold text-slate-800 dark:text-slate-100">{item.company}</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">{item.product}</p>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{item.customer}</td>
+                    <td className="px-4 py-3.5 font-medium text-slate-800 dark:text-slate-100">
+                      {item.project}
+                      {item.bid_no ? <p className="mt-1 font-mono text-[10px] font-normal text-slate-400">공고 {item.bid_no}</p> : null}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5">
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                        item.verification_level === "public_crosscheck" || item.verification_level === "g2b_verified"
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                          : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                      }`}>
+                        {verificationLabel(item.verification_level)}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5">
+                      <div className="flex flex-col gap-1">
+                        <a href={item.source_url} target="_blank" rel="noreferrer" className="font-semibold text-blue-600 hover:underline dark:text-blue-300">{item.source_label}</a>
+                        {item.public_source_url ? <a href={item.public_source_url} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-emerald-600 hover:underline dark:text-emerald-300">{item.public_source_label ?? "공공사업 근거"}</a> : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!loading && filteredProjects.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">조건에 맞는 제품 적용·구축 실적이 없습니다.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
           <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
-            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">확인된 실제 최종낙찰 실적</h2>
-            <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">최종낙찰업체 사업자번호 일치 + 특정 수요기관이 확인된 건만 표시합니다.</p>
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">확인된 직접 최종낙찰 실적</h2>
+            <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">나라장터 최종낙찰업체 사업자번호 일치 + 특정 수요기관이 확인된 건만 표시합니다.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
@@ -300,7 +444,7 @@ export default function CompetitiveAnalysisPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item) => (
+                {filteredAwards.map((item) => (
                   <tr key={item.external_key} className="border-b border-slate-100 last:border-b-0 dark:border-white/5">
                     <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{formatDate(item.award_date)}</td>
                     <td className="whitespace-nowrap px-4 py-3.5">
@@ -318,18 +462,18 @@ export default function CompetitiveAnalysisPage() {
                     <td className="whitespace-nowrap px-4 py-3.5"><a href={item.source_url || "https://www.g2b.go.kr/"} target="_blank" rel="noreferrer" className="font-semibold text-blue-600 hover:underline dark:text-blue-300">{item.source_label || "나라장터 낙찰정보"}</a></td>
                   </tr>
                 ))}
-                {!loading && filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">조건에 맞는 실제 최종낙찰 실적이 없습니다.</td></tr>}
-                {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">나라장터 기반 낙찰 데이터를 불러오는 중입니다…</td></tr>}
+                {!loading && filteredAwards.length === 0 && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">조건에 맞는 직접 최종낙찰 실적이 없습니다.</td></tr>}
+                {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">경쟁분석 데이터를 불러오는 중입니다…</td></tr>}
               </tbody>
             </table>
           </div>
         </section>
 
         <section className="mt-5 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-xs leading-6 text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300">
-          <p className="font-semibold text-slate-800 dark:text-slate-100">검증 원칙</p>
-          <p>① 오케스트로·오케스트로클라우드·이노그리드·에이블클라우드의 사업자번호와 나라장터 최종낙찰업체가 일치한 건만 포함합니다.</p>
-          <p>② ‘각 수요기관’ 제3자단가·디지털서비스 카탈로그 등록은 개별 고객 수주가 아니므로 제외합니다.</p>
-          <p>③ 공고명 키워드만으로 특정 업체 수주를 추정하지 않으며, 회사 홈페이지·언론기사도 수주 건수 근거로 사용하지 않습니다.</p>
+          <p className="font-semibold text-slate-800 dark:text-slate-100">해석 원칙</p>
+          <p>① 직접 낙찰은 나라장터 최종낙찰업체 사업자번호 일치 기준입니다.</p>
+          <p>② 제품 적용·구축은 제조사 제품이 실제 사업에 공급·구축된 정황을 별도 관리하는 지표이며, 파트너·컨소시엄 사업을 포함할 수 있습니다.</p>
+          <p>③ 따라서 두 지표를 합산해 ‘총 수주’로 표현하지 않습니다. 경쟁사의 시장 적용 실적을 볼 때는 두 지표를 함께 봅니다.</p>
         </section>
       </div>
     </div>
