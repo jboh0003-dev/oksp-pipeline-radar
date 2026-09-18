@@ -9,6 +9,7 @@ import {
 } from "@/lib/preSpec/api";
 import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
 import { upsertPreSpecNotices } from "@/lib/preSpec/persist";
+import { recordPreSpecSnapshot, summarizePreSpecSnapshot } from "@/lib/preSpec/snapshot";
 import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -69,9 +70,8 @@ export async function GET(request: NextRequest) {
 
   const startedAt = Date.now();
   const url = new URL(request.url);
-  const days = parseInt(url.searchParams.get("days"), 7, 1, 90);
+  const days = parseInt(url.searchParams.get("days"), 30, 1, 90);
   const cats = parseCats(url.searchParams.get("cats"));
-  const maxPagesPerCategory = parseInt(url.searchParams.get("maxPages"), 5, 1, 50);
 
   // 사전규격 전용 키를 우선 사용 (NARA_PRESPEC_API_KEY > G2B_PRESPEC_SERVICE_KEY > G2B_SERVICE_KEY).
   // "입찰공고는 되는데 사전규격만 안 되는" 가장 흔한 원인 = 공공데이터포털 사전규격 신청 ServiceKey 가
@@ -119,8 +119,7 @@ export async function GET(request: NextRequest) {
       inqryBgnDt,
       inqryEndDt,
       categories: cats,
-      maxPagesPerCategory,
-      concurrency: 3,
+      concurrency: 6,
     });
   } catch (err) {
     const ce = makeCollectionError({
@@ -224,11 +223,9 @@ export async function GET(request: NextRequest) {
    */
   const apiRawCount = result.items.length;
   const normalizedCount = items.length;
-  const matchedCount = items.filter(
-    (it) =>
-      (Array.isArray(it.products) && it.products.length > 0) ||
-      (Array.isArray(it.matchedKeywords) && it.matchedKeywords.length > 0),
-  ).length;
+  const snapshot = summarizePreSpecSnapshot(items, apiRawCount);
+  const matchedCount = snapshot.relatedCount;
+  await recordPreSpecSnapshot({ source: "manual", counts: snapshot });
 
   const durationMs = Date.now() - startedAt;
 
@@ -306,7 +303,7 @@ export async function GET(request: NextRequest) {
       `table_missing=${upsertSummary.tableMissing} ` +
       `errors=${upsertSummary.errors.length + result.errors.length} ` +
       `duration_ms=${durationMs} ` +
-      `days=${days} cats=${cats.join("+")} maxPagesPerCategory=${maxPagesPerCategory}`,
+      `days=${days} cats=${cats.join("+")} pages=all`,
   );
 
   // collection_runs 에도 기록 (manual 수집 가시성 위해 — 사용자 요구사항).
@@ -330,7 +327,7 @@ export async function GET(request: NextRequest) {
     serviceKeySource: keyResolution.source,
     days,
     cats,
-    maxPagesPerCategory,
+    maxPagesPerCategory: 0,
     tableMissing: upsertSummary.tableMissing,
   }).catch((e) => {
     console.warn(
