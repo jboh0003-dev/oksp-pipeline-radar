@@ -337,6 +337,17 @@ function asArray(value: unknown): G2BItem[] {
   return [];
 }
 
+function parseTotalCount(json: unknown): number | null {
+  if (!json || typeof json !== "object") return null;
+  const body =
+    (json as { response?: { body?: unknown } }).response?.body ??
+    (json as { body?: unknown }).body;
+  if (!body || typeof body !== "object") return null;
+  const raw = (body as { totalCount?: unknown }).totalCount;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function parseItems(json: unknown): G2BItem[] {
   if (!json || typeof json !== "object") return [];
 
@@ -580,6 +591,8 @@ type CollectStats = {
   productCounts: Record<string, number>;
   matchedKeywordCounts: Record<string, number>;
   sampleSavedItems: SampleItem[];
+  /** 나라장터 totalCount 기준으로 확인된 이번 30일 구간의 최대 페이지 수. */
+  maxAvailablePage: number;
 };
 
 type CollectResponse = {
@@ -601,6 +614,8 @@ type CollectResponse = {
   productCounts: Record<string, number>;
   matchedKeywordCounts: Record<string, number>;
   sampleSavedItems: SampleItem[];
+  /** 나라장터 totalCount 기준 최대 페이지. 0이면 메타데이터를 받지 못한 경우. */
+  maxAvailablePage: number;
   errors: string[];
 };
 
@@ -618,6 +633,7 @@ function emptyStats(): CollectStats {
     productCounts: {},
     matchedKeywordCounts: {},
     sampleSavedItems: [],
+    maxAvailablePage: 0,
   };
 }
 
@@ -644,6 +660,7 @@ function buildResponseBody(
     productCounts: stats.productCounts,
     matchedKeywordCounts: stats.matchedKeywordCounts,
     sampleSavedItems: stats.sampleSavedItems,
+    maxAvailablePage: stats.maxAvailablePage,
     errors,
   };
 }
@@ -654,7 +671,7 @@ async function fetchG2BPage(
   serviceKey: string,
   pageNo: number,
   dateRange: DateRange,
-): Promise<{ items: G2BItem[]; error: string | null; fatal?: boolean }> {
+): Promise<{ items: G2BItem[]; totalCount: number | null; error: string | null; fatal?: boolean }> {
   // 공통 G2B client 사용 — timeout / retry / resultCode / JSON 파싱 통합 처리.
   // 여기서 호출자(executeCollect) 가 errors[] 에 메시지를 누적하므로 fatal 도 함께 반환한다.
   const url = buildG2BUrl(baseUrl, endpoint, serviceKey, pageNo, dateRange);
@@ -668,6 +685,7 @@ async function fetchG2BPage(
   if (!result.ok) {
     return {
       items: [],
+      totalCount: null,
       error: `${endpoint} p${pageNo}: ${result.error}`,
       fatal: true,
     };
@@ -675,6 +693,7 @@ async function fetchG2BPage(
 
   return {
     items: parseItems(result.data),
+    totalCount: parseTotalCount(result.data),
     error: null,
   };
 }
@@ -826,6 +845,12 @@ async function executeCollect(
           dateRange,
         );
         if (page.error) errors.push(page.error);
+        if (page.totalCount != null) {
+          stats.maxAvailablePage = Math.max(
+            stats.maxAvailablePage,
+            Math.ceil(page.totalCount / NUM_OF_ROWS),
+          );
+        }
         // 추가 endpoint(공사·외자)가 미지원·404 등으로 실패해도 전체 수집을 멈추지 않고
         // 해당 endpoint만 더 이상 시도하지 않도록 표시한 뒤 다음 endpoint로 진행한다.
         if (page.fatal) {
