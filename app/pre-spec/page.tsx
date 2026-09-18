@@ -453,7 +453,7 @@ export default function PreSpecPage() {
       };
     }
     try {
-      const res = await authedFetch("/api/pre-spec/collect?days=30", { method: "GET" });
+      const res = await authedFetch("/api/pre-spec/collect?days=7", { method: "GET" });
       const parsed = await parseApiResponse<CollectResp>(res, {
         route: "/api/pre-spec/collect",
       });
@@ -1057,7 +1057,7 @@ export default function PreSpecPage() {
 
         <div className="mb-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
           <p className="font-semibold text-slate-800 dark:text-slate-100">
-            최근 30일 나라장터 사전규격 전체 조회 → CONTRABASS/VIOLA 관련 공고만 선별
+            최근 7일 나라장터 사전규격을 전부 조회하고, 현재 진행 중인 CONTRABASS/VIOLA 관련 공고만 선별
           </p>
           <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
             {simpleSummary?.latest ? (
@@ -1074,7 +1074,7 @@ export default function PreSpecPage() {
         </div>
 
         <section className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-5">
-          <SummaryCard label="전체 조회" value={collectedTotal} note="최근 30일 나라장터 전체" tone="blue" />
+          <SummaryCard label="전체 조회" value={collectedTotal} note="최근 7일 전체 조회" tone="blue" />
           <SummaryCard label="관련 공고" value={relatedTotal} note="CONTRABASS 또는 VIOLA" tone="emerald" />
           <SummaryCard label="CONTRABASS" value={collectedContrabassTotal} note="제품 키워드 매칭" tone="indigo" />
           <SummaryCard label="VIOLA" value={collectedViolaTotal} note="제품 키워드 매칭" tone="cyan" />
