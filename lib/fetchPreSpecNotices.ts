@@ -6,8 +6,8 @@ import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 import { getClientSupabaseDebugInfo } from "@/lib/supabaseDebug";
 import { getSupabaseClient, getSupabaseConfigError } from "@/lib/supabase";
 
-/** 입찰공고 fetchNotices 와 동일 — 화면 페이지네이션 전체 커버용 상한. */
-export const PRE_SPEC_DISPLAY_FETCH_LIMIT = 1000;
+/** Supabase 한 번 조회 청크. 전체 row 는 반복 조회해서 모두 가져온다. */
+export const PRE_SPEC_DISPLAY_FETCH_CHUNK = 1000;
 
 export type PreSpecDataSource = "supabase" | "empty";
 
@@ -77,7 +77,7 @@ export async function fetchPreSpecNotices(
     email: debug?.email ?? "(anonymous)",
     role: debug?.role ?? "(unknown)",
     table: "public.pre_spec_notices",
-    limit: PRE_SPEC_DISPLAY_FETCH_LIMIT,
+    chunkSize: PRE_SPEC_DISPLAY_FETCH_CHUNK,
     filters: {
       viewMode: debug?.viewMode,
       productFilter: debug?.productFilter,
@@ -87,35 +87,49 @@ export async function fetchPreSpecNotices(
   });
 
   try {
-    const { data, error, count } = await supabase
-      .from("pre_spec_notices")
-      .select("*", { count: "exact" })
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(PRE_SPEC_DISPLAY_FETCH_LIMIT);
+    const rows: PreSpecDbRow[] = [];
+    let offset = 0;
+    let exactCount: number | null = null;
 
-    if (error) {
-      console.error("[fetchPreSpecNotices] Supabase select error:", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
-      return {
-        items: [],
-        source: "empty",
-        error: formatError(error),
-        rowCount: 0,
-      };
+    while (true) {
+      const { data, error, count } = await supabase
+        .from("pre_spec_notices")
+        .select("*", { count: offset === 0 ? "exact" : undefined })
+        .order("updated_at", { ascending: false, nullsFirst: false })
+        .range(offset, offset + PRE_SPEC_DISPLAY_FETCH_CHUNK - 1);
+
+      if (error) {
+        console.error("[fetchPreSpecNotices] Supabase select error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          offset,
+        });
+        return {
+          items: [],
+          source: "empty",
+          error: formatError(error),
+          rowCount: 0,
+        };
+      }
+
+      if (offset === 0 && typeof count === "number") exactCount = count;
+      const chunk = (data ?? []) as PreSpecDbRow[];
+      rows.push(...chunk);
+
+      if (chunk.length < PRE_SPEC_DISPLAY_FETCH_CHUNK) break;
+      offset += PRE_SPEC_DISPLAY_FETCH_CHUNK;
+      if (exactCount != null && rows.length >= exactCount) break;
     }
 
-    const rows = (data ?? []) as PreSpecDbRow[];
     const items = rows.map(mapPreSpecDbRowToAnnouncement);
 
     console.log("[fetchPreSpecNotices] query result", {
       nodeEnv: env.nodeEnv,
       supabaseProjectRef: env.projectRef,
       rowCount: rows.length,
-      exactCount: count,
+      exactCount,
       mappedCount: items.length,
     });
 
