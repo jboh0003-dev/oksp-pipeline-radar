@@ -671,7 +671,7 @@ export default function PreSpecPage() {
 
   const resetFilters = useCallback(() => {
     setSearchQuery("");
-    setListFilter("all_active");
+    setListFilter("recommended");
     setProductFilter("ALL");
     setTerritoryFilter("all");
     setBudgetFilter("all");
@@ -1149,29 +1149,16 @@ export default function PreSpecPage() {
             </div>
           </div>
 
-          {/* 2행: 목록 필터 (radio) */}
+          {/* 2행: 필요한 목록 필터만 유지 */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 sm:w-auto sm:mr-1">
               목록
             </span>
             <FilterPill
-              label="추천공고"
-              count={recommendedTotal}
+              label="관련공고"
+              count={matchedPreSpecItems.length}
               active={listFilter === "recommended"}
               onClick={() => setListFilter("recommended")}
-            />
-            <FilterPill
-              label="전체 진행중"
-              count={allActiveBaselineCount}
-              active={listFilter === "all_active"}
-              onClick={() => setListFilter("all_active")}
-            />
-            <FilterPill
-              label="관심공고"
-              count={savedTotal}
-              active={listFilter === "saved"}
-              onClick={() => setListFilter("saved")}
-              disabled={savedTotal === 0 && listFilter !== "saved"}
             />
             <FilterPill
               label="신규"
@@ -1180,22 +1167,6 @@ export default function PreSpecPage() {
               onClick={() => setListFilter("new")}
               disabled={newTotal === 0 && listFilter !== "new"}
             />
-            <FilterPill
-              label="의견마감 임박"
-              count={imminentTotal}
-              active={listFilter === "imminent"}
-              onClick={() => setListFilter("imminent")}
-              disabled={imminentTotal === 0 && listFilter !== "imminent"}
-            />
-            {newTotal > 0 && listFilter === "new" && (
-              <button
-                type="button"
-                onClick={handleResetNew}
-                className="text-[11px] font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400"
-              >
-                신규 표시 초기화
-              </button>
-            )}
           </div>
 
           {/* 3행: 제품 필터 (radio) */}
