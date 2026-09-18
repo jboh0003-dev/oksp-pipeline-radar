@@ -15,7 +15,9 @@ export async function GET(request: NextRequest) {
     startDate: "2024-01-01",
     endDate,
     persist: true,
-    concurrency: 6,
+    concurrency: 12,
+    includeCompanies: false,
+    includeProducts: true,
   });
   return NextResponse.json(result);
 }
