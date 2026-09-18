@@ -6,6 +6,7 @@ import {
 } from "@/lib/preSpec/api";
 import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
 import { upsertPreSpecNotices } from "@/lib/preSpec/persist";
+import { recordPreSpecSnapshot, summarizePreSpecSnapshot } from "@/lib/preSpec/snapshot";
 import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -43,7 +44,7 @@ async function handle(request: NextRequest) {
     );
   }
 
-  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(7);
+  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(30);
   let fetchedCount = 0;
   let normalizedCount = 0;
   let insertedCount = 0;
@@ -55,8 +56,7 @@ async function handle(request: NextRequest) {
       inqryBgnDt,
       inqryEndDt,
       categories: DEFAULT_PRE_SPEC_CATEGORIES,
-      maxPagesPerCategory: 5,
-      concurrency: 3,
+      concurrency: 6,
     });
 
     fetchedCount = raw.items.length;
@@ -80,6 +80,9 @@ async function handle(request: NextRequest) {
       }
     }
     normalizedCount = items.length;
+
+    const snapshot = summarizePreSpecSnapshot(items, fetchedCount);
+    await recordPreSpecSnapshot({ source: "auto", counts: snapshot });
 
     const upsert = await upsertPreSpecNotices(items);
     insertedCount = upsert.inserted;
@@ -105,13 +108,13 @@ async function handle(request: NextRequest) {
       page_start: 1,
       page_end: null,
       fetched_count: fetchedCount,
-      matched_count: normalizedCount,
+      matched_count: summarizePreSpecSnapshot(items, fetchedCount).relatedCount,
       saved_count: insertedCount + updatedCount,
       skipped_expired_count: 0,
       skipped_no_product_count: skippedCount,
       errors,
       warnings: [
-        `dedicated-prespec-cron · lookback=7일 · serviceKey=${keyResolution.source ?? "unknown"}`,
+        `dedicated-prespec-cron · lookback=30일 · 전체페이지 · serviceKey=${keyResolution.source ?? "unknown"}`,
       ],
     } as never);
     if (error) {
