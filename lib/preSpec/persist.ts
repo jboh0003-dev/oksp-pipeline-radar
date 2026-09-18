@@ -281,28 +281,27 @@ export async function upsertPreSpecNotices(
     }
   }
 
-  // UPDATE 는 row 별로 분기 (URL 정책 적용 결과가 row 마다 다름).
-  // upsert(onConflict: external_id) 한 번으로 처리해도 되지만, urlPatched 카운트를 분리하기 위해
-  // 명시적으로 update 를 돌린다. 환경에 따라 row 가 많지 않으니 (보통 수십 건) 부담 없음.
-  //
-  // ★ 주의: `patched` 와 `external_id` 는 *DB 컬럼이 아니므로* update payload 에서 반드시 제거해야 한다.
-  //   `patched` 는 단순 counting flag, `external_id` 는 WHERE 절에 쓰이는 키.
-  //   포함하면 Supabase 가 "Could not find the 'patched' column" 에러로 모든 UPDATE 가 실패한다.
-  for (const row of toUpdate) {
-    const { external_id, patched, ...updatePayload } = row;
-    void external_id;
-    const { error: updateErr } = await supabase
-      .from("pre_spec_notices")
-      .update(updatePayload as never)
-      .eq("external_id", row.external_id);
-    if (updateErr) {
-      summary.errors.push(
-        `pre_spec_notices UPDATE 실패 (${row.external_id}): ${updateErr.message}`,
-      );
-      summary.skipped += 1;
-    } else {
-      summary.updated += 1;
-      if (patched) summary.urlPatched += 1;
+  // 기존 row도 URL 병합 정책을 적용한 뒤 chunk 단위 UPSERT.
+  // 과거에는 row별 UPDATE를 직렬 실행해 1,000건 이상 수집 시 Vercel timeout이 발생했다.
+  // external_id unique key 기준 bulk upsert로 바꿔 전체 페이지 수집도 시간 안에 끝나도록 한다.
+  if (toUpdate.length > 0) {
+    const UPDATE_CHUNK = 200;
+    for (let i = 0; i < toUpdate.length; i += UPDATE_CHUNK) {
+      const chunk = toUpdate.slice(i, i + UPDATE_CHUNK);
+      const payload = chunk.map(({ patched: _patched, ...row }) => row);
+      const { error: updateErr } = await supabase
+        .from("pre_spec_notices")
+        .upsert(payload as never, { onConflict: "external_id" });
+
+      if (updateErr) {
+        summary.errors.push(
+          `pre_spec_notices UPSERT 실패 (chunk ${i / UPDATE_CHUNK + 1}): ${updateErr.message}`,
+        );
+        summary.skipped += chunk.length;
+      } else {
+        summary.updated += chunk.length;
+        summary.urlPatched += chunk.filter((row) => row.patched).length;
+      }
     }
   }
 
