@@ -127,7 +127,7 @@ type RuntimeKeywordConfig = {
 };
 
 async function loadRuntimeKeywordConfig(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
 ): Promise<RuntimeKeywordConfig> {
   try {
     const { data, error } = await supabase
