@@ -35,6 +35,7 @@ import {
 import {
   isPreSpecContrabassRelated,
   isPreSpecRecommended,
+  isPreSpecProductLineRelated,
   isPreSpecViolaRelated,
 } from "@/lib/preSpec/displayFilter";
 import { isStaleSinceMorningCutoff } from "@/lib/freshness";
@@ -53,6 +54,29 @@ import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 type ProductFilter = "ALL" | "CONTRABASS" | "VIOLA";
 type ListFilter = "recommended" | "all_active" | "saved" | "new" | "imminent";
+
+type PreSpecSimpleSummary = {
+  ok: boolean;
+  latest: {
+    collectedAt: string;
+    source: string;
+    fetchedCount: number;
+    relatedCount: number;
+    contrabassCount: number;
+    violaCount: number;
+  } | null;
+  previous: {
+    collectedAt: string;
+    source: string;
+    fetchedCount: number;
+    relatedCount: number;
+    contrabassCount: number;
+    violaCount: number;
+  } | null;
+  newCount: number;
+  newKeys: string[];
+  error?: string;
+};
 
 const SAVED_KEY = "csg2b:preSpec:savedKeys";
 
@@ -247,6 +271,8 @@ export default function PreSpecPage() {
   const [lastPreSpecSuccess, setLastPreSpecSuccess] = useState<CollectionRunRow | null>(null);
   const [lastPreSpecRunLoading, setLastPreSpecRunLoading] = useState(true);
   const [lastPreSpecRunError, setLastPreSpecRunError] = useState<string | null>(null);
+  const [simpleSummary, setSimpleSummary] = useState<PreSpecSimpleSummary | null>(null);
+  const [dailyNewKeys, setDailyNewKeys] = useState<Set<string>>(new Set());
 
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
@@ -293,6 +319,30 @@ export default function PreSpecPage() {
       if (viewMode === "all") setViewMode("matched");
     }
   }, [canAdmin, viewMode]);
+
+  const loadSimpleSummary = useCallback(async () => {
+    if (auth.status !== "authed") return;
+    try {
+      const res = await authedFetch("/api/pre-spec/summary", { cache: "no-store" });
+      const body = (await res.json()) as PreSpecSimpleSummary;
+      if (!res.ok || !body.ok) return;
+      const nextKeys = new Set(body.newKeys ?? []);
+      setSimpleSummary(body);
+      setDailyNewKeys(nextKeys);
+      setItems((prev) =>
+        prev.map((item) => ({
+          ...item,
+          isNew: nextKeys.has(item.announcementKey),
+        })),
+      );
+    } catch {
+      // 요약 조회 실패는 목록 조회 자체를 막지 않는다.
+    }
+  }, [auth.status]);
+
+  useEffect(() => {
+    void loadSimpleSummary();
+  }, [loadSimpleSummary]);
 
   /**
    * DB 에서 사전규격 목록 조회 — 입찰공고 fetchNotices 와 동일 패턴.
@@ -402,7 +452,7 @@ export default function PreSpecPage() {
       };
     }
     try {
-      const res = await authedFetch("/api/pre-spec/collect?days=7", { method: "GET" });
+      const res = await authedFetch("/api/pre-spec/collect?days=30", { method: "GET" });
       const parsed = await parseApiResponse<CollectResp>(res, {
         route: "/api/pre-spec/collect",
       });
@@ -575,6 +625,7 @@ export default function PreSpecPage() {
     }
 
     await loadPreSpecNotices();
+    await loadSimpleSummary();
 
     const [last, success] = await Promise.all([
       fetchLastPreSpecCollectionRun(),
