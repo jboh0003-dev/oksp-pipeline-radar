@@ -6,7 +6,7 @@ import {
 } from "@/lib/preSpec/api";
 import { normalizePreSpecItem } from "@/lib/preSpec/normalize";
 import { upsertPreSpecNotices } from "@/lib/preSpec/persist";
-import { recordPreSpecSnapshot, summarizePreSpecSnapshot } from "@/lib/preSpec/snapshot";
+import { recordPreSpecSnapshot, summarizeCurrentPreSpecDbSnapshot } from "@/lib/preSpec/snapshot";
 import { resolvePreSpecServiceKey } from "@/lib/preSpec/serviceKey";
 import type { PreSpecAnnouncement } from "@/lib/preSpec/types";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -44,7 +44,7 @@ async function handle(request: NextRequest) {
     );
   }
 
-  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(30);
+  const { inqryBgnDt, inqryEndDt } = getInquiryRangeYyyymmdd(7);
   let fetchedCount = 0;
   let normalizedCount = 0;
   let insertedCount = 0;
@@ -84,17 +84,17 @@ async function handle(request: NextRequest) {
     }
     normalizedCount = items.length;
 
-    const snapshot = summarizePreSpecSnapshot(items, fetchedCount);
-    relatedCount = snapshot.relatedCount;
-    contrabassCount = snapshot.contrabassCount;
-    violaCount = snapshot.violaCount;
-    await recordPreSpecSnapshot({ source: "auto", counts: snapshot });
-
     const upsert = await upsertPreSpecNotices(items);
     insertedCount = upsert.inserted;
     updatedCount = upsert.updated;
     skippedCount = upsert.skipped;
     for (const error of upsert.errors) errors.push(`DB 저장: ${error}`);
+
+    const snapshot = await summarizeCurrentPreSpecDbSnapshot(fetchedCount);
+    relatedCount = snapshot.relatedCount;
+    contrabassCount = snapshot.contrabassCount;
+    violaCount = snapshot.violaCount;
+    await recordPreSpecSnapshot({ source: "auto", counts: snapshot });
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
   }
@@ -120,7 +120,7 @@ async function handle(request: NextRequest) {
       skipped_no_product_count: skippedCount,
       errors,
       warnings: [
-        `dedicated-prespec-cron · lookback=30일 · 전체페이지 · serviceKey=${keyResolution.source ?? "unknown"}`,
+        `dedicated-prespec-cron · lookback=7일 · 전체페이지 · serviceKey=${keyResolution.source ?? "unknown"}`,
       ],
     } as never);
     if (error) {
