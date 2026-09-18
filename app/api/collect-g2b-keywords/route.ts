@@ -60,7 +60,7 @@ const ENDPOINTS = [
  *  - 단, "서버 가상화", "클라우드 인프라 구축" 같은 표현은 양성 시그널이 강해
  *    그대로 핵심검토/검토 등급을 유지한다.
  */
-const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
+const DEFAULT_PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
   CONTRABASS: [
     // 가상화 / 사설 클라우드 / IaaS 핵심
     "가상화",
@@ -119,11 +119,51 @@ const PRODUCT_KEYWORD_MAP: Record<string, readonly string[]> = {
   ],
 };
 
-const MATCHED_PRODUCT_NAMES = new Set(Object.keys(PRODUCT_KEYWORD_MAP));
+const MATCHED_PRODUCT_NAMES = new Set(Object.keys(DEFAULT_PRODUCT_KEYWORD_MAP));
 
-const ALL_PRODUCT_KEYWORDS = new Set(
-  Object.values(PRODUCT_KEYWORD_MAP).flatMap((keywords) => [...keywords]),
-);
+type RuntimeKeywordConfig = {
+  productMap: Record<string, readonly string[]>;
+  excludeKeywords: readonly string[];
+};
+
+async function loadRuntimeKeywordConfig(
+  supabase: ReturnType<typeof createClient>,
+): Promise<RuntimeKeywordConfig> {
+  try {
+    const { data, error } = await supabase
+      .from("keyword_rules_runtime")
+      .select("rule_type,product,keyword,enabled")
+      .eq("enabled", true);
+    if (error || !data || data.length === 0) {
+      return { productMap: DEFAULT_PRODUCT_KEYWORD_MAP, excludeKeywords: EXCLUDE_KEYWORDS };
+    }
+
+    const productMap: Record<string, string[]> = {};
+    const excludeKeywords: string[] = [];
+    for (const row of data as Array<{ rule_type?: string; product?: string; keyword?: string; enabled?: boolean }>) {
+      const keyword = String(row.keyword ?? "").trim();
+      if (!keyword) continue;
+      if (row.rule_type === "exclude") {
+        excludeKeywords.push(keyword);
+        continue;
+      }
+      if (row.rule_type === "product") {
+        const product = String(row.product ?? "").trim();
+        if (!product) continue;
+        productMap[product] ??= [];
+        productMap[product].push(keyword);
+      }
+    }
+
+    const hasProductRules = Object.values(productMap).some((list) => list.length > 0);
+    return {
+      productMap: hasProductRules ? productMap : DEFAULT_PRODUCT_KEYWORD_MAP,
+      excludeKeywords: excludeKeywords.length > 0 ? excludeKeywords : EXCLUDE_KEYWORDS,
+    };
+  } catch {
+    return { productMap: DEFAULT_PRODUCT_KEYWORD_MAP, excludeKeywords: EXCLUDE_KEYWORDS };
+  }
+}
 
 /** 단독 매칭 금지 — 강한 키워드와 함께 있을 때만 참고 키워드로 같이 저장 */
 const WEAK_KEYWORDS = [
@@ -136,8 +176,6 @@ const WEAK_KEYWORDS = [
   "유지관리",
   "운영관리",
 ] as const;
-
-const COLLECT_KEYWORDS: readonly string[] = [...ALL_PRODUCT_KEYWORDS];
 
 const EXCLUDE_KEYWORDS = [
   "체험학습",
@@ -436,8 +474,8 @@ function findMatchedKeywords(text: string, keywords: readonly string[]): string[
   return matched;
 }
 
-function shouldExclude(rawText: string): boolean {
-  const hasExclude = EXCLUDE_KEYWORDS.some((kw) => rawText.includes(kw));
+function shouldExclude(rawText: string, excludeKeywords: readonly string[]): boolean {
+  const hasExclude = excludeKeywords.some((kw) => rawText.includes(kw));
   if (!hasExclude) return false;
   const hasRescue = STRONG_TECH_RESCUE_KEYWORDS.some((kw) => containsKeyword(rawText, kw));
   return !hasRescue;
@@ -462,9 +500,12 @@ function getRealDueDate(item: G2BItem): string | null {
   return parseDate(getString(item, ["bidClseDt", "bidClseTm", "opengDt", "opengTm"]));
 }
 
-function resolveProducts(rawText: string): string[] {
+function resolveProducts(
+  rawText: string,
+  productMap: Record<string, readonly string[]>,
+): string[] {
   const products = new Set<string>();
-  for (const [product, keywords] of Object.entries(PRODUCT_KEYWORD_MAP)) {
+  for (const [product, keywords] of Object.entries(productMap)) {
     if (keywords.some((kw) => containsKeyword(rawText, kw))) {
       products.add(product);
     }
@@ -499,16 +540,22 @@ type MatchResult = {
   summary: string;
 };
 
-function evaluateItem(item: G2BItem): MatchResult | null {
+function evaluateItem(
+  item: G2BItem,
+  keywordConfig: RuntimeKeywordConfig,
+): MatchResult | null {
   const rawText = itemToRawString(item);
   const titleText = getTitleText(item);
 
-  if (shouldExclude(rawText)) return null;
+  if (shouldExclude(rawText, keywordConfig.excludeKeywords)) return null;
 
-  const strongMatchedKeywords = findMatchedKeywords(rawText, COLLECT_KEYWORDS);
+  const collectKeywords = Array.from(
+    new Set(Object.values(keywordConfig.productMap).flatMap((keywords) => [...keywords])),
+  );
+  const strongMatchedKeywords = findMatchedKeywords(rawText, collectKeywords);
   if (strongMatchedKeywords.length === 0) return null;
 
-  const products = resolveProducts(rawText);
+  const products = resolveProducts(rawText, keywordConfig.productMap);
   if (products.length === 0) return null;
 
   // 강한 키워드 매칭이 있을 때만 약한 키워드도 참고용으로 함께 저장
@@ -745,6 +792,7 @@ async function executeCollect(
   const supabase = createClient(supabaseUrl!, serviceRoleKey!, {
     auth: { persistSession: false },
   });
+  const keywordConfig = await loadRuntimeKeywordConfig(supabase);
 
   const flushPending = async () => {
     if (pendingRows.length === 0) return;
@@ -864,7 +912,7 @@ async function executeCollect(
           seenExternalIds.add(externalId);
           stats.fetchedCount += 1;
 
-          const match = evaluateItem(item);
+          const match = evaluateItem(item, keywordConfig);
           if (!match) {
             stats.skippedNoProductCount += 1;
             continue;
