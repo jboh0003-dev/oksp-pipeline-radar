@@ -50,6 +50,9 @@ async function handle(request: NextRequest) {
   let insertedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
+  let relatedCount = 0;
+  let contrabassCount = 0;
+  let violaCount = 0;
 
   try {
     const raw = await fetchPreSpecAnnouncements(keyResolution.key, {
@@ -82,6 +85,9 @@ async function handle(request: NextRequest) {
     normalizedCount = items.length;
 
     const snapshot = summarizePreSpecSnapshot(items, fetchedCount);
+    relatedCount = snapshot.relatedCount;
+    contrabassCount = snapshot.contrabassCount;
+    violaCount = snapshot.violaCount;
     await recordPreSpecSnapshot({ source: "auto", counts: snapshot });
 
     const upsert = await upsertPreSpecNotices(items);
@@ -108,7 +114,7 @@ async function handle(request: NextRequest) {
       page_start: 1,
       page_end: null,
       fetched_count: fetchedCount,
-      matched_count: summarizePreSpecSnapshot(items, fetchedCount).relatedCount,
+      matched_count: relatedCount,
       saved_count: insertedCount + updatedCount,
       skipped_expired_count: 0,
       skipped_no_product_count: skippedCount,
@@ -130,6 +136,9 @@ async function handle(request: NextRequest) {
     ok,
     fetchedCount,
     normalizedCount,
+    relatedCount,
+    contrabassCount,
+    violaCount,
     insertedCount,
     updatedCount,
     skippedCount,
