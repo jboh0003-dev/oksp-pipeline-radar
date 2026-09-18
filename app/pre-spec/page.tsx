@@ -428,6 +428,7 @@ export default function PreSpecPage() {
     productFilter,
     territoryFilter,
     budgetFilter,
+    dailyNewKeys,
   ]);
 
   /** G2B 사전규격 수집 — admin 전용 (/api/pre-spec/collect). */
@@ -729,7 +730,7 @@ export default function PreSpecPage() {
     [rawPreSpecItems],
   );
   const matchedPreSpecItems = useMemo(
-    () => activePreSpecItems.filter((it) => isPreSpecRecommended(it)),
+    () => activePreSpecItems.filter((it) => isPreSpecProductLineRelated(it)),
     [activePreSpecItems],
   );
   const allActiveBaselineCount = useMemo(
@@ -756,7 +757,7 @@ export default function PreSpecPage() {
     if (listFilter === "all_active") {
       return activePreSpecItems.filter((it) => it.recommendation !== "제외");
     }
-    return activePreSpecItems.filter((it) => isPreSpecRecommended(it));
+    return activePreSpecItems.filter((it) => isPreSpecProductLineRelated(it));
   }, [viewMode, canAdmin, listFilter, activePreSpecItems]);
   // legacy alias — 상단 카드/제품 카운트는 "표시 가능한" 모집단 기준.
   const visibleItems = baselineItems;
@@ -787,7 +788,7 @@ export default function PreSpecPage() {
         } else if (t !== territoryFilter) return false;
       }
       if (listFilter === "imminent" && it.status !== "마감임박") return false;
-      if (listFilter === "new" && !it.isNew) return false;
+      if (listFilter === "new" && !dailyNewKeys.has(it.announcementKey)) return false;
       if (listFilter === "saved" && !savedSet.has(it.announcementKey)) return false;
       if (!matchesBudgetFilter(it.budget ?? null, budgetFilter)) return false;
       return true;
@@ -840,7 +841,7 @@ export default function PreSpecPage() {
     () => visibleItems.filter((it) => it.status === "마감임박").length,
     [visibleItems],
   );
-  const newTotal = useMemo(() => visibleItems.filter((it) => it.isNew).length, [visibleItems]);
+  const newTotal = simpleSummary?.newCount ?? dailyNewKeys.size;
   const savedTotal = useMemo(
     () => visibleItems.filter((it) => savedSet.has(it.announcementKey)).length,
     [visibleItems, savedSet],
@@ -854,6 +855,13 @@ export default function PreSpecPage() {
     () => visibleItems.filter((it) => isPreSpecViolaRelated(it)).length,
     [visibleItems],
   );
+
+  const collectedTotal = simpleSummary?.latest?.fetchedCount ?? rawTotal;
+  const relatedTotal = simpleSummary?.latest?.relatedCount ?? matchedPreSpecItems.length;
+  const collectedContrabassTotal =
+    simpleSummary?.latest?.contrabassCount ?? contrabassTotal;
+  const collectedViolaTotal =
+    simpleSummary?.latest?.violaCount ?? violaTotal;
 
   const appliedFilterLabel = useMemo(() => {
     const parts: string[] = [];
@@ -887,11 +895,14 @@ export default function PreSpecPage() {
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = pageSize === 0 ? 0 : (safePage - 1) * pageSize;
   const pageEnd = pageSize === 0 ? totalFiltered : Math.min(totalFiltered, pageStart + pageSize);
-  const displayedPreSpecItems = useMemo(
-    () =>
-      pageSize === 0 ? filteredPreSpecItems : filteredPreSpecItems.slice(pageStart, pageEnd),
-    [filteredPreSpecItems, pageSize, pageStart, pageEnd],
-  );
+  const displayedPreSpecItems = useMemo(() => {
+    const slice =
+      pageSize === 0 ? filteredPreSpecItems : filteredPreSpecItems.slice(pageStart, pageEnd);
+    return slice.map((item) => ({
+      ...item,
+      isNew: dailyNewKeys.has(item.announcementKey),
+    }));
+  }, [filteredPreSpecItems, pageSize, pageStart, pageEnd, dailyNewKeys]);
   const paged = displayedPreSpecItems;
 
   const tableEmptyReason: "no-data" | "filtered" =
