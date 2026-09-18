@@ -44,8 +44,8 @@ export type G2bPagedOptions = {
   /** 추가 query 파라미터. inqryBgnDt, inqryEndDt 등. */
   baseParams: Record<string, string | number>;
   numOfRows: number;
-  /** 한 endpoint 당 최대 페이지. */
-  maxPages: number;
+  /** 한 endpoint 당 최대 페이지. 생략하면 totalCount 기준 마지막 페이지까지 전부 조회. */
+  maxPages?: number;
   /** 페이지 동시 호출 수. 기본 3. */
   concurrency?: number;
   /** 호출별 timeout(ms). 기본 15s. */
@@ -152,10 +152,11 @@ export async function fetchG2bPaged(options: G2bPagedOptions): Promise<{
     return { pages, items, totalCount };
   }
 
-  const totalPages = Math.min(
-    options.maxPages,
-    Math.max(1, Math.ceil(totalCount / options.numOfRows)),
-  );
+  const discoveredPages = Math.max(1, Math.ceil(totalCount / options.numOfRows));
+  const totalPages =
+    typeof options.maxPages === "number"
+      ? Math.min(options.maxPages, discoveredPages)
+      : discoveredPages;
   if (totalPages < 2) return { pages, items, totalCount };
 
   const tasks: (() => Promise<G2bPagedPage>)[] = [];
