@@ -46,10 +46,22 @@ export async function GET() {
   const rawRows = (data ?? []) as AwardRow[];
   const rows = rawRows.filter(isActualAward);
 
+  const { data: productProjects, error: productProjectError } = await supabase
+    .from("competitive_product_projects")
+    .select("id,external_key,company,product,project_year,project_date,project,customer,sector,verification_level,source_label,source_url,public_source_label,public_source_url,bid_no,note,created_at,updated_at")
+    .eq("sector", "public")
+    .order("project_year", { ascending: false })
+    .order("customer", { ascending: true });
+
+  if (productProjectError) {
+    console.error("[/api/competitive-awards] product project query failed", productProjectError);
+  }
+
   return NextResponse.json({
     ok: true,
     rows,
     rawCount: rawRows.length,
     excludedCatalogRegistrationCount: rawRows.length - rows.length,
+    productProjects: productProjectError ? [] : productProjects ?? [],
   });
 }
