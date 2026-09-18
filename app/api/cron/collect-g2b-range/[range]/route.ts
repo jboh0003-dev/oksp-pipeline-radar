@@ -6,7 +6,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const LOOKBACK_DAYS = 30;
-const MAX_PAGE = 40;
+/**
+ * Cron 슬롯은 1~40을 5페이지씩 8개 lane 으로 나눈다.
+ * 40은 더 이상 조회 상한이 아니다. 각 lane 은 +40 간격으로 계속 진행해
+ * 나라장터 totalCount 기준 마지막 페이지까지 담당한다.
+ *
+ * 예) lane 1-5 => 1-5, 41-45, 81-85 ...
+ */
+const BASE_PAGE_SPAN = 40;
 const MAX_RANGE_SIZE = 5;
 
 function isAuthorized(request: NextRequest, expected: string): boolean {
@@ -21,7 +28,7 @@ function parseRange(request: NextRequest): { start: number; end: number } | null
   const start = Number(match[1]);
   const end = Number(match[2]);
   if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
-  if (start < 1 || end < start || end > MAX_PAGE) return null;
+  if (start < 1 || end < start || end > BASE_PAGE_SPAN) return null;
   if (end - start + 1 > MAX_RANGE_SIZE) return null;
   return { start, end };
 }
@@ -36,6 +43,7 @@ type Aggregate = {
   activeProductMatchedCount: number;
   skippedExpiredCount: number;
   skippedNoProductCount: number;
+  maxAvailablePage: number;
 };
 
 function emptyAggregate(): Aggregate {
@@ -49,6 +57,7 @@ function emptyAggregate(): Aggregate {
     activeProductMatchedCount: 0,
     skippedExpiredCount: 0,
     skippedNoProductCount: 0,
+    maxAvailablePage: 0,
   };
 }
 
@@ -62,6 +71,10 @@ function addBody(aggregate: Aggregate, body: CollectResponse) {
   aggregate.activeProductMatchedCount += body.activeProductMatchedCount ?? 0;
   aggregate.skippedExpiredCount += body.skippedExpiredCount ?? 0;
   aggregate.skippedNoProductCount += body.skippedNoProductCount ?? 0;
+  aggregate.maxAvailablePage = Math.max(
+    aggregate.maxAvailablePage,
+    body.maxAvailablePage ?? 0,
+  );
 }
 
 async function recordRun(args: {
@@ -71,6 +84,7 @@ async function recordRun(args: {
   finishedAt: string;
   aggregate: Aggregate;
   errors: string[];
+  lastPageAttempted: number;
 }) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return "Supabase admin client unavailable";
@@ -83,7 +97,7 @@ async function recordRun(args: {
     ok: args.errors.length === 0,
     target_count: 1,
     page_start: args.start,
-    page_end: args.end,
+    page_end: args.lastPageAttempted,
     fetched_count: args.aggregate.fetchedCount,
     matched_count: args.aggregate.matchedCount,
     saved_count: args.aggregate.savedCount,
@@ -93,9 +107,9 @@ async function recordRun(args: {
     skipped_no_product_count: args.aggregate.skippedNoProductCount,
     errors: args.errors,
     warnings: [
-      `sharded-range=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · page-parallel timeout isolation`,
+      `dynamic-lane=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · fixed 40-page cap removed · totalCount driven`,
     ],
-    message: `자동수집 page ${args.start}-${args.end}`,
+    message: `자동수집 lane ${args.start}-${args.end} · 마지막 시도 p${args.lastPageAttempted}`,
   };
 
   const { error } = await supabase.from("collection_runs").insert(payload as never);
@@ -124,38 +138,82 @@ async function handle(request: NextRequest) {
   }
 
   const startedAt = new Date().toISOString();
-  const pages = Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i);
+  const basePages = Array.from(
+    { length: range.end - range.start + 1 },
+    (_, i) => range.start + i,
+  );
   const aggregate = emptyAggregate();
   const errors: string[] = [];
+  let round = 0;
+  let lastPageAttempted = range.end;
+  let discoveredMaxPage = 0;
 
-  // 5페이지를 한 runCollect 안에서 직렬 처리하면 외부 API 지연 시 300초를 넘길 수 있다.
-  // 각 페이지를 독립 실행해 동시에 처리하면 한 페이지 장애가 다른 페이지를 막지 않고,
-  // 전체 wall-clock 시간을 페이지 수만큼 누적하지 않는다.
-  const pageResults = await Promise.allSettled(
-    pages.map(async (page) => {
-      const result = await runCollect({
-        targetCount: 1,
-        lookbackDays: LOOKBACK_DAYS,
-        pageStart: page,
-        pageEnd: page,
-      });
-      return { page, body: result.body };
-    }),
-  );
+  /**
+   * 40페이지 고정 상한을 없애고, 동일 lane 이 +40 간격으로 마지막 페이지까지 계속 담당한다.
+   *
+   * 예)
+   *   1-5  lane -> 1-5, 41-45, 81-85 ...
+   *   6-10 lane -> 6-10, 46-50, 86-90 ...
+   *
+   * 각 page 응답의 나라장터 totalCount 를 이용해 maxAvailablePage 를 계산한다.
+   * totalCount 가 일시적으로 누락된 경우에는 "해당 round 에 조회된 공고가 0건"일 때
+   * pagination 끝으로 판단한다. 따라서 코드상 40페이지 상한은 더 이상 없다.
+   */
+  while (true) {
+    const offset = round * BASE_PAGE_SPAN;
+    const roundPages = basePages
+      .map((page) => page + offset)
+      .filter((page) => discoveredMaxPage <= 0 || page <= discoveredMaxPage);
 
-  for (let i = 0; i < pageResults.length; i += 1) {
-    const result = pageResults[i];
-    const page = pages[i];
-    if (result.status === "rejected") {
-      const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      errors.push(`page ${page} runCollect 예외: ${message}`);
-      continue;
+    if (roundPages.length === 0) break;
+
+    const roundResults = await Promise.allSettled(
+      roundPages.map(async (page) => {
+        const result = await runCollect({
+          targetCount: 1,
+          lookbackDays: LOOKBACK_DAYS,
+          pageStart: page,
+          pageEnd: page,
+        });
+        return { page, body: result.body };
+      }),
+    );
+
+    let roundFetchedCount = 0;
+
+    for (let i = 0; i < roundResults.length; i += 1) {
+      const result = roundResults[i];
+      const page = roundPages[i];
+      lastPageAttempted = Math.max(lastPageAttempted, page);
+
+      if (result.status === "rejected") {
+        const message =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        errors.push(`page ${page} runCollect 예외: ${message}`);
+        continue;
+      }
+
+      roundFetchedCount += result.value.body.fetchedCount ?? 0;
+      discoveredMaxPage = Math.max(
+        discoveredMaxPage,
+        result.value.body.maxAvailablePage ?? 0,
+      );
+      addBody(aggregate, result.value.body);
+
+      for (const error of result.value.body.errors ?? []) {
+        errors.push(`page ${page}: ${error}`);
+      }
     }
 
-    addBody(aggregate, result.value.body);
-    for (const error of result.value.body.errors ?? []) {
-      errors.push(`page ${page}: ${error}`);
+    if (discoveredMaxPage > 0) {
+      const nextLaneStart = range.start + (round + 1) * BASE_PAGE_SPAN;
+      if (nextLaneStart > discoveredMaxPage) break;
+    } else if (roundFetchedCount === 0) {
+      // totalCount 메타데이터가 없는 비정상 응답에서도 빈 페이지 이후로 무한 순회하지 않는다.
+      break;
     }
+
+    round += 1;
   }
 
   const finishedAt = new Date().toISOString();
@@ -166,6 +224,7 @@ async function handle(request: NextRequest) {
     finishedAt,
     aggregate,
     errors,
+    lastPageAttempted,
   });
 
   const ok = errors.length === 0;
@@ -175,6 +234,8 @@ async function handle(request: NextRequest) {
     fetchedPages: aggregate.fetchedPages,
     fetched: aggregate.fetchedCount,
     matched: aggregate.matchedCount,
+    maxAvailablePage: aggregate.maxAvailablePage,
+    lastPageAttempted,
     inserted: aggregate.insertedCount,
     updated: aggregate.updatedCount,
     errorCount: errors.length,
@@ -193,6 +254,8 @@ async function handle(request: NextRequest) {
     insertedCount: aggregate.insertedCount,
     updatedCount: aggregate.updatedCount,
     activeProductMatchedCount: aggregate.activeProductMatchedCount,
+    maxAvailablePage: aggregate.maxAvailablePage,
+    lastPageAttempted,
     errors,
     dbLogError,
   });
