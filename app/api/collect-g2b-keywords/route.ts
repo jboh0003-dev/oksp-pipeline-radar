@@ -522,6 +522,11 @@ function evaluateItem(
   const rawText = itemToRawString(item);
   const titleText = getTitleText(item);
 
+  // 나라장터 취소공고는 기술 키워드가 강해도 영업기회로 노출하지 않는다.
+  const noticeKind = getString(item, ["ntceKindNm"]);
+  const changeReason = getString(item, ["chgNtceRsn"]);
+  if (noticeKind.includes("취소") || changeReason.includes("취소공고")) return null;
+
   if (shouldExclude(rawText, keywordConfig.excludeKeywords)) return null;
 
   const collectKeywords = Array.from(
