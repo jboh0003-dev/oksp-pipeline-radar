@@ -16,7 +16,7 @@ const items: Array<{
 }> = [
   {
     key: "activeTotal",
-    label: "진행 중 공고",
+    label: "관련 공고",
     accentText: "text-blue-600 dark:text-blue-300",
     iconBg: "bg-blue-50 ring-blue-100 dark:bg-blue-500/15 dark:ring-blue-400/20",
     iconText: "text-blue-600 dark:text-blue-300",
@@ -83,7 +83,7 @@ export default function SummaryCards(props: SummaryCardsProps) {
                 </p>
                 <p className="mt-1 truncate text-[10px] text-slate-400 dark:text-slate-500">
                   {item.key === "activeTotal"
-                    ? "진행중 기준"
+                    ? "마감 전 제품 관련"
                     : "관련 매칭 기준 · 중복 포함"}
                 </p>
               </div>
