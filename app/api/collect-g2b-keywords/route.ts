@@ -203,6 +203,27 @@ const VIOLA_TECH_RESCUE_KEYWORDS = [
   "컨테이너 플랫폼",
 ] as const;
 
+/** "가상화"가 로봇/시뮬레이션/모델링 의미로 쓰인 오탐 방지. */
+const VIRTUALIZATION_SIMULATION_KEYWORDS = [
+  "시뮬레이션",
+  "모델링",
+  "디지털 트윈",
+  "디지털트윈",
+] as const;
+
+const CONTRABASS_INFRA_RESCUE_KEYWORDS = [
+  "서버",
+  "VMware",
+  "VM웨어",
+  "OpenStack",
+  "오픈스택",
+  "IaaS",
+  "HCI",
+  "하이퍼바이저",
+  "클라우드",
+  "인프라",
+] as const;
+
 type DateRangeLabel = { from: string; to: string };
 
 type DateRange = {
@@ -569,6 +590,14 @@ function evaluateItem(
     !VIOLA_TECH_RESCUE_KEYWORDS.some((kw) => containsKeyword(rawText, kw))
   ) {
     products = products.filter((product) => product !== "VIOLA");
+  }
+
+  if (
+    products.includes("CONTRABASS") &&
+    VIRTUALIZATION_SIMULATION_KEYWORDS.some((kw) => containsKeyword(rawText, kw)) &&
+    !CONTRABASS_INFRA_RESCUE_KEYWORDS.some((kw) => containsKeyword(rawText, kw))
+  ) {
+    products = products.filter((product) => product !== "CONTRABASS");
   }
 
   if (products.length === 0) return null;
