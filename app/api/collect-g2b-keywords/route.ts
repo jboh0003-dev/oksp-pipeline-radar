@@ -179,6 +179,30 @@ const STRONG_TECH_RESCUE_KEYWORDS = [
   "쿠버네티스",
 ] as const;
 
+/** 물류/건축 의미의 "컨테이너" 오탐 방지. */
+const PHYSICAL_CONTAINER_KEYWORDS = [
+  "컨테이너하우스",
+  "화물컨테이너",
+  "특수화물컨테이너",
+  "컨테이너부두",
+  "철도CY 컨테이너",
+  "배터리 컨테이너",
+  "모듈러 컨테이너",
+] as const;
+
+/** 위 물리 컨테이너 표현이 있어도 아래 기술 표현이 같이 있으면 VIOLA로 살린다. */
+const VIOLA_TECH_RESCUE_KEYWORDS = [
+  "Kubernetes",
+  "쿠버네티스",
+  "K8S",
+  "PaaS",
+  "클라우드 네이티브",
+  "DevOps",
+  "MSA",
+  "애플리케이션 현대화",
+  "컨테이너 플랫폼",
+] as const;
+
 type DateRangeLabel = { from: string; to: string };
 
 type DateRange = {
@@ -535,7 +559,18 @@ function evaluateItem(
   const strongMatchedKeywords = findMatchedKeywords(rawText, collectKeywords);
   if (strongMatchedKeywords.length === 0) return null;
 
-  const products = resolveProducts(rawText, keywordConfig.productMap);
+  let products = resolveProducts(rawText, keywordConfig.productMap);
+
+  // "컨테이너"는 물류/건축 용어로도 매우 흔하다.
+  // 물리 컨테이너 표현만 있고 PaaS/Kubernetes 계열 근거가 없으면 VIOLA를 제거한다.
+  if (
+    products.includes("VIOLA") &&
+    PHYSICAL_CONTAINER_KEYWORDS.some((kw) => containsKeyword(rawText, kw)) &&
+    !VIOLA_TECH_RESCUE_KEYWORDS.some((kw) => containsKeyword(rawText, kw))
+  ) {
+    products = products.filter((product) => product !== "VIOLA");
+  }
+
   if (products.length === 0) return null;
 
   // 강한 키워드 매칭이 있을 때만 약한 키워드도 참고용으로 함께 저장
