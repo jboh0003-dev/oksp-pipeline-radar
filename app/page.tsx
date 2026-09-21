@@ -548,29 +548,6 @@ export default function Home() {
     [visibleCandidates],
   );
 
-  /**
-   * 상단 통계용 추가 지표.
-   *  - productMatchTotal : products 배열 기준 (notice, product) 매칭 관계 수. 한 공고에 두 제품이
-   *    매칭되면 +2. "제품매칭"으로 화면에 표시.
-   *  - multiMatchCount   : products 가 2개 이상인 공고 수. "복수매칭"으로 화면에 표시.
-   *  - 모두 visibleCandidates(=진행 중) 기준으로 계산해 사용자가 보는 표/카드와 일치시킨다.
-   */
-  const productMatchTotal = useMemo(
-    () =>
-      visibleCandidates.reduce(
-        (sum, n) => sum + (Array.isArray(n.relatedProducts) ? n.relatedProducts.length : 0),
-        0,
-      ),
-    [visibleCandidates],
-  );
-  const multiMatchCount = useMemo(
-    () =>
-      visibleCandidates.filter(
-        (n) => Array.isArray(n.relatedProducts) && n.relatedProducts.length >= 2,
-      ).length,
-    [visibleCandidates],
-  );
-
   /*
    * 데이터 레이어 분리 (3차 고도화):
    *  - rawBidItems       : Supabase 에서 받은 raw 매칭 모집단 (= notices)
@@ -1193,10 +1170,8 @@ export default function Home() {
           상단 표출 카운트 + 페이지 사이즈 선택 + 페이지 이동 — PC/모바일 공통.
           기준 (사용자 혼동 방지):
             - 조회      : 마지막 수집 fetched_count (G2B 원천 조회 수, 없으면 미표시)
-            - 진행중    : 제품 매칭 + 마감 제외 후 unique 공고 수
-            - 제품매칭  : products 배열 기준 (notice, product) 매칭 관계 수 (한 공고에 두 제품이면 +2)
+            - 관련      : CONTRABASS/VIOLA 매칭 + 마감 제외 후 unique 공고 수
             - 표출      : 현재 화면 필터/검색/페이지 적용 후 실제 보이는 건수 (1-50 / N건 형태)
-            - 복수매칭  : products 가 2개 이상인 공고 수
         */}
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
@@ -1209,15 +1184,9 @@ export default function Home() {
               </span>
             )}
             <span title="제품 매칭 + 마감 제외, unique 공고 수">
-              <span className="text-slate-500 dark:text-slate-400">진행중 </span>
+              <span className="text-slate-500 dark:text-slate-400">관련 </span>
               <span className="font-semibold tabular-nums">
                 {activeTotal.toLocaleString("ko-KR")}
-              </span>
-            </span>
-            <span title="products 배열 기준 매칭 관계 수 — 복수 제품 매칭 시 중복 포함">
-              <span className="text-slate-500 dark:text-slate-400">제품매칭 </span>
-              <span className="font-semibold tabular-nums">
-                {productMatchTotal.toLocaleString("ko-KR")}
               </span>
             </span>
             <span title="현재 필터 + 페이지네이션 기준">
@@ -1232,12 +1201,6 @@ export default function Home() {
               <span className="text-slate-500 dark:text-slate-400">
                 {" "}
                 / {totalFiltered.toLocaleString("ko-KR")}건
-              </span>
-            </span>
-            <span title="products 가 2개 이상인 공고 수">
-              <span className="text-slate-500 dark:text-slate-400">복수매칭 </span>
-              <span className="font-semibold tabular-nums">
-                {multiMatchCount.toLocaleString("ko-KR")}건
               </span>
             </span>
           </p>
