@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runCollect, type CollectResponse } from "@/app/api/collect-g2b-keywords/route";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { recordBidSnapshot } from "@/lib/bidSnapshot";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -228,6 +229,14 @@ async function handle(request: NextRequest) {
   });
 
   const ok = errors.length === 0;
+
+  // 마지막 lane(36-40)이 끝난 시점의 현재 활성 제품 매칭 집합을 일일 기준 snapshot으로 저장.
+  // 화면의 "신규"는 브라우저 캐시가 아니라 전일 snapshot과 이 snapshot의 차이로 계산한다.
+  let snapshot: Awaited<ReturnType<typeof recordBidSnapshot>> | null = null;
+  if (range.start === 36 && range.end === 40) {
+    snapshot = await recordBidSnapshot("auto");
+  }
+
   console.log("[/api/cron/collect-g2b-range] done", {
     range: `${range.start}-${range.end}`,
     ok,
@@ -258,6 +267,7 @@ async function handle(request: NextRequest) {
     lastPageAttempted,
     errors,
     dbLogError,
+    snapshot,
   });
 }
 
