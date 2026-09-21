@@ -64,13 +64,6 @@ import {
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
 import { getPrimaryProduct, type PrimaryProduct } from "@/lib/primaryProduct";
-import {
-  isKeyNewInScope,
-  loadNewMap,
-  markNewItemsBySnapshot,
-  resetNewSnapshot,
-  type NewMap,
-} from "@/lib/newState";
 import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import { isIsoStaleSinceMorningCutoff } from "@/lib/freshness";
@@ -292,19 +285,12 @@ async function attachRawData(
   }));
 }
 
-/**
- * announcementKey 기반 NewMap("이번 수집에서 새로 등장한 키") 을 받아 isNew 플래그를 부착.
- *
- * 정의: 이전 수집 snapshot 에는 없었지만 이번 수집 snapshot 에 새로 등장한 공고이며,
- *       등록 시각이 24시간 이내인 경우만 isNew=true.
- */
-function applyNewFlags(notices: DisplayNotice[], newMap: NewMap): DisplayNotice[] {
-  const now = Date.now();
-  return notices.map((n) => ({
-    ...n,
-    isNew: isKeyNewInScope("bid", getAnnouncementKey(n), newMap, now),
-  }));
-}
+type BidSummaryResp = {
+  ok: boolean;
+  newCount?: number;
+  newKeys?: string[];
+  error?: string;
+};
 
 export default function Home() {
   const [notices, setNotices] = useState<DisplayNotice[]>([]);
@@ -430,20 +416,32 @@ export default function Home() {
       }));
       const deduped = dedupeByAnnouncementKey(enriched);
 
-      // snapshot diff — 이번 수집에 "새로 등장한" 키만 NEW 로 표시.
-      // (어제 있던 공고가 오늘도 있으면 신규 아님)
-      const keys = deduped.map((n) => getAnnouncementKey(n));
-      const { newKeys, newMap } = markNewItemsBySnapshot("bid", keys);
+      // 신규는 브라우저 localStorage가 아니라 서버의 일일 수집 snapshot 차이로 판정한다.
+      // 전일 자동수집 snapshot에 없고 오늘 자동수집 snapshot에 새로 생긴 external_id만 NEW.
+      let serverNewKeys = new Set<string>();
+      try {
+        const summaryRes = await authedFetch("/api/bid-summary", { cache: "no-store" });
+        const summary = (await summaryRes.json()) as BidSummaryResp;
+        if (summaryRes.ok && summary.ok) {
+          serverNewKeys = new Set(summary.newKeys ?? []);
+        }
+      } catch {
+        // 신규 집계 실패가 공고 목록 자체를 막으면 안 된다.
+      }
 
-      const flagged = applyNewFlags(deduped, newMap);
+      const flagged = deduped.map((notice) => ({
+        ...notice,
+        isNew: Boolean(notice.externalId && serverNewKeys.has(notice.externalId)),
+      }));
       setNotices(flagged);
       setDataSource(result.source);
       setErrorMessage(result.error);
-      // 캐시 저장은 enrich 이전의 원본 Notice[] 만으로 충분하다 — primaryProduct/isNew 는 화면에서 다시 계산.
       saveNoticesCache(result.notices, result.source);
-      // 백그라운드 fetch 가 끝났으니 이후로는 cache 표시를 끈다.
       setFromCache(false);
-      return { newCount: newKeys.length, matchError: result.matchError };
+      return {
+        newCount: flagged.filter((notice) => notice.isNew).length,
+        matchError: result.matchError,
+      };
     } finally {
       fetchInFlightRef.current = false;
     }
@@ -488,11 +486,9 @@ export default function Home() {
         primaryProduct: getPrimaryProduct(n as DisplayNotice),
       })) as DisplayNotice[];
       const deduped = dedupeByAnnouncementKey(enriched);
-      // 캐시 페인트 시점에서도 newMap 을 읽어 isNew 를 정확히 부착한다.
-      // (저장만 하고 갱신은 하지 않음 — markNewItemsBySnapshot 호출은 fresh fetch 후에만)
-      const newMap = loadNewMap("bid");
-      const flagged = applyNewFlags(deduped, newMap);
-      setNotices(flagged);
+      // 캐시에서는 과거 브라우저 snapshot을 사용하지 않는다.
+      // 서버 일일 snapshot을 읽는 fresh fetch가 끝난 뒤에만 신규 표시를 붙인다.
+      setNotices(deduped.map((notice) => ({ ...notice, isNew: false })));
       setDataSource(cached.source);
       setIsLoading(false);
       setFromCache(true);
@@ -779,20 +775,6 @@ export default function Home() {
   };
 
   /**
-   * "신규 표시 초기화".
-   *  - 현재 화면(activeItems) 의 키들을 lastSnapshotKeys 로 강제 저장.
-   *  - newMap 비우기 → 화면의 신규 0건 처리.
-   *  - 다음 수집부터는 정상 snapshot diff 로 새 키만 NEW 로 표시.
-   */
-  const handleResetNewState = () => {
-    const keys = notices.map((n) => getAnnouncementKey(n));
-    const newMap = resetNewSnapshot("bid", keys);
-    setNotices((prev) => applyNewFlags(prev, newMap));
-    setShowNewOnly(false);
-    setCollectToast("신규 표시를 초기화했습니다");
-  };
-
-  /**
    * "지금 수집" 버튼.
    *  1) /api/collect-now POST 호출.
    *  2) 응답 ok 면 신규/업데이트/조회 건수를 사용자에게 안내.
@@ -1050,7 +1032,7 @@ export default function Home() {
                 type="button"
                 onClick={() => setShowNewOnly((prev) => !prev)}
                 aria-pressed={showNewOnly}
-                title="최근 24시간 내 처음 들어온 공고만 표시"
+                title="전일 자동수집 대비 오늘 새로 들어온 관련 공고만 표시"
                 disabled={newCandidateCount === 0 && !showNewOnly}
                 className={`inline-flex h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-xs font-semibold transition sm:text-sm ${
                   showNewOnly
