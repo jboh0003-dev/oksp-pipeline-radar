@@ -852,7 +852,7 @@ export default function Home() {
     const fetched = resp.fetchedCount ?? 0;
     const matched = resp.matchedCount ?? 0;
     const parts = [
-      `신규 ${inserted.toLocaleString("ko-KR")}건`,
+      `DB 신규 ${inserted.toLocaleString("ko-KR")}건`,
       `업데이트 ${updated.toLocaleString("ko-KR")}건`,
       `조회 ${fetched.toLocaleString("ko-KR")}건`,
       `매칭 ${matched.toLocaleString("ko-KR")}건`,
@@ -1046,21 +1046,6 @@ export default function Home() {
                 <span>신규</span>
                 <span className="tabular-nums">{newCandidateCount}</span>
               </button>
-
-              {/*
-                "신규 표시 초기화" — 화면이 한 번에 신규로 폭발한 경우 수동 복구용.
-                자주 누를 버튼은 아니므로 작은 텍스트 링크 톤.
-              */}
-              {newCandidateCount > 0 && (
-                <button
-                  type="button"
-                  onClick={handleResetNewState}
-                  title="현재 보이는 공고를 모두 '이미 본 것'으로 표시해 신규 표시를 끕니다"
-                  className="inline-flex h-9 shrink-0 items-center whitespace-nowrap text-[11px] font-medium text-slate-500 underline-offset-2 transition hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200 sm:text-xs"
-                >
-                  신규 표시 초기화
-                </button>
-              )}
 
               {/*
                 "피드백 있음" 필터 — 영업 의견이 등록된 공고만 다시 보고싶을 때 사용.
