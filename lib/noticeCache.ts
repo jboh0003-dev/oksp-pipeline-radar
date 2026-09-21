@@ -14,9 +14,9 @@ import type { Notice } from "@/data/sampleNotices";
  *  - JSON.parse 실패 / 형태가 이상한 데이터는 무시.
  */
 
-const CACHE_KEY = "csg2b:notices";
-const TIMESTAMP_KEY = "csg2b:lastFetchAt";
-const SOURCE_KEY = "csg2b:lastSource";
+const CACHE_KEY = "csg2b:notices:v2";
+const TIMESTAMP_KEY = "csg2b:lastFetchAt:v2";
+const SOURCE_KEY = "csg2b:lastSource:v2";
 
 /** 자동 진입 캐시가 신선하다고 보는 기간(ms). 15분. */
 export const NOTICES_CACHE_TTL_MS = 15 * 60 * 1000;
