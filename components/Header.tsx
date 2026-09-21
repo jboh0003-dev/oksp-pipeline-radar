@@ -2,7 +2,7 @@ import OkestroWordmark from "./OkestroWordmark";
 
 type HeaderProps = {
   /**
-   * 진행중(마감 제외) 공고 수.
+   * 현재 진행 중인 CONTRABASS/VIOLA 관련 공고 수.
    * (호환을 위해 prop 이름은 matchedCount 로 유지하되, 실제로는 진행중 카운트가 들어온다.)
    */
   matchedCount: number;
@@ -51,14 +51,14 @@ export default function Header({ matchedCount, fromCache }: HeaderProps) {
         <div className="flex shrink-0 items-center gap-2 pr-24 sm:pr-28">
           <div className="inline-flex flex-col items-end gap-0.5 rounded-xl border border-white/20 bg-white/15 px-3 py-1.5 text-white shadow-sm backdrop-blur-sm">
             <div className="flex items-center gap-1.5 text-xs sm:text-sm">
-              <span className="text-slate-100/80">진행중</span>
+              <span className="text-slate-100/80">관련공고</span>
               <span className="font-bold tabular-nums text-white">
                 {matchedCount.toLocaleString("ko-KR")}
               </span>
               <span className="text-slate-200/70">건</span>
             </div>
             <p className="hidden text-[10px] text-slate-200/70 sm:block">
-              현재 진행중 공고 기준
+              마감 전 제품 관련 공고 기준
               {fromCache && (
                 <span className="ml-1.5 rounded-full bg-cyan-400/30 px-1.5 py-0.5 font-semibold uppercase tracking-wide text-cyan-50">
                   cache
