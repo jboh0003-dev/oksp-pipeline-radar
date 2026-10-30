@@ -273,7 +273,7 @@ function normalizeAward(task: FetchTask, item: RawItem): CompetitiveAwardRow | n
   if (!keyword || !normalizedProject.includes(keyword.toLowerCase())) return null;
 
   return {
-    external_key: `${fields.bidNo}:${fields.bidOrd ?? "000"}:${fields.winnerBizno}:${task.tracker.competitor}`,
+    external_key: `${fields.bidNo}:${fields.bidOrd ?? "000"}:${fields.winnerBizno}`,
     competitor: task.tracker.competitor,
     winner_name: fields.winnerName,
     winner_business_no: fields.winnerBizno,
@@ -444,16 +444,18 @@ export async function collectCompetitiveAwards(options: {
   concurrency?: number;
   includeCompanies?: boolean;
   includeProducts?: boolean;
+  categories?: Array<(typeof AWARD_KINDS)[number]["category"]>;
 }): Promise<CompetitiveAwardCollectResult> {
   const serviceKey = process.env.G2B_SERVICE_KEY?.trim();
   if (!serviceKey) throw new Error("G2B_SERVICE_KEY 환경변수가 없습니다.");
 
   const windows = buildMonthlyAwardWindows(options.startDate, options.endDate);
   const tasks: FetchTask[] = [];
+  const kinds = options.categories?.length ? AWARD_KINDS.filter(kind => options.categories?.includes(kind.category)) : AWARD_KINDS;
 
   if (options.includeCompanies ?? true) {
     for (const company of COMPETITIVE_AWARD_COMPANIES) {
-      for (const kind of AWARD_KINDS) {
+      for (const kind of kinds) {
         for (const window of windows) tasks.push({ type: "company", company, kind, window });
       }
     }
@@ -462,7 +464,7 @@ export async function collectCompetitiveAwards(options: {
   if (options.includeProducts ?? true) {
     for (const tracker of COMPETITIVE_PRODUCT_TRACKERS) {
       for (const keyword of tracker.keywords) {
-        for (const kind of AWARD_KINDS) {
+        for (const kind of kinds) {
           for (const window of windows) tasks.push({ type: "product", tracker, keyword, kind, window });
         }
       }
@@ -514,7 +516,7 @@ export async function collectCompetitiveAwards(options: {
 
   let insertedCount = 0;
   let updatedCount = 0;
-  if ((options.persist ?? true) && rows.length > 0) {
+  if ((options.persist ?? true) && rows.length > 0 && errors.length === 0) {
     const persisted = await persistRows(rows);
     insertedCount = persisted.inserted;
     updatedCount = persisted.updated;
