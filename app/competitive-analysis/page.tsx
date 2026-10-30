@@ -93,6 +93,7 @@ export default function CompetitiveAnalysisPage(){
   const [directAwards,setDirectAwards]=useState<DirectAward[]>([]);
   const [errors,setErrors]=useState<Record<string,string>>({});
   const [ready,setReady]=useState<Record<string,boolean>>({});
+  const [coverage,setCoverage]=useState<{expectedMonths:number;successfulMonths:number;failedMonths:string[]}|null>(null);
   const [year,setYear]=useState("전체");
   const [vendor,setVendor]=useState<"전체"|VendorId>("전체");
   const [type,setType]=useState("전체");
@@ -120,6 +121,15 @@ export default function CompetitiveAnalysisPage(){
         .catch(error=>{if(!cancelled)setErrors(old=>({...old,[source.key]:error instanceof Error?error.message:String(error)}));})
         .finally(()=>{if(!cancelled)setReady(old=>({...old,[source.key]:true}));});
     }
+    return ()=>{cancelled=true;};
+  },[]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    fetch("/api/virtualization-delivery-coverage",{cache:"no-store"})
+      .then(async r=>{const data=await r.json();if(!r.ok||!data.ok)throw Error("coverage unavailable");
+        if(!cancelled)setCoverage(data.baseline);})
+      .catch(()=>{if(!cancelled)setCoverage(null);});
     return ()=>{cancelled=true;};
   },[]);
 
@@ -252,7 +262,7 @@ export default function CompetitiveAnalysisPage(){
       <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         <Summary label="기존 업체 직접 낙찰(전체)" value={!ready.direct?"확인 중":directVisible.length+"건"} sub="일반 사업 포함 · 기존 데이터 유지"/>
         <Summary label="제조사 확인 가상화 낙찰" value={!ready.award?"확인 중":verifiedAwards.length+"건"} sub="벤더 직접·SI·총판 포함"/>
-        <Summary label="제조사 제품명 확인 납품요구" value={!ready.delivery?"확인 중":verifiedDeliveries.length+"건"} sub="쇼핑몰 실제 제품 기준"/>
+        <Summary label="제조사 제품명 확인 납품요구" value={!ready.delivery?"확인 중":verifiedDeliveries.length+"건"} sub={coverage?"기본 제품명 "+coverage.successfulMonths+"/"+coverage.expectedMonths+"개월 검증":"월별 수집 결과 확인"}/>
         <Summary label="제품 납품요구액" value={!ready.delivery?"확인 중":fmtCompact(deliveryAmount)} sub="사업 전체 낙찰금액과 별개"/>
       </div>
       {(errors.award||errors.delivery)&&<div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/20 dark:bg-rose-950/20 dark:text-rose-300">
@@ -316,7 +326,7 @@ export default function CompetitiveAnalysisPage(){
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">제조사 미확인</p><p className="mt-1 text-lg font-bold tabular-nums">{unverifiedAwards.length}건</p></div>
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">검증된 납품요구</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedDeliveries.length}건</p></div>
           </div>
-          <p className="mt-3 text-[11px] leading-5 text-slate-500">낙찰사업은 2024~2026년 집계이며, 쇼핑몰 납품요구는 2026년 9월 일부 자료만 수집돼 있습니다.</p>
+          <p className="mt-3 text-[11px] leading-5 text-slate-500">낙찰사업은 2024~2026년 집계이며, 쇼핑몰: 기본 가상화 제품명 {coverage?.successfulMonths??"확인 중"}/34개월 수집 검증 · 제조사/제품 별도 검색어는 추가 검증 대상입니다.</p>
         </div>
       </section>
 
@@ -356,7 +366,7 @@ export default function CompetitiveAnalysisPage(){
 
       <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-white/10">
-          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">조달쇼핑몰 벤더 제품 납품요구 <span className="ml-1 text-xs text-blue-600">{verifiedDeliveries.length}건</span></h2><p className="mt-1 text-[10px] text-slate-400">수요기관별 실제 납품요구 · 현재 2026.09 데이터 일부 수집</p></div>
+          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">조달쇼핑몰 벤더 제품 납품요구 <span className="ml-1 text-xs text-blue-600">{verifiedDeliveries.length}건</span></h2><p className="mt-1 text-[10px] text-slate-400">수요기관별 납품요구 · 기본 가상화 제품명 {coverage?.successfulMonths??"확인 중"}/34개월 검증</p></div>
           <CsvButton disabled={!verifiedDeliveries.length} onClick={()=>csvDownload("벤더_쇼핑몰_납품요구.csv",[
             ["납품요구일","제조사","규격/제품명","납품업체","수요기관","요구금액","납품요구번호","물품식별번호"],
             ...orderDeliveries.map(x=>[x.receipt_date,vendorFromDelivery(x)?.vendor,x.product_name,x.supplier_name,x.customer_name,x.amount,x.delivery_request_no,x.product_id])
