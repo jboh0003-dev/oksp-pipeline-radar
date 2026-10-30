@@ -3,7 +3,7 @@ import { useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { authedFetch } from "@/lib/authedFetch";
 
-const KEYWORDS = ["에이블스택", "ABLESTACK", "가상화", "하이퍼바이저", "HCI", "VMware", "vSphere", "OpenStack", "오픈스택", "CONTRABASS", "VIOLA", "클라우드잇"];
+const KEYWORDS = ["가상화", "에이블스택", "ABLESTACK", "하이퍼바이저", "HCI", "VMware", "vSphere", "OpenStack", "오픈스택", "CONTRABASS", "VIOLA", "클라우드잇"];
 type Result = { ok: boolean; year?: number; month?: number; keyword?: string; requests?: number; fetched?: number; reportedTotal?: number; matched?: number; saved?: number; error?: string; rows?: Array<{product_name:string;brand:string|null; supplier_name:string|null; customer_name:string|null; amount:number|null}> };
 export default function VirtualizationBackfillPage() {
   const [year, setYear] = useState(2026);
@@ -85,7 +85,7 @@ export default function VirtualizationBackfillPage() {
       {candidateResult && <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">상태: {String(candidateResult.ok)} · 원천 {String(candidateResult.fetchedCount ?? "-")}건 · 고유 {String(candidateResult.matchedCount ?? "-")}건 · 제조사 명시 {String(candidateResult.withNamedBrand ?? "-")}건 · 신규 {String(candidateResult.insertedCount ?? "-")}건 · 오류 {JSON.stringify(candidateResult.errors ?? candidateResult.error ?? "-")}</p>}
     </section>
     <section className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-      조달쇼핑몰 납품요구 상세 API는 현재 403 (등록되지 않은 서비스키)입니다. 공공데이터포털에서 "나라장터쇼핑몰 품목정보 서비스" 추가 이용 신청 후 재시도하세요.
+      조달쇼핑몰 납품요구 상세 API는 현재 서비스키로 정상 조회가 확인됐습니다. 월별 제품 납품요구는 가상화 키워드로 조회 후 제조사·제품명으로 분류합니다.
     </section>
     {result && <p className={`mt-4 rounded-lg p-4 text-sm ${result.ok?"bg-slate-100 dark:bg-slate-800":"bg-rose-50 text-rose-700"}`}>{result.ok?`수집 요청 ${result.requests}회 · 원천 ${result.fetched}건 · 매칭 ${result.matched}건 · 저장 요청 ${result.saved}건`:result.error}</p>}
     {preview && <section className="mt-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900">
