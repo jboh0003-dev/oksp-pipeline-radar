@@ -82,10 +82,6 @@ type AwardSortKey = "award_date" | "competitor" | "winner_name" | "bid_no" | "pr
 type DeliverySortKey = "receipt_date" | "brand" | "product_name" | "supplier_name" | "customer_name" | "amount";
 type DisplayMetric = "count" | "amount";
 
-function cleanCompany(value: string) {
-  return value.replace(/^(주식회사|\(주\)|㈜)\s*/g, "").replace(/\s/g, "").toLowerCase();
-}
-
 function sortedBy<T>(records: T[], valueOf: (row: T) => unknown, direction: SortDirection): T[] {
   return [...records].sort((left, right) => {
     const a = valueOf(left), b = valueOf(right);
@@ -216,13 +212,13 @@ export default function CompetitiveAnalysisPage() {
 
 
   const allWinningCompanies = useMemo(() => {
-    const counts = new Map<string,{name:string;count:number}>();
+    const counts = new Map<string,{id:string;name:string;count:number}>();
     for(const row of candidates) {
       if (row.classification === "review") continue;
-      const key = cleanCompany(row.winner_name);
+      const key = row.winner_business_no;
       const previous = counts.get(key);
       if(previous) previous.count++;
-      else counts.set(key, {name:row.winner_name, count:1});
+      else counts.set(key, {id:key,name:row.winner_name, count:1});
     }
     return [...counts.values()].sort((a,b)=>b.count-a.count || a.name.localeCompare(b.name,"ko-KR"));
   }, [candidates]);
@@ -241,7 +237,7 @@ export default function CompetitiveAnalysisPage() {
       if(company!=="전체" && !(item.product_brand??"").includes(company) &&
         !(item.winner_name??"").includes(company) &&
         !(company==="에이블클라우드" && vendorCaseEvidence(item)?.brand==="ABLESTACK")) return false;
-      if(winnerCompany!=="전체" && cleanCompany(item.winner_name)!==cleanCompany(winnerCompany)) return false;
+      if(winnerCompany!=="전체" && item.winner_business_no!==winnerCompany) return false;
       if(agency!=="전체" && item.customer!==agency) return false;
       if(candidateType!=="전체" && item.classification!==candidateType) return false;
       if(!q) return true;
@@ -255,7 +251,7 @@ export default function CompetitiveAnalysisPage() {
     if(year===RECENT_3Y && (rowYear<"2024"||rowYear>"2026")) return false;
     if(year!==RECENT_3Y && year!==ALL_YEARS && year!==rowYear) return false;
     if(company!=="전체" && !(item.brand??"").includes(company) && !(item.supplier_name??"").includes(company)) return false;
-    if(winnerCompany!=="전체" && cleanCompany(item.supplier_name??"")!==cleanCompany(winnerCompany)) return false;
+    if(winnerCompany!=="전체") return false;
     if(agency!=="전체" && item.customer_name!==agency) return false;
     const q=query.trim().toLowerCase();
     return !q || [item.product_name,item.brand,item.supplier_name,item.customer_name,item.delivery_request_no]
@@ -276,7 +272,7 @@ export default function CompetitiveAnalysisPage() {
       if(year===RECENT_3Y && (rowYear<recentStartYear||rowYear>currentYear)) return false;
       if(year!==RECENT_3Y && year!==ALL_YEARS && String(rowYear)!==year) return false;
       if(company!=="전체"&&row.competitor!==company) return false;
-      if(winnerCompany!=="전체" && cleanCompany(row.winner_name)!==cleanCompany(winnerCompany)) return false;
+      if(winnerCompany!=="전체" && row.winner_business_no!==winnerCompany) return false;
       if(agency!=="전체" && row.customer!==agency) return false;
       if(scope==="virtualization"&&classifyVirtualization(row)!=="virtualization") return false;
       if(scope==="related"&&classifyVirtualization(row)==="other") return false;
@@ -323,7 +319,7 @@ export default function CompetitiveAnalysisPage() {
       count:visibleCandidates.length,
       amount:amounts.reduce((sum,row)=>sum+Number(row.amount??0),0),
       amountKnown:amounts.length,
-      winners:new Set(visibleCandidates.map(row=>cleanCompany(row.winner_name))).size,
+      winners:new Set(visibleCandidates.map(row=>row.winner_business_no)).size,
       customers:new Set(visibleCandidates.map(row=>row.customer).filter(Boolean)).size,
       explicitBrands:visibleCandidates.filter(row=>row.product_brand!=null).length,
     };
@@ -332,7 +328,7 @@ export default function CompetitiveAnalysisPage() {
   const winnerRanking = useMemo(()=>{
     const map=new Map<string,{id:string;name:string;count:number;amount:number}>();
     for(const row of visibleCandidates) {
-      const id=cleanCompany(row.winner_name);
+      const id=row.winner_business_no;
       const old=map.get(id);
       if(old){old.count++;old.amount+=Number(row.amount??0);}
       else map.set(id,{id,name:row.winner_name,count:1,amount:Number(row.amount??0)});
@@ -455,7 +451,7 @@ export default function CompetitiveAnalysisPage() {
               <span className="text-[11px] font-semibold text-slate-500">실제 낙찰업체</span>
               <select value={winnerCompany} onChange={e=>setWinnerCompany(e.target.value)} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 dark:border-white/10 dark:bg-slate-900 dark:text-slate-100">
                 <option value="전체">전체 낙찰업체</option>
-                {allWinningCompanies.map(row=><option key={row.name} value={row.name}>{row.name} ({row.count}건)</option>)}
+                {allWinningCompanies.map(row=><option key={row.id} value={row.id}>{row.name} ({row.count}건)</option>)}
               </select>
             </label>
             <label className="flex min-w-0 flex-col gap-1">
@@ -513,7 +509,7 @@ export default function CompetitiveAnalysisPage() {
                 const peak=winnerRanking[0]?.[rankingMetric]??0;
                 const amountOrCount=item[rankingMetric];
                 const percent=peak>0?100*amountOrCount/peak:0;
-                return <button key={item.id} type="button" onClick={()=>setWinnerCompany(item.name)}
+                return <button key={item.id} type="button" onClick={()=>setWinnerCompany(item.id)}
                   className="block w-full rounded-md text-left hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-white/5"
                   title={item.name+"만 보기"}>
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs">
@@ -613,7 +609,7 @@ export default function CompetitiveAnalysisPage() {
                     <p className="font-medium text-slate-900 dark:text-slate-100">{item.project}</p>
                     <p className="mt-0.5 text-[10px] text-slate-400">{item.bid_no}</p>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2.5"><button type="button" onClick={()=>setWinnerCompany(item.winner_name)} className="font-semibold text-slate-700 hover:text-blue-600 hover:underline dark:text-slate-200">{item.winner_name}</button></td>
+                  <td className="whitespace-nowrap px-3 py-2.5"><button type="button" onClick={()=>setWinnerCompany(item.winner_business_no)} className="font-semibold text-slate-700 hover:text-blue-600 hover:underline dark:text-slate-200">{item.winner_name}</button></td>
                   <td className="whitespace-nowrap px-3 py-2.5 font-medium text-slate-700 dark:text-slate-200">
                     {item.product_brand?item.product_brand:vendorCaseEvidence(item)?<span>
                       <span>ABLESTACK</span>
