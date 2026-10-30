@@ -10,6 +10,7 @@ export default function VirtualizationBackfillPage() {
   const [month, setMonth] = useState(1);
   const [keyword, setKeyword] = useState(KEYWORDS[0]);
   const [busy, setBusy] = useState(false);
+  const [awardResult, setAwardResult] = useState<Record<string, unknown> | null>(null);
   const [preview, setPreview] = useState<Result | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   async function run(save: boolean) {
@@ -26,6 +27,19 @@ export default function VirtualizationBackfillPage() {
       setResult({ok:false,error:error instanceof Error ? error.message : String(error)});
     } finally {setBusy(false);}
   }
+  async function runAwards(persist: boolean) {
+    setBusy(true); setAwardResult(null);
+    try {
+      const res = await authedFetch("/api/admin/competitive-awards-backfill", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year, month, persist }),
+      });
+      const body: Record<string, unknown> = await res.json();
+      setAwardResult(body);
+    } catch (error) {
+      setAwardResult({ok:false,error:error instanceof Error?error.message:String(error)});
+    } finally {setBusy(false);}
+  }
   return <AdminGuard><div className="mx-auto max-w-6xl px-5 py-6">
     <p className="text-xs font-semibold text-blue-600">Pipeline Maker · 관리자 전용</p>
     <h1 className="mt-1 text-2xl font-bold">2024~2026년 가상화 제품 조달 납품수집</h1>
@@ -36,6 +50,15 @@ export default function VirtualizationBackfillPage() {
       <label className="flex flex-col gap-1 text-xs">제품 검색어<select className="rounded-md border px-3 py-2 text-sm dark:bg-slate-900" value={keyword} onChange={e=>{setKeyword(e.target.value);setPreview(null)}}>{KEYWORDS.map(k=><option key={k}>{k}</option>)}</select></label>
       <button className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy} onClick={()=>void run(false)}>{busy?"조회 중":"API 미리보기"}</button>
       <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy || !preview?.ok} onClick={()=>void run(true)}>검증된 건만 저장</button>
+    </section>
+    <section className="mt-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900">
+      <h2 className="font-semibold">동일 기간의 나라장터 낙찰이력 재수집</h2>
+      <p className="mt-1 text-xs text-slate-500">상단에서 선택한 연도·월에 대해 기존 4개 추적업체의 물품·용역·공사·외자 낙찰정보를 조회합니다. 다른 달은 별도 실행하며, 매일 자동 실행하지 않습니다.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button disabled={busy} onClick={()=>void runAwards(false)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">낙찰정보 조회(미리보기)</button>
+        <button disabled={busy || awardResult?.ok !== true} onClick={()=>void runAwards(true)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">낙찰정보 수집·저장</button>
+      </div>
+      {awardResult && <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">상태: {String(awardResult.ok)} · 원천 {String(awardResult.fetchedCount ?? "-")}건 · 검증 {String(awardResult.dedupedCount ?? "-")}건 · 신규 {String(awardResult.insertedCount ?? "-")}건 · 오류 {JSON.stringify(awardResult.errors ?? awardResult.error ?? "-")}</p>}
     </section>
     {result && <p className={`mt-4 rounded-lg p-4 text-sm ${result.ok?"bg-slate-100 dark:bg-slate-800":"bg-rose-50 text-rose-700"}`}>{result.ok?`수집 요청 ${result.requests}회 · 원천 ${result.fetched}건 · 매칭 ${result.matched}건 · 저장 요청 ${result.saved}건`:result.error}</p>}
     {preview && <section className="mt-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900">
