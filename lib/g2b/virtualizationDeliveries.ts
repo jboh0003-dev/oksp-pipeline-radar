@@ -5,9 +5,10 @@ const BASE = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService";
 const OP = "getDlvrReqDtlInfoList";
 // A curated product-name probe is intentionally separate from the broader company-award collector.
 export const VIRTUALIZATION_KEYWORDS = [
-  "에이블스택", "ABLESTACK", "가상화", "하이퍼바이저", "HCI",
-  "VMware", "vSphere", "OpenStack", "오픈스택", "CONTRABASS",
-  "VIOLA", "클라우드잇",
+  "가상화", "HCI", "하이퍼바이저", "에이블스택", "ABLESTACK",
+  "Nutanix", "뉴타닉스", "AHV", "VMware", "vSphere", "vSAN", "ESXi",
+  "CONTRABASS", "VIOLA", "클라우드잇", "Openstackit", "Proxmox",
+  "OpenShift Virtualization", "Red Hat Virtualization",
 ] as const;
 type RawItem = Record<string, unknown>;
 export type DeliveryItem = {
@@ -44,20 +45,21 @@ function extractItems(input: unknown): { items: RawItem[]; total: number } {
   return { items: items.filter((v): v is RawItem => v != null && typeof v === "object"), total: num(body.totalCount) ?? 0 };
 }
 function classifyProduct(productName: string): { brand: string | null; classification: DeliveryItem["classification"] } {
-  const product = productName.toLowerCase();
+  // Identify the maker from the actual G2B product name; NEVER from a reseller's name.
   const brands: Array<[RegExp, string]> = [
-    [/에이블스택|ablestack|abelstack/i, "에이블클라우드 / ABLESTACK"],
-    [/contrabass|콘트라베이스|콘트라바스/i, "오케스트로 / CONTRABASS"],
-    [/viola|비올라/i, "오케스트로 / VIOLA"],
-    [/vmware|vsphere|vcenter|esxi|vcloud/i, "VMware"],
-    [/openstack|오픈스택/i, "OpenStack"],
-    [/클라우드잇|cloudit/i, "이노그리드 / CloudIt"],
+    [/에이블클라우드|에이블스택|ablestack|abelstack|ABLECLOUD/i, "에이블클라우드 / ABLESTACK"],
+    [/contrabass|콘트라베이스|콘트라바스|\bviola\b|비올라/i, "오케스트로 / CONTRABASS · VIOLA"],
+    [/nutanix|뉴타닉스|acropolis|\bAHV\b/i, "Nutanix"],
+    [/vmware|vsphere|vcenter|esxi|\bvcf\b|\bvsan\b|vcloud/i, "VMware"],
+    [/openstackit|오픈스택잇|클라우드잇|cloud.?it/i, "이노그리드 / CloudIT"],
+    [/red\s*hat.{0,20}(virtualization|openshift)|openshift.{0,20}virtualization|레드햇.{0,12}가상화/i, "Red Hat"],
+    [/proxmox|프록스목스/i, "Proxmox"],
   ];
-  const brand = brands.find(([pattern]) => pattern.test(product))?.[1] ?? null;
-  if (brand || /가상화|하이퍼바이저|hypervisor|hyper-v|\bhci\b|하이퍼컨버지드|하이퍼컨버전스/i.test(product)) {
-    return { brand, classification: "virtualization" };
+  const brand = brands.find(([pattern]) => pattern.test(productName))?.[1] ?? null;
+  if (brand || /가상화|하이퍼바이저|hypervisor|hyper-v|\bhci\b|하이퍼컨버지드|하이퍼컨버전스|virtualization/i.test(productName)) {
+    return {brand, classification: "virtualization"};
   }
-  return { brand: null, classification: "review" };
+  return {brand:null,classification:"review"};
 }
 function normalize(item: RawItem, keyword: string): DeliveryItem | null {
   const requestNo = str(item.dlvrReqNo);
@@ -90,7 +92,7 @@ function compareVersions(a: DeliveryItem, b: DeliveryItem): number {
   const va = Number(a.delivery_change_order ?? 0), vb = Number(b.delivery_change_order ?? 0);
   return va - vb || a.receipt_date.localeCompare(b.receipt_date);
 }
-export async function collectVirtualizationDeliveryMonth(year: number, month: number, keyword: string, persist = false) {
+export async function collectVirtualizationDeliveryMonth(year: number, month: number, keyword: string, persist = false, previewLimit = 30) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   if (![2024, 2025, 2026].includes(year) || !Number.isInteger(month) || month < 1 || month > 12)
     throw new Error("조회기간은 2024~2026년 중 한 달이어야 합니다.");
@@ -153,5 +155,5 @@ export async function collectVirtualizationDeliveryMonth(year: number, month: nu
       }
     }
   }
-  return { ok: true, year, month, keyword, requests, fetched, reportedTotal, matched: rows.length, saved: persist ? rows.length : 0, rows: persist ? [] : rows.slice(0, 30) };
+  return { ok: true, year, month, keyword, requests, fetched, reportedTotal, matched: rows.length, saved: persist ? rows.length : 0, rows: persist ? [] : rows.slice(0, Math.max(0, Math.min(previewLimit, 1500))) };
 }

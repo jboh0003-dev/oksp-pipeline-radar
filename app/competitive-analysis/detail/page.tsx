@@ -28,7 +28,7 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
   const isDirect=kind==="direct";
   const evidence=isDelivery?vendorFromDelivery({
       product_name:fmt(row?.product_name),brand:fmt(row?.brand),supplier_name:fmt(row?.supplier_name)
-    }):row?vendorFromAward({
+    }):isDirect?null:row?vendorFromAward({
       bid_no:fmt(row.bid_no),project:fmt(row.project),product_brand:fmt(row.product_brand),
       winner_name:fmt(row.winner_name),winner_business_no:fmt(row.winner_business_no)
     }):null;
@@ -39,8 +39,8 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
   const customer=isDelivery?fmt(row?.customer_name):fmt(row?.customer);
   const amount=isDelivery?row?.amount:row?.amount;
   const fields:[string,unknown][]=[
-    ["제조사",evidence?.vendor??"미확인"],
-    ["제조사 확인 근거",evidence?.evidence??"자료에 제조사 미기재"],
+    [isDirect?"추적업체":"제조사",isDirect?row?.competitor:(evidence?.vendor??"미확인")],
+    [isDirect?"실적 구분":"제조사 확인 근거",isDirect?"기업 전체 직접 낙찰 이력 · 가상화 제품 공급 여부 미확인":(evidence?.evidence??"자료에 제조사 미기재")],
     [isDelivery?"납품업체":"최종 낙찰업체",provider],
     ["사업자등록번호",isDelivery?row?.supplier_business_no:row?.winner_business_no],
     ["수요기관",customer],
@@ -65,7 +65,7 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
       <p className="text-[11px] font-bold tracking-wide text-blue-600">{isDelivery?"나라장터 종합쇼핑몰 납품요구":isDirect?"벤더 직접 낙찰":"가상화 관련 낙찰사업"}</p>
       <h1 className="mt-2 break-words text-xl font-bold leading-relaxed text-slate-900 dark:text-white">{project}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-        <span className="rounded-lg bg-slate-100 px-2.5 py-1.5 font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{evidence?.vendor??"제조사 미확인"}</span>
+        <span className="rounded-lg bg-slate-100 px-2.5 py-1.5 font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{isDirect?fmt(row?.competitor):(evidence?.vendor??"제조사 미확인")}</span>
         <span>{date}</span>
         <span className="font-semibold text-slate-900 dark:text-slate-100">{won(amount)}</span>
       </div>

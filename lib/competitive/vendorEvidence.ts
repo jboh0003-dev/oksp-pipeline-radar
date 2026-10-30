@@ -11,6 +11,13 @@ export const VENDORS = [
   { id: "이노그리드", label: "이노그리드", products: "CloudIT · OpenStackit" },
   { id: "Red Hat", label: "Red Hat", products: "OpenShift Virtualization" },
   { id: "Proxmox", label: "Proxmox", products: "Proxmox VE" },
+  { id: "파이오링크", label: "파이오링크", products: "POPCON HCI" },
+  { id: "틸론", label: "틸론", products: "Dstation · VDI" },
+  { id: "도시엔컴", label: "도시엔컴", products: "씨티클라우드" },
+  { id: "SmartX", label: "SmartX", products: "SmartX HCI" },
+  { id: "더조인", label: "더조인", products: "J-Virtual Mobile" },
+  { id: "이트론", label: "이트론", products: "JDesktop" },
+  { id: "인콤", label: "인콤", products: "JDesktop" },
 ] as const;
 
 export type VendorId = (typeof VENDORS)[number]["id"];
@@ -42,6 +49,13 @@ export function vendorFromProduct(text: string): VendorId | null {
   if (/이노그리드|innogrid|openstackit|오픈스택잇|클라우드잇|cloud.?it/i.test(text)) return "이노그리드";
   if (/red\s*hat.{0,20}(?:virtualization|openshift)|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
   if (/proxmox|프록스목스/i.test(text)) return "Proxmox";
+  if (/popcon\s*hci|파이오링크.{0,30}(hci|가상화)/i.test(text)) return "파이오링크";
+  if (/dstation|디스테이션|틸론.{0,25}(가상화|vdi)/i.test(text)) return "틸론";
+  if (/씨티클라우드|citycloud|도시엔컴.{0,25}(가상화|hci)/i.test(text)) return "도시엔컴";
+  if (/smartx.{0,35}(가상화|hci|분산스토리지)|\bsmartx\b/i.test(text)) return "SmartX";
+  if (/j-virtual mobile|더조인.{0,30}가상화/i.test(text)) return "더조인";
+  if (/이트론.{0,60}jdesktop/i.test(text)) return "이트론";
+  if (/인콤.{0,60}jdesktop/i.test(text)) return "인콤";
   return null;
 }
 export function vendorFromAward(row: AwardLike): Attribution | null {
@@ -58,6 +72,15 @@ export function vendorFromAward(row: AwardLike): Attribution | null {
 export function vendorFromDelivery(row: DeliveryLike): Attribution | null {
   const named = vendorFromProduct([row.product_name??"",row.brand??""].join(" "));
   return named ? {vendor:named,evidence:"쇼핑몰 품목명"} : null;
+}
+export type ProductCategory = "server_virtualization" | "hci" | "vdi" | "virtualization_other";
+
+/** Deterministic product-title classification for the shared year/vendor/category filters. */
+export function classifyDeliveryProduct(title: string): ProductCategory {
+  if (/dstation|디스테이션|jdesktop|j-virtual|virtual mobile|\bvdi\b|daasxpert|데스크[톱탑]|nepyx|netdesktop|v-spacer|vd-i/i.test(title)) return "vdi";
+  if (/\bhci\b|하이퍼컨버|popcon|smartx|able\s*stack\s*v4|ablestack\s*v4|에이블스택\s*v4/i.test(title)) return "hci";
+  if (/contrabass|콘트라베이스|openstackit|cloudit|클라우드잇|nutanix|뉴타닉스|vmware|vsphere|vcenter|esxi|씨티클라우드|proxmox|가상화지원운영체제|서버.?가상화/i.test(title)) return "server_virtualization";
+  return "virtualization_other";
 }
 export function vendorLabel(id: VendorId): string {
   return VENDORS.find(v=>v.id===id)?.label??id;
