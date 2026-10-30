@@ -36,7 +36,7 @@ export function vendorFromProduct(text: string): VendorId | null {
   // do not identify a manufacturer and must not contribute to its sales totals.
   if (/에이블클라우드|ablecloud|ablestack|abelstack|에이블스택/i.test(text)) return "에이블클라우드";
   if (/오케스트로|okestro|contrabass|콘트라베이스|콘트라바스|(?:^|\W)viola(?:$|\W)|비올라/i.test(text)) return "오케스트로";
-  if (/nutanix|뉴타닉스|\bNCI\b|acropolis/i.test(text)) return "Nutanix";
+  if (/nutanix|뉴타닉스|\bAHV\b|\bNCI\b|acropolis/i.test(text)) return "Nutanix";
   if (/vmware|vcenter|vsphere|esxi|\bVCF\b|\bvSAN\b|브이엠웨어/i.test(text)) return "VMware";
   if (/이노그리드|innogrid|openstackit|오픈스택잇|클라우드잇|cloud.?it/i.test(text)) return "이노그리드";
   if (/red\s*hat.{0,20}(?:virtualization|openshift)|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
