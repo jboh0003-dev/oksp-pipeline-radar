@@ -98,10 +98,15 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
     if (!result.ok) return { rows: [], fetched, requestCount, excluded, error: `${task.category}/${task.keyword}/p${page}: ${result.error}` };
     const parsed = items(result.data);
     fetched += parsed.rows.length;
+    const firstDate = `${start.slice(0,4)}-${start.slice(4,6)}-${start.slice(6,8)}`;
+    const lastDate = `${end.slice(0,4)}-${end.slice(4,6)}-${end.slice(6,8)}`;
     for (const row of parsed.rows) {
       const candidate = normalize(row, task.keyword, task.category);
-      if (candidate) collected.push(candidate);
-      else excluded++;
+      // Some API keyword queries return awards outside the requested dates.
+      // Only retain records whose authoritative award date falls in this month.
+      if (candidate?.award_date && candidate.award_date >= firstDate && candidate.award_date <= lastDate) {
+        collected.push(candidate);
+      } else excluded++;
     }
     if (page * pageSize >= parsed.total || parsed.rows.length === 0) break;
     if (page === maxPages) return {rows: [], fetched, requestCount, excluded, error: `${task.category}/${task.keyword}: pagination safety cap exceeded`};
