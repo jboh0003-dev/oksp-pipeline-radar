@@ -1,0 +1,21 @@
+name: One-time G2B connectivity probe
+on:
+  push:
+    paths:
+      - .github/workflows/virtualization-probe.yml
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/fix/virtualization-procurement-2024-2026'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test public read-only award status
+        run: |
+          set -eu
+          url="https://oksp-pipeline-radar-bh2fq3kn4-jaebok-oh-s-projects.vercel.app/api/_tmp-award-probe"
+          http_code="$(curl -L --silent --show-error --max-time 95 --output probe.json --write-out '%{http_code}' "$url")"
+          echo "HTTP $http_code"
+          jq '{ok, summary:[.out[]? | {company, op, ok, totalCount, error}]}' probe.json
+          test "$http_code" = 200
