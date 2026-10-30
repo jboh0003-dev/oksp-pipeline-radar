@@ -35,10 +35,6 @@
     {
       "path": "/api/cron/collect-g2b-range/36-40",
       "schedule": "40 0 * * *"
-    },
-    {
-      "path": "/api/cron/collect-competitive-awards",
-      "schedule": "50 0 * * *"
     }
   ]
 }
