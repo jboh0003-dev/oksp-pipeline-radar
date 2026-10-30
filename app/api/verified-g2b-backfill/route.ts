@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorizedBackfillWorkflow } from "@/lib/githubOidcAuth";
 import { collectCompetitiveAwards, kstTodayYmd } from "@/lib/g2b/competitiveAwards";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -21,10 +22,24 @@ export async function POST(request: NextRequest) {
   const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const endDate = [`${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`, kstTodayYmd()].sort()[0];
+  const startedAt = new Date().toISOString();
   try {
     const result = await collectCompetitiveAwards({ startDate, endDate, persist, concurrency: 6, categories: ["물품", "용역"] });
+    let logged = false;
+    const db = getSupabaseAdmin();
+    if (db && persist) {
+      const log = await db.from("competitive_award_collection_runs").insert({
+        started_at: startedAt, completed_at: new Date().toISOString(), start_date: startDate, end_date: endDate,
+        ok: result.ok, request_count: result.requestCount, fetched_count: result.fetchedCount,
+        verified_count: result.verifiedCount, deduped_count: result.dedupedCount,
+        inserted_count: result.insertedCount, updated_count: result.updatedCount,
+        retried_task_count: result.retriedTaskCount, failed_task_count: result.failedTaskCount,
+        company_counts: result.companyCounts, errors: result.errors,
+      } as never);
+      logged = !log.error;
+    }
     const stats = {
-      ok: result.ok, year, month, persist, coverage: "goods_and_services",
+      ok: result.ok, year, month, persist, logged, coverage: "goods_and_services",
       requestCount: result.requestCount,
       fetchedCount: result.fetchedCount,
       verifiedCount: result.verifiedCount,
