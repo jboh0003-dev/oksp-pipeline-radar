@@ -50,9 +50,17 @@ function productBrand(title: string): string | null {
   return null;
 }
 function classify(title: string): Classification {
-  if (/(가상\s*데스크톱|데스크톱\s*가상화|\bvdi\b|dstation|디스테이션|\bdaas\b)/i.test(title)) return "vdi";
+  // Title-only search is broad: do not count unrelated virtualization terms.
+  if (/(가상\s*화폐|암호화폐|블록체인|가상화\s*스위치|백본\s*가상화|네트워크\s*가상화|가상화.{0,8}물리모델|물리모델.{0,8}가상화|가상화.{0,10}수치해석)/i.test(title)) {
+    return "review";
+  }
+  if (/(가상화.{0,10}데스크톱|데스크톱.{0,10}가상화|가상\s*데스크톱|\bvdi\b|dstation|디스테이션|\bdaas\b|원격근무.{0,10}가상화|원격접속.{0,12}가상화|모바일.{0,8}가상화|가상화.{0,10}스마트오피스)/i.test(title)) {
+    return "vdi";
+  }
   if (/(\bhci\b|하이퍼.?컨버|hyper.?converg|에이블스택|ablestack)/i.test(title)) return "hci";
-  if (/(서버.{0,7}가상화|가상화.{0,7}서버|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit)/i.test(title)) return "server_virtualization";
+  if (/(서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit)/i.test(title)) {
+    return "server_virtualization";
+  }
   if (/가상화|virtuali[sz]/i.test(title)) return "virtualization_other";
   return "review";
 }
