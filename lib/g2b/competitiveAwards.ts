@@ -514,7 +514,7 @@ export async function collectCompetitiveAwards(options: {
 
   let insertedCount = 0;
   let updatedCount = 0;
-  if ((options.persist ?? true) && rows.length > 0) {
+  if ((options.persist ?? true) && rows.length > 0 && errors.length === 0) {
     const persisted = await persistRows(rows);
     insertedCount = persisted.inserted;
     updatedCount = persisted.updated;
