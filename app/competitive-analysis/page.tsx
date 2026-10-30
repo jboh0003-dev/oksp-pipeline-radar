@@ -228,6 +228,34 @@ export default function CompetitiveAnalysisPage() {
     [filtered],
   );
 
+  function downloadCsv(downloadName: string, cells: unknown[][]) {
+    const escape = (value: unknown) => {
+      const raw = String(value ?? "");
+      const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replaceAll('"', '""')}"`;
+    };
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + cells.map(r => r.map(escape).join(",")).join("\r\n")], {type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = downloadName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function exportCandidatesCsv() {
+    downloadCsv(`가상화_HCI_수주업체_2024-2026_${year}.csv`, [
+      ["최종낙찰일", "사업명", "낙찰업체", "사업자번호", "명시된 제조사", "사업분류", "수요기관", "공고번호", "낙찰금액(프로젝트 전체)", "공고명 매칭키워드", "근거"],
+      ...visibleCandidates.map(r => [r.award_date, r.project, r.winner_name, r.winner_business_no,
+        r.product_brand ?? "미확인", candidateClassLabel[r.classification], r.customer, r.bid_no, r.amount, r.matched_keywords.join(", "),
+        "조달청 낙찰정보서비스"]),
+    ]);
+  }
+  function exportDeliveriesCsv() {
+    downloadCsv(`가상화_쇼핑몰_납품요구_2024-2026_${year}.csv`, [
+      ["납품요구접수일", "요구번호", "규격/제품명", "브랜드", "납품업체", "수요기관", "납품요구금액"],
+      ...visibleDeliveries.map(r => [r.receipt_date,r.delivery_request_no,r.product_name,r.brand,r.supplier_name,r.customer_name,r.amount]),
+    ]);
+  }
+
   function exportCsv() {
     const escape = (value: unknown) => {
       const raw = String(value ?? "");
@@ -278,10 +306,10 @@ export default function CompetitiveAnalysisPage() {
         {error && <section className="mb-4 rounded-2xl border border-red-300/30 bg-red-400/10 px-4 py-3 text-sm text-red-700 dark:text-red-200">{error}</section>}
 
         <section className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          <SummaryCard label="나라장터 확인 건수" value={loading ? "-" : `${summary.count}건`} note={year === RECENT_3Y ? `${recentStartYear}~${currentYear}년` : year} />
-          <SummaryCard label="낙찰금액 합계" value={loading ? "-" : formatCompactAmount(summary.amount)} note={`금액 확인 ${summary.amountKnown}건`} />
+          <SummaryCard label="추적업체 직접 낙찰 건수" value={loading ? "-" : `${summary.count}건`} note={year === RECENT_3Y ? `${recentStartYear}~${currentYear}년` : year} />
+          <SummaryCard label="추적업체 직접 낙찰금액" value={loading ? "-" : formatCompactAmount(summary.amount)} note={`금액 확인 ${summary.amountKnown}건`} />
           <SummaryCard label="확인 업체" value={loading ? "-" : `${summary.companies}개사`} note="현재 조회조건 기준" />
-          <SummaryCard label="수요기관" value={loading ? "-" : `${summary.customers}곳`} note="중복 제외" />
+          <SummaryCard label="수요기관" value={loading ? "-" : `${summary.customers}곳`} note="추적업체 직접 낙찰 기준" />
         </section>
 
         <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70">
@@ -291,7 +319,7 @@ export default function CompetitiveAnalysisPage() {
               <select value={year} onChange={(e) => setYear(e.target.value)} className="h-9 min-w-[150px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold dark:border-white/10 dark:bg-slate-900">
                 <option value={RECENT_3Y}>{RECENT_3Y} ({recentStartYear}~{currentYear})</option>
                 {availableYears.map((value) => <option key={value} value={value}>{value}년</option>)}
-                <option value={ALL_YEARS}>{ALL_YEARS}</option>
+                
               </select>
             </label>
             <label className="flex flex-col gap-1">
@@ -325,7 +353,10 @@ export default function CompetitiveAnalysisPage() {
 
         <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
           <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
-            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">가상화·HCI 관련 나라장터 낙찰 · {visibleCandidates.length.toLocaleString("ko-KR")}건</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">가상화·HCI 관련 나라장터 낙찰 · {visibleCandidates.length.toLocaleString("ko-KR")}건</h2>
+              <button type="button" onClick={exportCandidatesCsv} disabled={!visibleCandidates.length} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">가상화 낙찰 CSV</button>
+            </div>
             <p className="mt-1 text-[11px] text-slate-500">
               낙찰업체(실제 계약상대자)와 제품 제조사를 구분합니다. 제조사가 공고명에 없는 건은 미확인으로 표시합니다.
               동일 사업은 위 업체 직접 수주이력과 중복될 수 있어 금액을 합산하지 않습니다.
@@ -363,7 +394,10 @@ export default function CompetitiveAnalysisPage() {
 
         <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
           <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
-            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">종합쇼핑몰 가상화 제품 납품요구 · {visibleDeliveries.length.toLocaleString("ko-KR")}건</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">종합쇼핑몰 가상화 제품 납품요구 · {visibleDeliveries.length.toLocaleString("ko-KR")}건</h2>
+              <button type="button" onClick={exportDeliveriesCsv} disabled={!visibleDeliveries.length} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">납품요구 CSV</button>
+            </div>
             <p className="mt-0.5 text-[11px] text-slate-500">상품 등록이나 계약 한도 금액이 아닌 수요기관별 납품요구 상세 금액입니다. 낙찰정보와 중복 합산하지 않습니다.</p>
           </div>
           {deliveryError && <p className="px-4 py-3 text-xs text-amber-700 dark:text-amber-300">쇼핑몰 데이터 준비 상태: {deliveryError}</p>}
