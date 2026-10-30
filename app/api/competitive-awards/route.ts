@@ -40,12 +40,23 @@ export async function GET() {
   }
 
   const rawRows = (data ?? []) as AwardRow[];
-  const rows = rawRows.filter(isActualAward);
+  // Product-name and winner-business-number lookups can return the same tender.
+  // Identity = tender number + round + winner business number, regardless of lookup method.
+  const uniqueAwards = new Map<string, AwardRow>();
+  for (const row of rawRows) {
+    const key = [String(row.bid_no ?? ""), String(row.bid_ord ?? "000"), String(row.winner_business_no ?? "")].join(":");
+    const existing = uniqueAwards.get(key);
+    if (!existing || (existing.match_type === "product" && row.match_type === "company")) {
+      uniqueAwards.set(key, row);
+    }
+  }
+  const rows = [...uniqueAwards.values()].filter(isActualAward);
 
   return NextResponse.json({
     ok: true,
     rows,
     rawCount: rawRows.length,
-    excludedCatalogRegistrationCount: rawRows.length - rows.length,
+    excludedCatalogRegistrationCount: [...uniqueAwards.values()].filter((row) => !isActualAward(row)).length,
+    duplicateLookupCount: rawRows.length - uniqueAwards.size,
   });
 }
