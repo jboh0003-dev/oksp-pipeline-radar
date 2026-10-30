@@ -273,7 +273,7 @@ function normalizeAward(task: FetchTask, item: RawItem): CompetitiveAwardRow | n
   if (!keyword || !normalizedProject.includes(keyword.toLowerCase())) return null;
 
   return {
-    external_key: `${fields.bidNo}:${fields.bidOrd ?? "000"}:${fields.winnerBizno}:${task.tracker.competitor}`,
+    external_key: `${fields.bidNo}:${fields.bidOrd ?? "000"}:${fields.winnerBizno}`,
     competitor: task.tracker.competitor,
     winner_name: fields.winnerName,
     winner_business_no: fields.winnerBizno,
