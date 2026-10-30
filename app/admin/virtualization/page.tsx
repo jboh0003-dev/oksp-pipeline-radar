@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { authedFetch } from "@/lib/authedFetch";
 
@@ -12,6 +12,9 @@ export default function VirtualizationBackfillPage() {
   const [busy, setBusy] = useState(false);
   const [awardResult, setAwardResult] = useState<Record<string, unknown> | null>(null);
   const [candidateResult, setCandidateResult] = useState<Record<string, unknown> | null>(null);
+  const [vendorGroup, setVendorGroup] = useState("nutanix");
+  const [batch, setBatch] = useState<{done:number;total:number;inserted:number;failed:string[]}|null>(null);
+  const stopBatch = useRef(false);
   const [preview, setPreview] = useState<Result | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   async function run(save: boolean) {
@@ -47,12 +50,34 @@ export default function VirtualizationBackfillPage() {
     try {
       const res = await authedFetch("/api/admin/virtualization-candidates", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({year, month, persist}),
+        body: JSON.stringify({year, month, persist, group:vendorGroup}),
       });
       const body: Record<string, unknown> = await res.json();
       setCandidateResult(body);
     } catch (error) {
       setCandidateResult({ok:false,error:error instanceof Error?error.message:String(error)});
+    } finally {setBusy(false);}
+  }
+  async function runVendorBatch() {
+    setBusy(true);stopBatch.current=false;setCandidateResult(null);
+    const list=Array.from({length:34},(_,i)=>i<12?{year:2024,month:i+1}:i<24?{year:2025,month:i-11}:{year:2026,month:i-23});
+    const state={done:0,total:list.length,inserted:0,failed:[] as string[]};
+    setBatch({...state});
+    try {
+      for(const item of list) {
+        if(stopBatch.current)break;
+        try {
+          const response=await authedFetch("/api/admin/virtualization-candidates",{
+            method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({...item,persist:true,group:vendorGroup}),
+          });
+          const body:Record<string,unknown>=await response.json();
+          if(!response.ok||body.ok!==true)state.failed.push(item.year+"."+item.month+": "+String(body.error??"부분 실패"));
+          else state.inserted+=Number(body.insertedCount??0);
+        }catch(error){state.failed.push(item.year+"."+item.month+": "+(error instanceof Error?error.message:String(error)));}
+        state.done++;
+        setBatch({...state,failed:[...state.failed]});
+      }
     } finally {setBusy(false);}
   }
   return <AdminGuard><div className="mx-auto max-w-6xl px-5 py-6">
@@ -78,10 +103,24 @@ export default function VirtualizationBackfillPage() {
     <section className="mt-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900">
       <h2 className="font-semibold">가상화·HCI 낙찰업체 발굴 (SI·총판 포함)</h2>
       <p className="mt-1 text-xs leading-5 text-slate-500">선택한 월의 개찰정보에서 가상화·HCI 등 제품/사업 키워드로 낙찰건을 찾습니다. 낙찰업체와 제조사를 별도 표시하며, 제조사가 공고명에 없으면 "미확인"으로 남깁니다.</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label className="flex flex-col gap-1 text-xs text-slate-500">벤더 제품 키워드
+          <select value={vendorGroup} onChange={e=>{setVendorGroup(e.target.value);setCandidateResult(null)}} className="rounded-md border px-3 py-2 text-sm dark:bg-slate-900">
+            <option value="nutanix">뉴타닉스 · Nutanix · AHV</option>
+            <option value="vmware">VMware · vSphere · ESXi</option>
+            <option value="redhat">Red Hat · OpenShift Virtualization</option>
+            <option value="proxmox">Proxmox VE</option>
+            <option value="core">기존 가상화·HCI 키워드</option>
+          </select>
+        </label>
         <button disabled={busy} onClick={() => void runCandidates(false)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">가상화 낙찰 검색</button>
         <button disabled={busy || candidateResult?.ok !== true} onClick={() => void runCandidates(true)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">검색 결과 DB 저장</button>
       </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-white/10">
+        <button disabled={busy} type="button" onClick={()=>void runVendorBatch()} className="rounded-lg border border-blue-500 px-4 py-2 text-xs font-semibold text-blue-700 disabled:opacity-40 dark:text-blue-300">선택 벤더 2024~2026년 일괄 보완 (1회)</button>
+        {busy&&batch&&<button type="button" onClick={()=>{stopBatch.current=true}} className="rounded-lg border border-slate-300 px-3 py-2 text-xs dark:border-white/10">남은 기간 중단</button>}
+      </div>
+      {batch&&<p className="mt-2 text-xs text-slate-600 dark:text-slate-300">검증 {batch.done}/{batch.total}개월 · 신규 {batch.inserted}건 · 실패 {batch.failed.length}개월{batch.failed.length>0?" ("+batch.failed.slice(-3).join(" / ")+")":""}</p>}
       {candidateResult && <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">상태: {String(candidateResult.ok)} · 원천 {String(candidateResult.fetchedCount ?? "-")}건 · 고유 {String(candidateResult.matchedCount ?? "-")}건 · 제조사 명시 {String(candidateResult.withNamedBrand ?? "-")}건 · 신규 {String(candidateResult.insertedCount ?? "-")}건 · 오류 {JSON.stringify(candidateResult.errors ?? candidateResult.error ?? "-")}</p>}
     </section>
     <section className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
