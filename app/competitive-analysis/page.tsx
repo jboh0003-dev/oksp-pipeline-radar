@@ -165,7 +165,6 @@ export default function CompetitiveAnalysisPage() {
     if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
     if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
     if (company !== "전체" && !(item.product_brand ?? "").includes(company) && !(item.winner_name ?? "").includes(company)) return false;
-    if (scope === "virtualization" && item.classification === "review") return false;
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return [item.project, item.winner_name, item.customer, item.product_brand, item.bid_no, ...item.matched_keywords]
