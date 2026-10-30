@@ -49,7 +49,6 @@ export function vendorFromProduct(text: string): VendorId | null {
   if (/red\s*hat.{0,20}(?:virtualization|openshift)|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
   if (/proxmox|프록스목스/i.test(text)) return "Proxmox";
   if (/popcon\s*hci|파이오링크.{0,30}(hci|가상화)/i.test(text)) return "파이오링크";
-  if (/dstation|디스테이션|틸론.{0,25}(가상화|vdi)/i.test(text)) return "틸론";
   if (/씨티클라우드|citycloud|도시엔컴.{0,25}(가상화|hci)/i.test(text)) return "도시엔컴";
   if (/smartx.{0,35}(가상화|hci|분산스토리지)|\bsmartx\b/i.test(text)) return "SmartX";
   if (/j-virtual mobile|더조인.{0,30}가상화/i.test(text)) return "더조인";
