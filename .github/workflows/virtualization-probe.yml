@@ -1,4 +1,4 @@
-name: One-time G2B connectivity probe
+name: One-time G2B shopping API probe
 on:
   push:
     paths:
@@ -9,13 +9,21 @@ jobs:
   probe:
     if: github.ref == 'refs/heads/fix/virtualization-procurement-2024-2026'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
-      - name: Test public read-only award status
+      - name: Check official shopping details API (read only)
         run: |
           set -eu
-          url="https://oksp-pipeline-radar-bh2fq3kn4-jaebok-oh-s-projects.vercel.app/api/_tmp-award-probe"
-          http_code="$(curl -L --silent --show-error --max-time 95 --output probe.json --write-out '%{http_code}' "$url")"
-          echo "HTTP $http_code"
-          jq '{ok, summary:[.out[]? | {company, op, ok, totalCount, error}]}' probe.json
-          test "$http_code" = 200
+          url="https://oksp-pipeline-radar-enrb5z68y-jaebok-oh-s-projects.vercel.app/api/probe-virtualization-shopping"
+          for i in $(seq 1 20); do
+            code="$(curl --silent --show-error --location --max-time 90 --output probe.json --write-out '%{http_code}' "$url")"
+            if [ "$code" = "200" ]; then
+              echo "Response from preview:"
+              jq '{ok,responses:[.responses[]? | {month,keyword,ok,status,code,totalCount,error,items}]}' probe.json
+              exit 0
+            fi
+            echo "Preview not ready (HTTP $code, attempt $i)"
+            sleep 8
+          done
+          echo "No successful preview response" >&2
+          exit 1
