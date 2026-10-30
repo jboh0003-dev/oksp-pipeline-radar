@@ -12,7 +12,6 @@ export const VENDORS = [
   { id: "Red Hat", label: "Red Hat", products: "OpenShift Virtualization" },
   { id: "Proxmox", label: "Proxmox", products: "Proxmox VE" },
   { id: "파이오링크", label: "파이오링크", products: "POPCON HCI" },
-  { id: "틸론", label: "틸론", products: "Dstation · VDI" },
   { id: "도시엔컴", label: "도시엔컴", products: "씨티클라우드" },
   { id: "SmartX", label: "SmartX", products: "SmartX HCI" },
   { id: "더조인", label: "더조인", products: "J-Virtual Mobile" },
@@ -68,6 +67,15 @@ export function vendorFromAward(row: AwardLike): Attribution | null {
   const bizno = String(row.winner_business_no??"").replace(/\D/g,"");
   if (bizno && VENDOR_BIZNOS[bizno]) return {vendor:VENDOR_BIZNOS[bizno],evidence:"제조사 직접 낙찰"};
   return null;
+}
+/** Filter competitive cloud/virtualization purchases without deleting source records. */
+export function isCompetitiveDeliveryProduct(productName: string): boolean {
+  const category=(productName.split(",")[0]??"").replace(/\s+/g,"");
+  if(category==="보안소프트웨어"||category==="통신소프트웨어") return false;
+  if(category==="유틸리티소프트웨어") return true;
+  if(category==="운영체제"||category==="시스템관리소프트웨어")
+    return /가상화|클라우드|\bHCI\b|virtuali[sz]|\bcloud\b|분산스토리지|Cloud&/i.test(productName);
+  return false;
 }
 export function vendorFromDelivery(row: DeliveryLike): Attribution | null {
   const named = vendorFromProduct([row.product_name??"",row.brand??""].join(" "));

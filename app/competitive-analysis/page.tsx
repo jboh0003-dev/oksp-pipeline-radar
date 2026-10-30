@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
-import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, type VendorId} from "@/lib/competitive/vendorEvidence";
+import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, type VendorId} from "@/lib/competitive/vendorEvidence";
 
 type Candidate = {
   external_key:string;bid_no:string;bid_ord:string|null;award_date:string|null;
@@ -101,7 +101,6 @@ export default function CompetitiveAnalysisPage(){
   const [si,setSi]=useState("전체");
   const [query,setQuery]=useState("");
   const [metric,setMetric]=useState<Metric>("count");
-  const [rankBy,setRankBy]=useState<Source>("delivery");
   const [awardSort,setAwardSort]=useState<SortState>({key:"award_date",direction:"desc"});
   const [deliverySort,setDeliverySort]=useState<SortState>({key:"receipt_date",direction:"desc"});
   const [awardPage,setAwardPage]=useState(1);
@@ -133,20 +132,21 @@ export default function CompetitiveAnalysisPage(){
     return ()=>{cancelled=true;};
   },[]);
 
-  const agencies=useMemo(()=>[...new Set([...candidates.map(x=>x.customer),...deliveries.map(x=>x.customer_name)]
-    .filter((s):s is string=>!!s))].sort((a,b)=>a.localeCompare(b,"ko-KR")),[candidates,deliveries]);
+  const relevantDeliveries=useMemo(()=>deliveries.filter(r=>isCompetitiveDeliveryProduct(r.product_name)),[deliveries]);
+  const agencies=useMemo(()=>[...new Set([...candidates.map(x=>x.customer),...relevantDeliveries.map(x=>x.customer_name)]
+    .filter((s):s is string=>!!s))].sort((a,b)=>a.localeCompare(b,"ko-KR")),[candidates,relevantDeliveries]);
   const supplierOptions=useMemo(()=>{
     const map=new Map<string,{name:string;count:number}>();
     for(const a of candidates){if(a.classification==="review"||!a.winner_business_no)continue;
       const id=a.winner_business_no,old=map.get(id);
       map.set(id,{name:old?.name??a.winner_name,count:(old?.count??0)+1});
     }
-    for(const d of deliveries){if(!d.supplier_business_no)continue;
+    for(const d of relevantDeliveries){if(!d.supplier_business_no)continue;
       const id=d.supplier_business_no,old=map.get(id);
       map.set(id,{name:old?.name??d.supplier_name??id,count:(old?.count??0)+1});
     }
     return [...map.entries()].sort((a,b)=>b[1].count-a[1].count||a[1].name.localeCompare(b[1].name,"ko-KR"));
-  },[candidates,deliveries]);
+  },[candidates,relevantDeliveries]);
 
   const filteredAwards=useMemo(()=>{
     const q=query.trim().toLocaleLowerCase();
@@ -163,7 +163,7 @@ export default function CompetitiveAnalysisPage(){
   },[candidates,year,vendor,type,agency,si,query]);
   const filteredDeliveries=useMemo(()=>{
     const q=query.trim().toLocaleLowerCase();
-    return deliveries.filter(r=>{
+    return relevantDeliveries.filter(r=>{
       if(!inYear(r.receipt_date,year))return false;
       const attribution=vendorFromDelivery(r);
       if(vendor!=="전체"&&attribution?.vendor!==vendor)return false;
@@ -173,7 +173,7 @@ export default function CompetitiveAnalysisPage(){
       return !q||[r.product_name,r.brand,r.supplier_name,r.customer_name,r.delivery_request_no,r.product_id,attribution?.vendor]
         .filter(Boolean).join(" ").toLocaleLowerCase().includes(q);
     });
-  },[deliveries,year,vendor,type,agency,si,query]);
+  },[relevantDeliveries,year,vendor,type,agency,si,query]);
 
   const verifiedAwards=useMemo(()=>filteredAwards.filter(r=>vendorFromAward(r)!=null),[filteredAwards]);
   const unverifiedAwards=useMemo(()=>filteredAwards.filter(r=>vendorFromAward(r)==null),[filteredAwards]);
@@ -182,21 +182,16 @@ export default function CompetitiveAnalysisPage(){
   const vendorStats=useMemo(()=>VENDORS.map(meta=>{
     const awards=verifiedAwards.filter(r=>vendorFromAward(r)?.vendor===meta.id);
     const items=verifiedDeliveries.filter(r=>vendorFromDelivery(r)?.vendor===meta.id);
-    const partners=new Set([...awards.map(r=>r.winner_name),...items.map(r=>r.supplier_name)].filter(Boolean));
-    const direct=directAwards.filter(r=>inYear(r.award_date,year)&&r.competitor===meta.id &&
-      (si==="전체"||r.winner_business_no===si) &&
-      (agency==="전체"||r.customer===agency) &&
-      (!query.trim()||[r.project,r.winner_name,r.customer,r.bid_no].filter(Boolean).join(" ").toLowerCase().includes(query.trim().toLowerCase())));
+    const partners=new Set(items.map(r=>r.supplier_business_no||r.supplier_name).filter(Boolean));
     return {vendor:meta.id,label:meta.label,products:meta.products,
-      directCount:direct.length,directAmount:direct.reduce((sum,r)=>sum+money(r.amount),0),
       awardCount:awards.length,awardAmount:awards.reduce((sum,r)=>sum+money(r.amount),0),
       deliveryCount:items.length,deliveryAmount:items.reduce((sum,r)=>sum+money(r.amount),0),
       supplierCount:partners.size};
-  }),[verifiedAwards,verifiedDeliveries,directAwards,year,si,agency,query]);
+  }),[verifiedAwards,verifiedDeliveries]);
   const ranking=useMemo(()=>[...vendorStats].sort((a,b)=>{
-    const k=rankBy==="award"?(metric==="amount"?"awardAmount":"awardCount"):(metric==="amount"?"deliveryAmount":"deliveryCount");
+    const k=metric==="amount"?"deliveryAmount":"deliveryCount";
     return b[k]-a[k]||a.label.localeCompare(b.label,"ko-KR");
-  }),[vendorStats,rankBy,metric]);
+  }),[vendorStats,metric]);
   const yearly=useMemo(()=>[2024,2025,2026].map(y=>{
     const rows=verifiedAwards.filter(x=>String(x.award_date??"").startsWith(String(y)));
     const ds=verifiedDeliveries.filter(x=>String(x.receipt_date??"").startsWith(String(y)));
@@ -214,8 +209,7 @@ export default function CompetitiveAnalysisPage(){
   const deliveryPages=Math.max(1,Math.ceil(orderDeliveries.length/pageSize));
   useEffect(()=>{setAwardPage(1);setDeliveryPage(1);},[year,vendor,type,agency,si,query,pageSize,awardSort,deliverySort]);
 
-  function reset(){setYear("전체");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setRankBy("delivery");setMetric("count");}
-  const vendorAmount=verifiedAwards.reduce((sum,r)=>sum+money(r.amount),0);
+  function reset(){setYear("전체");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setMetric("count");}
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
   const noData=ready.award&&ready.delivery&&!verifiedAwards.length&&!verifiedDeliveries.length;
   const directVisible=directAwards.filter(r=>inYear(r.award_date,year)&&
@@ -257,11 +251,10 @@ export default function CompetitiveAnalysisPage(){
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-        <Summary label="기존 업체 직접 낙찰(전체)" value={!ready.direct?"확인 중":directVisible.length+"건"} sub="일반 사업 포함 · 기존 데이터 유지"/>
-        <Summary label="제조사 확인 가상화 낙찰" value={!ready.award?"확인 중":verifiedAwards.length+"건"} sub="벤더 직접·SI·총판 포함"/>
-        <Summary label="제조사 제품명 확인 납품요구" value={!ready.delivery?"확인 중":verifiedDeliveries.length+"건"} sub={coverage?"기본 제품명 "+coverage.successfulMonths+"/"+coverage.expectedMonths+"개월 검증":"월별 수집 결과 확인"}/>
-        <Summary label="제품 납품요구액" value={!ready.delivery?"확인 중":fmtCompact(deliveryAmount)} sub="사업 전체 낙찰금액과 별개"/>
+      <div className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <Summary label="경쟁제품 구매요구" value={!ready.delivery?"확인 중":verifiedDeliveries.length+"건"} sub="제조사 확인 · SI·총판 공급 포함"/>
+        <Summary label="제품 구매요구금액" value={!ready.delivery?"확인 중":fmtCompact(deliveryAmount)} sub="납품 완료·매출 확정 금액 아님"/>
+        <Summary label="별도 입찰사업 수주" value={!ready.award?"확인 중":verifiedAwards.length+"건"} sub="사업 전체 계약금액 · 제품 구매와 별개"/>
       </div>
       {(errors.award||errors.delivery)&&<div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/20 dark:bg-rose-950/20 dark:text-rose-300">
         {[errors.award,errors.delivery].filter(Boolean).join(" / ")}
@@ -269,68 +262,95 @@ export default function CompetitiveAnalysisPage(){
 
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-white/10">
-          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">경쟁 제조사별 납품·수주 현황</h2>
-            <p className="mt-0.5 text-[11px] text-slate-500">회사 직접 수주이력 유지 · 제품명이 확인된 SI·총판 사업은 해당 제조사로 집계</p></div>
-          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10">
-            <button type="button" onClick={()=>setRankBy("award")} aria-pressed={rankBy==="award"} className={"rounded-md px-3 py-1.5 text-xs font-semibold "+(rankBy==="award"?"bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900":"text-slate-500")}>낙찰사업 기준</button>
-            <button type="button" onClick={()=>setRankBy("delivery")} aria-pressed={rankBy==="delivery"} className={"rounded-md px-3 py-1.5 text-xs font-semibold "+(rankBy==="delivery"?"bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900":"text-slate-500")}>쇼핑몰 납품 기준</button>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-white">경쟁 제조사별 조달제품 구매요구 현황</h2>
+            <p className="mt-0.5 text-[11px] text-slate-500">제품명 제조사 기준 · SI·총판 납품 포함 · 보안/통신 SW 제외</p>
           </div>
           <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10">
             <button type="button" onClick={()=>setMetric("amount")} aria-pressed={metric==="amount"} className={"rounded-md px-3 py-1.5 text-xs font-semibold "+(metric==="amount"?"bg-blue-600 text-white":"text-slate-500")}>금액순</button>
             <button type="button" onClick={()=>setMetric("count")} aria-pressed={metric==="count"} className={"rounded-md px-3 py-1.5 text-xs font-semibold "+(metric==="count"?"bg-blue-600 text-white":"text-slate-500")}>건수순</button>
           </div>
         </div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-xs">
+        <div className="overflow-x-auto"><table className="w-full min-w-[670px] text-left text-xs">
           <thead><tr className="border-b border-slate-100 bg-slate-50 font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-800/50">
             <th className="px-4 py-3">경쟁 제조사 · 제품군</th>
-            <th className="px-3 py-3 text-right">직접 낙찰 전체</th>
-            <th className="px-3 py-3 text-right">제조사 확인 낙찰</th><th className="px-3 py-3 text-right">낙찰사업금액</th>
-            <th className="px-3 py-3 text-right">쇼핑몰 납품</th><th className="px-3 py-3 text-right">납품요구액</th>
-            <th className="px-3 py-3 text-right">공급·낙찰업체</th>
+            <th className="px-3 py-3 text-right">제품 구매요구</th>
+            <th className="px-3 py-3 text-right">구매요구금액</th>
+            <th className="px-3 py-3 text-right">납품업체 수</th>
           </tr></thead>
           <tbody>{ranking.map(row=><tr key={row.vendor} className={"border-b border-slate-100 last:border-0 hover:bg-blue-50/50 dark:border-white/10 dark:hover:bg-white/5 "+(vendor===row.vendor?"bg-blue-50/70 dark:bg-blue-900/10":"")}>
             <td className="px-4 py-3"><button type="button" onClick={()=>setVendor(row.vendor)} className="text-left font-bold text-slate-900 hover:text-blue-600 hover:underline dark:text-slate-100">{row.label}</button><div className="mt-0.5 text-[10px] text-slate-400">{row.products}</div></td>
-            <td className="px-3 py-3 text-right font-bold tabular-nums text-blue-700 dark:text-blue-300">{!ready.direct?"…":row.directCount?row.directCount+"건":"-"}</td>
-            <td className="px-3 py-3 text-right font-semibold tabular-nums">{row.awardCount?row.awardCount+"건":"-"}</td>
-            <td className="px-3 py-3 text-right font-semibold tabular-nums">{row.awardCount?fmtCompact(row.awardAmount):"-"}</td>
             <td className="px-3 py-3 text-right font-semibold tabular-nums">{row.deliveryCount?row.deliveryCount+"건":"-"}</td>
             <td className="px-3 py-3 text-right font-semibold tabular-nums">{row.deliveryCount?fmtCompact(row.deliveryAmount):"-"}</td>
             <td className="px-3 py-3 text-right tabular-nums">{row.supplierCount||"-"}</td>
           </tr>)}</tbody>
         </table></div>
-        <p className="border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400 dark:border-white/10">직접 낙찰 전체에는 일반 사업이 포함됩니다. 제조사 확인 낙찰·제품 납품요구와 구분하며 금액은 서로 합산하지 않습니다.</p>
+        <p className="border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400 dark:border-white/10">
+          구매요구는 기관의 제품 주문 기록이며 납품 완료나 매출 확정 금액은 아닙니다. '-'는 확보 자료에서 미확인입니다.
+        </p>
       </section>
 
       <section className="mb-5 grid gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900/70">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white">연도별 제조사 확인 낙찰</h2>
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white">연도별 경쟁제품 구매요구</h2>
           <div className="mt-4 space-y-4">
             {yearly.map(item=>{
-              const max=Math.max(...yearly.map(x=>metric==="amount"?x.awardAmount:x.awardCount),0);
-              const n=metric==="amount"?item.awardAmount:item.awardCount;
+              const max=Math.max(...yearly.map(x=>metric==="amount"?x.deliveryAmount:x.deliveryCount),0);
+              const n=metric==="amount"?item.deliveryAmount:item.deliveryCount;
               const pct=max?100*n/max:0;
               return <button type="button" key={item.year} onClick={()=>setYear(String(item.year))} className="block w-full rounded-md text-left hover:bg-slate-50 dark:hover:bg-white/5">
-                <div className="mb-1.5 flex items-center justify-between text-xs"><span className="font-semibold">{item.year}년</span><span className="font-bold tabular-nums">{metric==="amount"?fmtCompact(item.awardAmount):item.awardCount+"건"}</span></div>
+                <div className="mb-1.5 flex items-center justify-between text-xs"><span className="font-semibold">{item.year}년</span><span className="font-bold tabular-nums">{metric==="amount"?fmtCompact(item.deliveryAmount):item.deliveryCount+"건"}</span></div>
                 <div className="h-2 rounded bg-slate-100 dark:bg-slate-800"><div className="h-full rounded bg-blue-600" style={{width:pct+"%"}}/></div>
               </button>;
             })}
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900/70">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white">자료 확인 범위</h2>
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white">집계 범위</h2>
           <div className="mt-4 grid grid-cols-2 gap-2.5">
-            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">가상화 관련 낙찰 후보</p><p className="mt-1 text-lg font-bold tabular-nums">{filteredAwards.length}건</p></div>
-            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">제조사 확인</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedAwards.length}건</p></div>
-            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">제조사 미확인</p><p className="mt-1 text-lg font-bold tabular-nums">{unverifiedAwards.length}건</p></div>
-            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">검증된 납품요구</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedDeliveries.length}건</p></div>
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">분석 대상 제품 구매</p><p className="mt-1 text-lg font-bold tabular-nums">{filteredDeliveries.length}건</p></div>
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">제조사 확인 제품</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedDeliveries.length}건</p></div>
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">기타 가상화 제품</p><p className="mt-1 text-lg font-bold tabular-nums">{otherDeliveries.length}건</p></div>
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-[11px] text-slate-500">별도 입찰사업</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedAwards.length}건</p></div>
           </div>
-          <p className="mt-3 text-[11px] leading-5 text-slate-500">낙찰사업은 2024~2026년 집계이며, 쇼핑몰: 기본 가상화 제품명 {coverage?.successfulMonths??"확인 중"}/34개월 수집 검증 · 제조사/제품 별도 검색어는 추가 검증 대상입니다.</p>
+          <p className="mt-3 text-[11px] leading-5 text-slate-500">2024~2026년 제품 주문 검색 {coverage?.successfulMonths??"확인 중"}/34개월 검증. 보안·통신 SW 제외, 입찰사업은 별도로 집계합니다.</p>
         </div>
       </section>
 
       <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-white/10">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white">벤더 확인 낙찰사업 <span className="ml-1 text-xs text-blue-600">{verifiedAwards.length}건</span></h2>
+          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">조달제품 구매요구 내역 <span className="ml-1 text-xs text-blue-600">{verifiedDeliveries.length}건</span></h2><p className="mt-1 text-[10px] text-slate-400">기관별 제품 주문 · 기본 가상화 제품명 {coverage?.successfulMonths??"확인 중"}/34개월 검증</p></div>
+          <CsvButton disabled={!verifiedDeliveries.length} onClick={()=>csvDownload("벤더_쇼핑몰_납품요구.csv",[
+            ["납품요구일","제조사","규격/제품명","납품업체","수요기관","요구금액","납품요구번호","물품식별번호"],
+            ...orderDeliveries.map(x=>[x.receipt_date,vendorFromDelivery(x)?.vendor,x.product_name,x.supplier_name,x.customer_name,x.amount,x.delivery_request_no,x.product_id])
+          ])}/>
+        </div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-xs">
+          <thead><tr className="border-b border-slate-100 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-slate-800/50">
+            <SortHeader title="요구일" field="receipt_date" sort={deliverySort} setSort={setDeliverySort}/>
+            <SortHeader title="제조사" field="vendor" sort={deliverySort} setSort={setDeliverySort}/>
+            <SortHeader title="제품 · 상세보기" field="product_name" sort={deliverySort} setSort={setDeliverySort} extra="min-w-[340px]"/>
+            <SortHeader title="납품업체" field="supplier_name" sort={deliverySort} setSort={setDeliverySort}/>
+            <SortHeader title="수요기관" field="customer_name" sort={deliverySort} setSort={setDeliverySort}/>
+            <SortHeader title="구매요구금액" field="amount" sort={deliverySort} setSort={setDeliverySort} right/>
+          </tr></thead>
+          <tbody>{shownDeliveries.map(row=><tr key={row.external_key} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70 dark:border-white/10 dark:hover:bg-white/5">
+            <td className="whitespace-nowrap px-3 py-3 tabular-nums">{dateText(row.receipt_date)}</td>
+            <td className="whitespace-nowrap px-3 py-3 font-bold">{vendorFromDelivery(row)?.vendor}</td>
+            <td className="min-w-[340px] px-3 py-3"><Link href={detail("delivery",row.external_key)} className="font-semibold text-blue-700 hover:underline dark:text-blue-300">{row.product_name}</Link><p className="mt-1 font-mono text-[10px] text-slate-400">{row.delivery_request_no}</p></td>
+            <td className="whitespace-nowrap px-3 py-3">{row.supplier_name??"-"}</td>
+            <td className="px-3 py-3">{row.customer_name??"-"}</td>
+            <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{fmtWon(row.amount)}</td>
+          </tr>)}
+          {ready.delivery&&!shownDeliveries.length&&<tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">해당 조건의 확인된 제품 납품요구가 없습니다. 미수집 기간의 실적은 0건으로 판단하지 않습니다.</td></tr>}
+          </tbody>
+        </table></div>
+        <Pager page={deliveryPage} pages={deliveryPages} count={verifiedDeliveries.length} onPage={setDeliveryPage} pageSize={pageSize} onPageSize={setPageSize} showSize={false}/>
+      </section>
+
+      <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-white/10">
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white">입찰사업 수주 <span className="ml-1 text-xs text-blue-600">{verifiedAwards.length}건</span></h2>
           <CsvButton disabled={!verifiedAwards.length} onClick={()=>csvDownload("벤더_확인_낙찰사업.csv",[
             ["최종낙찰일","제조사","확인근거","사업명","최종낙찰업체(SI)","수요기관","사업전체금액","공고번호"],
             ...orderAwards.map(x=>[x.award_date,vendorFromAward(x)?.vendor,vendorFromAward(x)?.evidence,x.project,x.winner_name,x.customer,x.amount,x.bid_no]),
@@ -362,37 +382,6 @@ export default function CompetitiveAnalysisPage(){
         <Pager page={awardPage} pages={awardPages} count={verifiedAwards.length} onPage={setAwardPage} pageSize={pageSize} onPageSize={setPageSize}/>
       </section>
 
-      <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-white/10">
-          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">조달쇼핑몰 벤더 제품 납품요구 <span className="ml-1 text-xs text-blue-600">{verifiedDeliveries.length}건</span></h2><p className="mt-1 text-[10px] text-slate-400">수요기관별 납품요구 · 기본 가상화 제품명 {coverage?.successfulMonths??"확인 중"}/34개월 검증</p></div>
-          <CsvButton disabled={!verifiedDeliveries.length} onClick={()=>csvDownload("벤더_쇼핑몰_납품요구.csv",[
-            ["납품요구일","제조사","규격/제품명","납품업체","수요기관","요구금액","납품요구번호","물품식별번호"],
-            ...orderDeliveries.map(x=>[x.receipt_date,vendorFromDelivery(x)?.vendor,x.product_name,x.supplier_name,x.customer_name,x.amount,x.delivery_request_no,x.product_id])
-          ])}/>
-        </div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-xs">
-          <thead><tr className="border-b border-slate-100 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-slate-800/50">
-            <SortHeader title="요구일" field="receipt_date" sort={deliverySort} setSort={setDeliverySort}/>
-            <SortHeader title="제조사" field="vendor" sort={deliverySort} setSort={setDeliverySort}/>
-            <SortHeader title="제품 · 상세보기" field="product_name" sort={deliverySort} setSort={setDeliverySort} extra="min-w-[340px]"/>
-            <SortHeader title="납품업체" field="supplier_name" sort={deliverySort} setSort={setDeliverySort}/>
-            <SortHeader title="수요기관" field="customer_name" sort={deliverySort} setSort={setDeliverySort}/>
-            <SortHeader title="납품요구액" field="amount" sort={deliverySort} setSort={setDeliverySort} right/>
-          </tr></thead>
-          <tbody>{shownDeliveries.map(row=><tr key={row.external_key} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70 dark:border-white/10 dark:hover:bg-white/5">
-            <td className="whitespace-nowrap px-3 py-3 tabular-nums">{dateText(row.receipt_date)}</td>
-            <td className="whitespace-nowrap px-3 py-3 font-bold">{vendorFromDelivery(row)?.vendor}</td>
-            <td className="min-w-[340px] px-3 py-3"><Link href={detail("delivery",row.external_key)} className="font-semibold text-blue-700 hover:underline dark:text-blue-300">{row.product_name}</Link><p className="mt-1 font-mono text-[10px] text-slate-400">{row.delivery_request_no}</p></td>
-            <td className="whitespace-nowrap px-3 py-3">{row.supplier_name??"-"}</td>
-            <td className="px-3 py-3">{row.customer_name??"-"}</td>
-            <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{fmtWon(row.amount)}</td>
-          </tr>)}
-          {ready.delivery&&!shownDeliveries.length&&<tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">해당 조건의 확인된 제품 납품요구가 없습니다. 미수집 기간의 실적은 0건으로 판단하지 않습니다.</td></tr>}
-          </tbody>
-        </table></div>
-        <Pager page={deliveryPage} pages={deliveryPages} count={verifiedDeliveries.length} onPage={setDeliveryPage} pageSize={pageSize} onPageSize={setPageSize} showSize={false}/>
-      </section>
-
       <details className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
           제조사 미확인 가상화 사업 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span> <span className="ml-2 text-[11px] font-normal text-slate-400">벤더 실적에서 제외 · 클릭하여 검토</span>
@@ -420,9 +409,10 @@ export default function CompetitiveAnalysisPage(){
         </table></div>
       </details>
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
+      <details className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
+        <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-300">원본 참고: 업체 전체 입찰 이력 · {directVisible.length}건 (가상화 제품 구매와 별개)</summary>
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">기존 추적업체 직접 낙찰 전체 <span className="ml-1 text-blue-600">{!ready.direct?"조회 중":directVisible.length+"건"}</span></h2>
+          <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">기존 업체 전체 입찰 이력 <span className="ml-1 text-blue-600">{!ready.direct?"조회 중":directVisible.length+"건"}</span></h2>
           <button type="button" onClick={()=>csvDownload("추적업체_직접낙찰전체.csv",[
             ["낙찰일","추적업체","사업명","낙찰업체","사업금액","공고번호"],
             ...directVisible.map(r=>[r.award_date,r.competitor,r.project,r.winner_name,r.amount,r.bid_no])
@@ -443,7 +433,7 @@ export default function CompetitiveAnalysisPage(){
             <td className="min-w-[290px] p-3"><Link href={detail("direct",r.external_key)} className="font-semibold text-blue-600 hover:underline">{r.project}</Link></td>
             <td className="p-3">{r.winner_name}</td><td className="whitespace-nowrap p-3 text-right">{fmtWon(r.amount)}</td>
           </tr>)}</tbody></table></div>
-      </section>
+      </details>
       {noData&&<p className="mt-3 text-xs text-slate-500">현재 조건에 일치하는 벤더 확인 실적이 없습니다. 조건을 초기화해 주세요.</p>}
     </div>
   </div>;

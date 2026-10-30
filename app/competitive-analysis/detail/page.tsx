@@ -62,7 +62,7 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
     <nav className="mb-4 flex items-center gap-2 text-xs text-slate-500"><Link href="/competitive-analysis" className="font-semibold text-blue-600 hover:underline">경쟁분석</Link><span>/</span><span>상세 내역</span></nav>
     {!row?<section className="rounded-xl border border-slate-200 bg-white p-8 dark:border-white/10 dark:bg-slate-900"><p className="font-semibold">내역을 찾지 못했습니다.</p><p className="mt-2 text-sm text-slate-500">기존 자료가 변경되었거나 조회에 실패했습니다.</p></section>:<>
     <header className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm dark:border-white/10 dark:bg-slate-900">
-      <p className="text-[11px] font-bold tracking-wide text-blue-600">{isDelivery?"나라장터 종합쇼핑몰 납품요구":isDirect?"벤더 직접 낙찰":"가상화 관련 낙찰사업"}</p>
+      <p className="text-[11px] font-bold tracking-wide text-blue-600">{isDelivery?"조달제품 구매요구":isDirect?"업체 전체 입찰사업":"가상화 입찰사업 수주"}</p>
       <h1 className="mt-2 break-words text-xl font-bold leading-relaxed text-slate-900 dark:text-white">{project}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <span className="rounded-lg bg-slate-100 px-2.5 py-1.5 font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{isDirect?fmt(row?.competitor):(evidence?.vendor??"제조사 미확인")}</span>
