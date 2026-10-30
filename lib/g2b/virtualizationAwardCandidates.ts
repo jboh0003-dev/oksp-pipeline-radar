@@ -53,7 +53,8 @@ function productBrand(title: string): string | null {
   if (/contrabass|콘트라베이스|viola|비올라/i.test(title)) return "오케스트로";
   if (/dstation|디스테이션/i.test(title)) return "틸론";
   if (/vmware|vsphere|vcenter|esxi/i.test(title)) return "VMware";
-  if (/nutanix|뉴타닉스|\bAHV\b|\bNCI\b/i.test(title)) return "Nutanix";
+  if (/nutanix|뉴타닉스/i.test(title) ||
+      (/\bAHV\b/i.test(title) && /가상화|하이퍼바이저|hci|클라우드|virtualization/i.test(title))) return "Nutanix";
   if (/red\s*hat.{0,16}virtualization|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(title)) return "Red Hat";
   if (/proxmox|프록스목스/i.test(title)) return "Proxmox";
   return null;
