@@ -99,8 +99,8 @@ export default function CompetitiveAnalysisPage(){
   const [agency,setAgency]=useState("전체");
   const [si,setSi]=useState("전체");
   const [query,setQuery]=useState("");
-  const [metric,setMetric]=useState<Metric>("amount");
-  const [rankBy,setRankBy]=useState<Source>("award");
+  const [metric,setMetric]=useState<Metric>("count");
+  const [rankBy,setRankBy]=useState<Source>("delivery");
   const [awardSort,setAwardSort]=useState<SortState>({key:"award_date",direction:"desc"});
   const [deliverySort,setDeliverySort]=useState<SortState>({key:"receipt_date",direction:"desc"});
   const [awardPage,setAwardPage]=useState(1);
@@ -206,7 +206,7 @@ export default function CompetitiveAnalysisPage(){
   const deliveryPages=Math.max(1,Math.ceil(orderDeliveries.length/pageSize));
   useEffect(()=>{setAwardPage(1);setDeliveryPage(1);},[year,vendor,type,agency,si,query,pageSize,awardSort,deliverySort]);
 
-  function reset(){setYear("전체");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setRankBy("award");setMetric("amount");}
+  function reset(){setYear("전체");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setRankBy("delivery");setMetric("count");}
   const vendorAmount=verifiedAwards.reduce((sum,r)=>sum+money(r.amount),0);
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
   const noData=ready.award&&ready.delivery&&!verifiedAwards.length&&!verifiedDeliveries.length;
@@ -261,7 +261,7 @@ export default function CompetitiveAnalysisPage(){
 
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-white/10">
-          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">제조사별 수주·공급 현황</h2>
+          <div><h2 className="text-sm font-bold text-slate-900 dark:text-white">경쟁 제조사별 납품·수주 현황</h2>
             <p className="mt-0.5 text-[11px] text-slate-500">회사 직접 수주이력 유지 · 제품명이 확인된 SI·총판 사업은 해당 제조사로 집계</p></div>
           <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10">
             <button type="button" onClick={()=>setRankBy("award")} aria-pressed={rankBy==="award"} className={"rounded-md px-3 py-1.5 text-xs font-semibold "+(rankBy==="award"?"bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900":"text-slate-500")}>낙찰사업 기준</button>
