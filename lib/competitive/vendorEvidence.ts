@@ -1,0 +1,64 @@
+/**
+ * Verified manufacturer attribution.
+ * A winning SI/reseller must never be treated as the virtualization manufacturer.
+ * Vendor amounts are whole-project awards, not product-only revenue.
+ */
+export const VENDORS = [
+  { id: "오케스트로", label: "오케스트로", products: "CONTRABASS · VIOLA" },
+  { id: "에이블클라우드", label: "에이블클라우드", products: "ABLESTACK" },
+  { id: "Nutanix", label: "Nutanix", products: "AHV · NCI" },
+  { id: "VMware", label: "VMware", products: "vSphere · VCF" },
+  { id: "이노그리드", label: "이노그리드", products: "CloudIT · OpenStackit" },
+  { id: "Red Hat", label: "Red Hat", products: "OpenShift Virtualization" },
+  { id: "Proxmox", label: "Proxmox", products: "Proxmox VE" },
+] as const;
+
+export type VendorId = (typeof VENDORS)[number]["id"];
+export type Attribution = {vendor: VendorId; evidence: "공고명 제품 명시" | "제조사 공식 구축사례" | "제조사 직접 낙찰" | "쇼핑몰 품목명"; url?: string};
+
+type AwardLike = {
+  bid_no?: string | null; project?: string | null; product_brand?: string | null;
+  winner_name?: string | null; winner_business_no?: string | null;
+};
+type DeliveryLike = {product_name?:string|null; brand?:string|null; supplier_name?:string|null; product_id?:string|null};
+
+const CONFIRMED_CASES: Record<string,{vendor:VendorId;url:string}> = {
+  "R26BK01375930": {vendor:"에이블클라우드",url:"https://ablecloud.io/resource/blog/45"},
+  "R26BK01269547": {vendor:"에이블클라우드",url:"https://ablecloud.io/resource/blog/47"},
+};
+const VENDOR_BIZNOS: Record<string, VendorId> = {
+  "6748801017": "오케스트로",
+  "8868602158": "에이블클라우드",
+  "2208736743": "이노그리드",
+};
+export function vendorFromProduct(text: string): VendorId | null {
+  // Match actual brand/product names only. 'HCI', 'KVM', 'OpenStack', '가상화' alone
+  // do not identify a manufacturer and must not contribute to its sales totals.
+  if (/에이블클라우드|ablecloud|ablestack|abelstack|에이블스택/i.test(text)) return "에이블클라우드";
+  if (/오케스트로|okestro|contrabass|콘트라베이스|콘트라바스|(?:^|\W)viola(?:$|\W)|비올라/i.test(text)) return "오케스트로";
+  if (/nutanix|뉴타닉스|acropolis/i.test(text) ||
+      (/\bAHV\b/i.test(text) && /가상화|하이퍼바이저|hci|클라우드|virtualization/i.test(text))) return "Nutanix";
+  if (/vmware|vcenter|vsphere|esxi|\bVCF\b|\bvSAN\b|브이엠웨어/i.test(text)) return "VMware";
+  if (/이노그리드|innogrid|openstackit|오픈스택잇|클라우드잇|cloud.?it/i.test(text)) return "이노그리드";
+  if (/red\s*hat.{0,20}(?:virtualization|openshift)|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
+  if (/proxmox|프록스목스/i.test(text)) return "Proxmox";
+  return null;
+}
+export function vendorFromAward(row: AwardLike): Attribution | null {
+  // The product/brand is explicitly in the tender name: strong evidence.
+  const named = vendorFromProduct(row.project ?? "") || vendorFromProduct(row.product_brand ?? "");
+  if (named) return {vendor:named,evidence:"공고명 제품 명시"};
+  const verified = CONFIRMED_CASES[String(row.bid_no??"")];
+  if (verified) return {vendor:verified.vendor,evidence:"제조사 공식 구축사례",url:verified.url};
+  // A manufacturer may itself win a virtualization tender without specifying product.
+  const bizno = String(row.winner_business_no??"").replace(/\D/g,"");
+  if (bizno && VENDOR_BIZNOS[bizno]) return {vendor:VENDOR_BIZNOS[bizno],evidence:"제조사 직접 낙찰"};
+  return null;
+}
+export function vendorFromDelivery(row: DeliveryLike): Attribution | null {
+  const named = vendorFromProduct([row.product_name??"",row.brand??""].join(" "));
+  return named ? {vendor:named,evidence:"쇼핑몰 품목명"} : null;
+}
+export function vendorLabel(id: VendorId): string {
+  return VENDORS.find(v=>v.id===id)?.label??id;
+}
