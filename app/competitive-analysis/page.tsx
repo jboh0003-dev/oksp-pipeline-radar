@@ -347,7 +347,8 @@ export default function CompetitiveAnalysisPage() {
                 <p className="text-2xl font-bold text-blue-600 dark:text-blue-300">{item.count}건</p>
                 <p className="text-right text-sm font-semibold text-slate-700 dark:text-slate-200">{formatCompactAmount(item.amount)}</p>
               </div>
-              <p className="mt-1 text-[10px] text-slate-400">낙찰금액 확인 {item.amountKnown}건 기준</p>
+              <p className="mt-1 text-[10px] text-slate-400">직접 낙찰 기준 · 금액 확인 {item.amountKnown}건</p>
+              {item.name === "에이블클라우드" && <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">제조사 납품실적은 별도 검증 · 직접 낙찰 0건 ≠ 실제 공급 0건</p>}
             </div>
           ))}
         </section>
