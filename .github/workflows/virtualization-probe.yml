@@ -1,4 +1,4 @@
-name: One-time 2024-2026 virtualization tender discovery
+name: Retry the three failed 2024 virtualization opening months
 on:
   push:
     paths:
@@ -7,63 +7,38 @@ permissions:
   contents: read
   id-token: write
 jobs:
-  backfill:
+  retry:
     if: github.ref == 'refs/heads/fix/virtualization-procurement-2024-2026'
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        year: [2024, 2025, 2026]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      BASE_URL: https://oksp-pipeline-radar-m3rm36bzi-jaebok-oh-s-projects.vercel.app
-      YEAR: ${{ matrix.year }}
+    timeout-minutes: 18
     steps:
-      - name: Collect goods/service tenders by virtualization keywords, no daily schedule
+      - name: Sequentially retry only failed months using lower source concurrency
         run: |
           set -euo pipefail
-          endpoint="$BASE_URL/api/verified-g2b-candidates"
+          endpoint="https://oksp-pipeline-radar-msmotvce7-jaebok-oh-s-projects.vercel.app/api/verified-g2b-candidates"
           code=0
-          for i in $(seq 1 30); do
-            code="$(curl -sS --max-time 20 -o /tmp/route.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "$endpoint")"
-            if [ "$code" = "401" ]; then echo "Signed endpoint ready"; break; fi
-            echo "Endpoint not yet ready ($code, attempt $i)"
-            sleep 8
+          for i in $(seq 1 50); do
+            code="$(curl -sS --max-time 20 -o /tmp/probe.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "$endpoint")"
+            if [ "$code" = "401" ]; then echo "Updated signed endpoint ready"; break; fi
+            echo "Waiting for compiled preview ($code, $i/50)"
+            sleep 7
           done
-          if [ "$code" != "401" ]; then echo "Endpoint unavailable"; exit 1; fi
-          max_month=12
-          if [ "$YEAR" = "2026" ]; then max_month=10; fi
-          failures=0
-          total_found=0
-          total_inserted=0
-          total_updated=0
-          echo "### $YEAR 개찰월별 가상화 관련 낙찰 (최종낙찰일로 별도 집계)" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 개찰월 | 원천 | 매칭 | 신규 | 업데이트 | 오류 |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---:|---:|---:|---:|---:|" >> "$GITHUB_STEP_SUMMARY"
-          for month in $(seq 1 "$max_month"); do
+          test "$code" = 401
+          failed=0
+          for month in 1 6 7; do
             identity_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=oksp-pipeline-radar-virtualization-2024-2026"
             jwt="$(curl -fsS --max-time 20 -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$identity_url" | jq -r '.value')"
-            payload="$(printf '{"year":%s,"month":%s,"persist":true}' "$YEAR" "$month")"
-            code="$(curl -sS --max-time 280 -o /tmp/virtual-result.json -w '%{http_code}' -X POST -H "Authorization: Bearer $jwt" -H "Content-Type: application/json" -d "$payload" "$endpoint")"
-            if ! jq -e 'type=="object"' /tmp/virtual-result.json > /dev/null 2>&1; then
-              echo "[$YEAR/$month] invalid response HTTP $code"
-              failures=$((failures+1));continue
-            fi
-            status="$(jq -r '.ok==true and .persist==true and (.errors|length)==0' /tmp/virtual-result.json 2>/dev/null || echo false)"
-            compact="$(jq -c '{year,month,ok,requestCount,fetchedCount,excludedCount,matchedCount,insertedCount,updatedCount,withNamedBrand,errors,error}' /tmp/virtual-result.json)"
-            echo "$compact"
+            payload="$(printf '{"year":2024,"month":%s,"persist":true}' "$month")"
+            code="$(curl -sS --max-time 290 -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $jwt" -H "Content-Type: application/json" -d "$payload" "$endpoint")"
+            jq -c '{year,month,ok,requestCount,fetchedCount,matchedCount,insertedCount,updatedCount,errors,error}' /tmp/response.json || true
+            status="$(jq -r '.ok==true and (.errors|length)==0' /tmp/response.json 2>/dev/null || echo false)"
             if [ "$code" != "200" ] || [ "$status" != "true" ]; then
-              failures=$((failures+1))
-              echo "| $month | - | - | - | - | 실패 |" >> "$GITHUB_STEP_SUMMARY"
-              continue
+              echo "FAILED 2024/$month"
+              failed=$((failed+1))
+            else
+              echo "PASSED 2024/$month"
             fi
-            read -r fetched found inserted updated < <(jq -r '[.fetchedCount,.matchedCount,.insertedCount,.updatedCount]|map(tostring)|join(" ")' /tmp/virtual-result.json)
-            total_found=$((total_found+found))
-            total_inserted=$((total_inserted+inserted))
-            total_updated=$((total_updated+updated))
-            echo "| $month | $fetched | $found | $inserted | $updated | - |" >> "$GITHUB_STEP_SUMMARY"
-            sleep 1
+            sleep 2
           done
-          echo "CANDIDATE_ANNUAL_SUMMARY year=$YEAR found=$total_found inserted=$total_inserted updated=$total_updated failed_months=$failures"
-          test "$failures" -eq 0
+          echo "RETRY_2024_STATUS failed_months=$failed"
+          test "$failed" -eq 0
