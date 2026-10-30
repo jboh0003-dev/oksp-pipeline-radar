@@ -33,9 +33,20 @@ type ApiResponse =
   | { ok: true; rows: AwardRow[]; rawCount?: number; excludedCatalogRegistrationCount?: number }
   | { ok: false; error: string };
 
+
+const VIRTUALIZATION_PATTERN = /(가상화|virtuali[sz]|hypervisor|hyper-v|kvm|openstack|오픈스택|hci|하이퍼컨버지드|하이퍼컨버전스|abelstack|ablestack|에이블스택|vmware|vsphere|vcenter|vcloud|클라우드잇|cloudit|contrabass|viola|클라우드s*네이티브s*전환)/i;
+const RELATED_PATTERN = /(클라우드|cloud|스토리지|storage|서버|server|데이터센터|data.?center|정보자원s*통합|iaas|paas|재해복구|\bdr\b|컨테이너|kubernetes|k8s|쿠버네티스)/i;
+function classifyVirtualization(row: AwardRow): "virtualization" | "related" | "other" {
+  // 회사가 가상화 업체라는 이유만으로 unrelated project를 가상화 수주로 분류하지 않는다.
+  const evidence = [row.project, row.matched_keyword].filter(Boolean).join(" ");
+  if (VIRTUALIZATION_PATTERN.test(evidence)) return "virtualization";
+  if (RELATED_PATTERN.test(evidence)) return "related";
+  return "other";
+}
+
 const COMPANIES = ["전체", "오케스트로", "오케스트로클라우드", "이노그리드", "에이블클라우드"] as const;
 const COMPANY_ORDER: CompanyName[] = ["오케스트로", "오케스트로클라우드", "이노그리드", "에이블클라우드"];
-const RECENT_3Y = "최근 3년";
+const RECENT_3Y = "2024~2026년";
 const ALL_YEARS = "전체기간";
 
 function formatAmount(value: number | null) {
@@ -72,12 +83,13 @@ export default function CompetitiveAnalysisPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [year, setYear] = useState(RECENT_3Y);
+  const [scope, setScope] = useState<"virtualization" | "related" | "all">("virtualization");
   const [company, setCompany] = useState<(typeof COMPANIES)[number]>("전체");
   const [query, setQuery] = useState("");
   const [excludedCount, setExcludedCount] = useState(0);
 
-  const currentYear = new Date().getFullYear();
-  const recentStartYear = currentYear - 2;
+  const currentYear = 2026;
+  const recentStartYear = 2024;
 
   useEffect(() => {
     let cancelled = false;
@@ -111,6 +123,8 @@ export default function CompetitiveAnalysisPage() {
       if (year === RECENT_3Y && (rowYear < recentStartYear || rowYear > currentYear)) return false;
       if (year !== RECENT_3Y && year !== ALL_YEARS && String(rowYear) !== year) return false;
       if (company !== "전체" && row.competitor !== company) return false;
+      if (scope === "virtualization" && classifyVirtualization(row) !== "virtualization") return false;
+      if (scope === "related" && classifyVirtualization(row) === "other") return false;
       if (!q) return true;
       return [row.project, row.customer, row.competitor, row.winner_name, row.bid_no, row.matched_keyword]
         .filter(Boolean)
@@ -118,7 +132,7 @@ export default function CompetitiveAnalysisPage() {
         .toLowerCase()
         .includes(q);
     });
-  }, [rows, year, company, query, currentYear, recentStartYear]);
+  }, [rows, year, company, query, scope, currentYear, recentStartYear]);
 
   const summary = useMemo(() => {
     const amountRows = filtered.filter((row) => row.amount != null);
@@ -152,9 +166,10 @@ export default function CompetitiveAnalysisPage() {
       return `"${safe.replaceAll('"', '""')}"`;
     };
     const csvRows: unknown[][] = [
-      ["낙찰일", "추적업체", "매칭기준", "최종낙찰업체", "사업자등록번호", "공고번호", "차수", "사업명", "수요기관", "최종낙찰금액", "낙찰률", "업무구분"],
+      ["낙찰일", "가상화 분류", "추적업체", "매칭기준", "최종낙찰업체", "사업자등록번호", "공고번호", "차수", "사업명", "수요기관", "최종낙찰금액", "낙찰률", "업무구분"],
       ...filtered.map((row) => [
         row.award_date,
+        classifyVirtualization(row),
         row.competitor,
         row.match_type === "product" ? row.matched_keyword ?? "제품명" : "업체 사업자번호",
         row.winner_name,
@@ -220,7 +235,8 @@ export default function CompetitiveAnalysisPage() {
               <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">검색</span>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="사업명·수요기관·공고번호·낙찰업체 검색" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-white/10 dark:bg-slate-900" />
             </label>
-            <button type="button" onClick={() => { setYear(RECENT_3Y); setCompany("전체"); setQuery(""); }} className="h-9 rounded-lg bg-slate-100 px-4 text-sm font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">초기화</button>
+            <label className="flex flex-col gap-1"><span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">사업 구분</span><select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)} className="h-9 min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold dark:border-white/10 dark:bg-slate-900"><option value="virtualization">가상화 직접 관련</option><option value="related">가상화 + 인프라 관련</option><option value="all">전체 회사 수주</option></select></label>
+            <button type="button" onClick={() => { setYear(RECENT_3Y); setCompany("전체"); setScope("virtualization"); setQuery(""); }} className="h-9 rounded-lg bg-slate-100 px-4 text-sm font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">초기화</button>
             <button type="button" onClick={exportCsv} disabled={!filtered.length} className="h-9 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-40">CSV 다운로드</button>
           </div>
         </section>
