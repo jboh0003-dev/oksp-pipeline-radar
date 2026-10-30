@@ -75,6 +75,33 @@ function vendorCaseEvidence(row: CandidateRow): {brand: string; url: string; lab
   return null;
 }
 
+
+type SortDirection = "asc" | "desc";
+type CandidateSortKey = "award_date" | "project" | "winner_name" | "product_brand" | "classification" | "customer" | "amount";
+type AwardSortKey = "award_date" | "competitor" | "winner_name" | "bid_no" | "project" | "customer" | "amount" | "rate";
+type DeliverySortKey = "receipt_date" | "brand" | "product_name" | "supplier_name" | "customer_name" | "amount";
+type DisplayMetric = "count" | "amount";
+
+function cleanCompany(value: string) {
+  return value.replace(/^(주식회사|\(주\)|㈜)\s*/g, "").replace(/\s/g, "").toLowerCase();
+}
+
+function sortedBy<T>(records: T[], valueOf: (row: T) => unknown, direction: SortDirection): T[] {
+  return [...records].sort((left, right) => {
+    const a = valueOf(left), b = valueOf(right);
+    if (a == null || a === "") return b == null || b === "" ? 0 : 1;
+    if (b == null || b === "") return -1;
+    let result = 0;
+    if (typeof a === "number" && typeof b === "number") result = a - b;
+    else result = String(a).localeCompare(String(b), "ko-KR", { numeric: true, sensitivity: "base" });
+    return direction === "asc" ? result : -result;
+  });
+}
+
+function candidateMaker(row: CandidateRow) {
+  return row.product_brand ?? (vendorCaseEvidence(row) ? "에이블클라우드" : "미확인");
+}
+
 const COMPANIES = ["전체", "오케스트로", "오케스트로클라우드", "이노그리드", "에이블클라우드"] as const;
 const COMPANY_ORDER: CompanyName[] = ["오케스트로", "오케스트로클라우드", "이노그리드", "에이블클라우드"];
 const RECENT_3Y = "2024~2026년";
@@ -121,7 +148,22 @@ export default function CompetitiveAnalysisPage() {
   const [scope, setScope] = useState<"virtualization" | "related" | "all">("virtualization");
   const [company, setCompany] = useState<(typeof COMPANIES)[number]>("전체");
   const [query, setQuery] = useState("");
-  const [excludedCount, setExcludedCount] = useState(0);
+  const [winnerCompany, setWinnerCompany] = useState("전체");
+  const [agency, setAgency] = useState("전체");
+  const [candidateType, setCandidateType] = useState("전체");
+  const [rankingMetric, setRankingMetric] = useState<DisplayMetric>("amount");
+  const [candidateSort, setCandidateSort] = useState<{key: CandidateSortKey; direction: SortDirection}>({key:"award_date", direction:"desc"});
+  const [awardSort, setAwardSort] = useState<{key: AwardSortKey; direction: SortDirection}>({key:"award_date", direction:"desc"});
+  const [deliverySort, setDeliverySort] = useState<{key: DeliverySortKey; direction: SortDirection}>({key:"receipt_date", direction:"desc"});
+  function changeCandidateSort(key: CandidateSortKey) {
+    setCandidateSort(prev => ({key, direction:prev.key===key && prev.direction==="desc"?"asc":"desc"}));
+  }
+  function changeAwardSort(key: AwardSortKey) {
+    setAwardSort(prev => ({key, direction:prev.key===key && prev.direction==="desc"?"asc":"desc"}));
+  }
+  function changeDeliverySort(key: DeliverySortKey) {
+    setDeliverySort(prev => ({key, direction:prev.key===key && prev.direction==="desc"?"asc":"desc"}));
+  }
 
   const currentYear = 2026;
   const recentStartYear = 2024;
@@ -135,7 +177,6 @@ export default function CompetitiveAnalysisPage() {
         if (!response.ok || !body.ok) throw new Error(body.ok ? "조회 실패" : body.error);
         if (!cancelled) {
           setRows(body.rows);
-          setExcludedCount(body.excludedCatalogRegistrationCount ?? 0);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "나라장터 낙찰 데이터를 불러오지 못했습니다.");
@@ -171,76 +212,151 @@ export default function CompetitiveAnalysisPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const visibleCandidates = useMemo(() => candidates.filter(item => {
-    // Exclude title-only unrelated hits such as cryptocurrency, physical simulation, network switches.
-    if (item.classification === "review") return false;
-    const rowYear = item.award_date?.slice(0, 4) ?? "";
-    if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
-    if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
-    if (company !== "전체" && !(item.product_brand ?? "").includes(company) && !(item.winner_name ?? "").includes(company) && !(company === "에이블클라우드" && vendorCaseEvidence(item)?.brand === "ABLESTACK")) return false;
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return [item.project, item.winner_name, item.customer, item.product_brand, item.bid_no, ...item.matched_keywords]
-      .filter(Boolean).join(" ").toLowerCase().includes(q);
-  }), [candidates, year, company, query, scope]);
 
-  const visibleDeliveries = useMemo(() => deliveries.filter((item) => {
-    const rowYear = item.receipt_date.slice(0, 4);
-    if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
-    if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
-    if (company !== "전체" && !(item.brand ?? "").includes(company) && !(item.supplier_name ?? "").includes(company)) return false;
-    const q = query.trim().toLowerCase();
-    if (q && ![item.product_name,item.brand,item.supplier_name,item.customer_name,item.delivery_request_no].join(" ").toLowerCase().includes(q)) return false;
-    return true;
-  }), [deliveries,year,company,query]);
+  const allWinningCompanies = useMemo(() => {
+    const counts = new Map<string,{name:string;count:number}>();
+    for(const row of candidates) {
+      if (row.classification === "review") continue;
+      const key = cleanCompany(row.winner_name);
+      const previous = counts.get(key);
+      if(previous) previous.count++;
+      else counts.set(key, {name:row.winner_name, count:1});
+    }
+    return [...counts.values()].sort((a,b)=>b.count-a.count || a.name.localeCompare(b.name,"ko-KR"));
+  }, [candidates]);
+
+  const allAgencies = useMemo(() => [...new Set(candidates
+    .filter(row=>row.classification!=="review").map(row=>row.customer).filter((value):value is string=>!!value))]
+    .sort((a,b)=>a.localeCompare(b,"ko-KR")), [candidates]);
+
+  const visibleCandidates = useMemo(() => {
+    const q=query.trim().toLowerCase();
+    return candidates.filter(item=>{
+      if(item.classification==="review") return false;
+      const rowYear=item.award_date?.slice(0,4)??"";
+      if(year===RECENT_3Y && (rowYear<"2024"||rowYear>"2026")) return false;
+      if(year!==RECENT_3Y && year!==ALL_YEARS && rowYear!==year) return false;
+      if(company!=="전체" && !(item.product_brand??"").includes(company) &&
+        !(item.winner_name??"").includes(company) &&
+        !(company==="에이블클라우드" && vendorCaseEvidence(item)?.brand==="ABLESTACK")) return false;
+      if(winnerCompany!=="전체" && cleanCompany(item.winner_name)!==cleanCompany(winnerCompany)) return false;
+      if(agency!=="전체" && item.customer!==agency) return false;
+      if(candidateType!=="전체" && item.classification!==candidateType) return false;
+      if(!q) return true;
+      return [item.project,item.winner_name,item.customer,item.product_brand,item.bid_no,...item.matched_keywords,
+        vendorCaseEvidence(item)?.brand].filter(Boolean).join(" ").toLowerCase().includes(q);
+    });
+  }, [candidates,year,company,winnerCompany,agency,candidateType,query]);
+
+  const visibleDeliveries = useMemo(() => deliveries.filter(item=>{
+    const rowYear=item.receipt_date.slice(0,4);
+    if(year===RECENT_3Y && (rowYear<"2024"||rowYear>"2026")) return false;
+    if(year!==RECENT_3Y && year!==ALL_YEARS && year!==rowYear) return false;
+    if(company!=="전체" && !(item.brand??"").includes(company) && !(item.supplier_name??"").includes(company)) return false;
+    if(winnerCompany!=="전체" && cleanCompany(item.supplier_name??"")!==cleanCompany(winnerCompany)) return false;
+    if(agency!=="전체" && item.customer_name!==agency) return false;
+    const q=query.trim().toLowerCase();
+    return !q || [item.product_name,item.brand,item.supplier_name,item.customer_name,item.delivery_request_no]
+      .filter(Boolean).join(" ").toLowerCase().includes(q);
+  }),[deliveries,year,company,winnerCompany,agency,query]);
 
   const availableYears = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.award_date?.slice(0, 4)).filter(Boolean) as string[])).sort((a, b) => Number(b) - Number(a)),
-    [rows],
+    () => Array.from(new Set([...rows.map(row=>row.award_date?.slice(0,4)),
+      ...candidates.map(row=>row.award_date?.slice(0,4))].filter(Boolean) as string[]))
+      .filter(y=>y==="2024"||y==="2025"||y==="2026").sort((a,b)=>Number(b)-Number(a)),
+    [rows,candidates],
   );
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((row) => {
-      const rowYear = Number(row.award_date?.slice(0, 4) ?? 0);
-      if (year === RECENT_3Y && (rowYear < recentStartYear || rowYear > currentYear)) return false;
-      if (year !== RECENT_3Y && year !== ALL_YEARS && String(rowYear) !== year) return false;
-      if (company !== "전체" && row.competitor !== company) return false;
-      if (scope === "virtualization" && classifyVirtualization(row) !== "virtualization") return false;
-      if (scope === "related" && classifyVirtualization(row) === "other") return false;
-      if (!q) return true;
-      return [row.project, row.customer, row.competitor, row.winner_name, row.bid_no, row.matched_keyword]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
+    const q=query.trim().toLowerCase();
+    return rows.filter(row=>{
+      const rowYear=Number(row.award_date?.slice(0,4)??0);
+      if(year===RECENT_3Y && (rowYear<recentStartYear||rowYear>currentYear)) return false;
+      if(year!==RECENT_3Y && year!==ALL_YEARS && String(rowYear)!==year) return false;
+      if(company!=="전체"&&row.competitor!==company) return false;
+      if(winnerCompany!=="전체" && cleanCompany(row.winner_name)!==cleanCompany(winnerCompany)) return false;
+      if(agency!=="전체" && row.customer!==agency) return false;
+      if(scope==="virtualization"&&classifyVirtualization(row)!=="virtualization") return false;
+      if(scope==="related"&&classifyVirtualization(row)==="other") return false;
+      if(!q) return true;
+      return [row.project,row.customer,row.competitor,row.winner_name,row.bid_no,row.matched_keyword]
+        .filter(Boolean).join(" ").toLowerCase().includes(q);
     });
-  }, [rows, year, company, query, scope, currentYear, recentStartYear]);
+  },[rows,year,company,winnerCompany,agency,query,scope,currentYear,recentStartYear]);
 
-  const summary = useMemo(() => {
-    const amountRows = filtered.filter((row) => row.amount != null);
+  const sortedCandidates = useMemo(() => sortedBy(visibleCandidates, row => {
+    if(candidateSort.key==="product_brand") return candidateMaker(row);
+    if(candidateSort.key==="classification") return candidateClassLabel[row.classification];
+    return row[candidateSort.key];
+  },candidateSort.direction),[visibleCandidates,candidateSort]);
+
+  const sortedAwards = useMemo(() => sortedBy(filtered, row=>row[awardSort.key],awardSort.direction),[filtered,awardSort]);
+  const sortedDeliveries = useMemo(() => sortedBy(visibleDeliveries,row=>row[deliverySort.key],deliverySort.direction),[visibleDeliveries,deliverySort]);
+
+  const summary = useMemo(()=>{
+    const amountRows=filtered.filter(row=>row.amount!=null);
     return {
       count: filtered.length,
-      amount: amountRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
-      amountKnown: amountRows.length,
-      companies: new Set(filtered.map((row) => row.competitor)).size,
-      customers: new Set(filtered.map((row) => row.customer).filter(Boolean)).size,
+      amount:amountRows.reduce((sum,row)=>sum+Number(row.amount??0),0),
+      amountKnown:amountRows.length,
+      companies:new Set(filtered.map(row=>row.competitor)).size,
+      customers:new Set(filtered.map(row=>row.customer).filter(Boolean)).size,
     };
-  }, [filtered]);
+  },[filtered]);
 
-  const companySummary = useMemo(
-    () => COMPANY_ORDER.map((name) => {
-      const companyRows = filtered.filter((row) => row.competitor === name);
-      const amountRows = companyRows.filter((row) => row.amount != null);
-      return {
-        name,
-        count: companyRows.length,
-        amount: amountRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
-        amountKnown: amountRows.length,
-      };
-    }),
-    [filtered],
-  );
+  const companySummary = useMemo(()=>COMPANY_ORDER.map(name=>{
+    const data=filtered.filter(row=>row.competitor===name);
+    return {name,count:data.length,amount:data.reduce((sum,row)=>sum+Number(row.amount??0),0),
+      amountKnown:data.filter(row=>row.amount!=null).length};
+  }),[filtered]);
+
+  const candidateOverview = useMemo(()=>{
+    const amounts=visibleCandidates.filter(row=>row.amount!=null);
+    return {
+      count:visibleCandidates.length,
+      amount:amounts.reduce((sum,row)=>sum+Number(row.amount??0),0),
+      amountKnown:amounts.length,
+      winners:new Set(visibleCandidates.map(row=>cleanCompany(row.winner_name))).size,
+      customers:new Set(visibleCandidates.map(row=>row.customer).filter(Boolean)).size,
+      explicitBrands:visibleCandidates.filter(row=>row.product_brand!=null).length,
+    };
+  },[visibleCandidates]);
+
+  const winnerRanking = useMemo(()=>{
+    const map=new Map<string,{id:string;name:string;count:number;amount:number}>();
+    for(const row of visibleCandidates) {
+      const id=cleanCompany(row.winner_name);
+      const old=map.get(id);
+      if(old){old.count++;old.amount+=Number(row.amount??0);}
+      else map.set(id,{id,name:row.winner_name,count:1,amount:Number(row.amount??0)});
+    }
+    return [...map.values()].sort((a,b)=>b[rankingMetric]-a[rankingMetric]||
+      b.count-a.count||a.name.localeCompare(b.name,"ko-KR")).slice(0,10);
+  },[visibleCandidates,rankingMetric]);
+
+  const agencyRanking = useMemo(()=>{
+    const map=new Map<string,{name:string;count:number;amount:number}>();
+    for(const row of visibleCandidates) {
+      const name=row.customer??"미확인";
+      const old=map.get(name);
+      if(old){old.count++;old.amount+=Number(row.amount??0);}
+      else map.set(name,{name,count:1,amount:Number(row.amount??0)});
+    }
+    return [...map.values()].sort((a,b)=>b[rankingMetric]-a[rankingMetric]||b.count-a.count).slice(0,8);
+  },[visibleCandidates,rankingMetric]);
+
+  const byYear = useMemo(() => [2024,2025,2026].map(y=>{
+    const data=visibleCandidates.filter(row=>row.award_date?.startsWith(String(y)));
+    return {year:String(y),count:data.length,amount:data.reduce((sum,row)=>sum+Number(row.amount??0),0)};
+  }),[visibleCandidates]);
+
+  const byCategory = useMemo(() => ([
+    "server_virtualization","hci","vdi","virtualization_other"
+  ] as const).map(type=>{
+    const data=visibleCandidates.filter(row=>row.classification===type);
+    return {type,label:candidateClassLabel[type],count:data.length,
+      amount:data.reduce((sum,row)=>sum+Number(row.amount??0),0)};
+  }),[visibleCandidates]);
 
   function downloadCsv(downloadName: string, cells: unknown[][]) {
     const escape = (value: unknown) => {
