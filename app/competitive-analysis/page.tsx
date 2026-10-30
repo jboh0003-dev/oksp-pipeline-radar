@@ -8,6 +8,18 @@ type DeliveryRow = {
   customer_name: string | null; amount: number | null; matched_keyword: string;
 };
 
+type CandidateRow = {
+  external_key: string; award_date: string | null; bid_no: string;
+  project: string; winner_name: string; winner_business_no: string;
+  customer: string | null; amount: number | null; category: string | null;
+  classification: "server_virtualization" | "hci" | "vdi" | "virtualization_other" | "review";
+  product_brand: string | null; matched_keywords: string[];
+};
+const candidateClassLabel: Record<CandidateRow["classification"], string> = {
+  server_virtualization: "서버 가상화", hci: "HCI", vdi: "VDI",
+  virtualization_other: "기타 가상화", review: "검토 필요",
+};
+
 type CompanyName = "이노그리드" | "에이블클라우드" | "오케스트로" | "오케스트로클라우드";
 
 type AwardRow = {
@@ -87,6 +99,8 @@ function formatDate(value: string | null) {
 export default function CompetitiveAnalysisPage() {
   const [rows, setRows] = useState<AwardRow[]>([]);
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [candidates, setCandidates] = useState<CandidateRow[]>([]);
+  const [candidateError, setCandidateError] = useState<string | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +143,32 @@ export default function CompetitiveAnalysisPage() {
       }).catch((reason) => { if (!cancelled) setDeliveryError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/virtualization-award-candidates", { cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error ?? "가상화 낙찰 데이터 조회 실패");
+        if (!cancelled) setCandidates(data.rows ?? []);
+      })
+      .catch(error => {
+        if (!cancelled) setCandidateError(error instanceof Error ? error.message : String(error));
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const visibleCandidates = useMemo(() => candidates.filter(item => {
+    const rowYear = item.award_date?.slice(0, 4) ?? "";
+    if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
+    if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
+    if (company !== "전체" && !(item.product_brand ?? "").includes(company) && !(item.winner_name ?? "").includes(company)) return false;
+    if (scope === "virtualization" && item.classification === "review") return false;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return [item.project, item.winner_name, item.customer, item.product_brand, item.bid_no, ...item.matched_keywords]
+      .filter(Boolean).join(" ").toLowerCase().includes(q);
+  }), [candidates, year, company, query, scope]);
 
   const visibleDeliveries = useMemo(() => deliveries.filter((item) => {
     const rowYear = item.receipt_date.slice(0, 4);
@@ -281,6 +321,44 @@ export default function CompetitiveAnalysisPage() {
               <p className="mt-1 text-[10px] text-slate-400">낙찰금액 확인 {item.amountKnown}건 기준</p>
             </div>
           ))}
+        </section>
+
+        <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
+          <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">가상화·HCI 관련 나라장터 낙찰 · {visibleCandidates.length.toLocaleString("ko-KR")}건</h2>
+            <p className="mt-1 text-[11px] text-slate-500">
+              낙찰업체(실제 계약상대자)와 제품 제조사를 구분합니다. 제조사가 공고명에 없는 건은 미확인으로 표시합니다.
+              동일 사업은 위 업체 직접 수주이력과 중복될 수 있어 금액을 합산하지 않습니다.
+            </p>
+          </div>
+          {candidateError && <p className="px-4 py-3 text-xs text-amber-700 dark:text-amber-300">{candidateError}</p>}
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead><tr className="border-b bg-slate-50 text-[11px] font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-800/40">
+                <th className="whitespace-nowrap px-4 py-3">낙찰일</th>
+                <th className="min-w-[340px] px-4 py-3">사업명</th>
+                <th className="whitespace-nowrap px-4 py-3">실제 낙찰업체</th>
+                <th className="whitespace-nowrap px-4 py-3">명시된 제조사</th>
+                <th className="whitespace-nowrap px-4 py-3">유형</th>
+                <th className="whitespace-nowrap px-4 py-3">수요기관</th>
+                <th className="whitespace-nowrap px-4 py-3 text-right">낙찰금액</th>
+              </tr></thead>
+              <tbody>
+                {visibleCandidates.map(item => (
+                  <tr key={item.external_key} className="border-t border-slate-100 dark:border-white/10">
+                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{formatDate(item.award_date)}</td>
+                    <td className="px-4 py-3.5"><p className="font-medium text-slate-800 dark:text-slate-100">{item.project}</p><p className="mt-0.5 text-[10px] text-slate-400">{item.bid_no} · {item.matched_keywords.join(", ")}</p></td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-700 dark:text-slate-200">{item.winner_name}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 font-semibold text-slate-800 dark:text-slate-100">{item.product_brand ?? "미확인"}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{candidateClassLabel[item.classification]}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{item.customer ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-100">{formatAmount(item.amount)}</td>
+                  </tr>
+                ))}
+                {!visibleCandidates.length && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">확인된 가상화 관련 낙찰 데이터가 없습니다.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
