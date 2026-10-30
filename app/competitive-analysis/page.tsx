@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
-import {VENDORS, vendorFromAward, vendorFromDelivery, type VendorId} from "@/lib/competitive/vendorEvidence";
+import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, type VendorId} from "@/lib/competitive/vendorEvidence";
 
 type Candidate = {
   external_key:string;bid_no:string;bid_ord:string|null;award_date:string|null;
@@ -169,9 +169,7 @@ export default function CompetitiveAnalysisPage(){
       if(vendor!=="전체"&&attribution?.vendor!==vendor)return false;
       if(agency!=="전체"&&r.customer_name!==agency)return false;
       if(si!=="전체"&&r.supplier_business_no!==si)return false;
-      if(type==="hci"&&!/hci|하이퍼컨버/i.test(r.product_name))return false;
-      if(type==="vdi"&&!/vdi|데스크톱|데스크탑|desktop|mobile platform/i.test(r.product_name))return false;
-      if(type==="server_virtualization"&&/vdi|데스크톱|데스크탑/i.test(r.product_name))return false;
+      if(type!=="전체"&&classifyDeliveryProduct(r.product_name)!==type)return false;
       return !q||[r.product_name,r.brand,r.supplier_name,r.customer_name,r.delivery_request_no,r.product_id,attribution?.vendor]
         .filter(Boolean).join(" ").toLocaleLowerCase().includes(q);
     });
