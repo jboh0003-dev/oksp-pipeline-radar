@@ -4,9 +4,16 @@ import { kstTodayYmd } from "@/lib/g2b/competitiveAwards";
 
 const BASE = "https://apis.data.go.kr/1230000/as/ScsbidInfoService";
 const SOURCE_URL = "https://www.data.go.kr/data/15129397/openapi.do";
-export const VIRTUALIZATION_BID_KEYWORDS = [
-  "가상화", "HCI", "에이블스택", "클라우드잇", "Openstackit", "VMware",
-] as const;
+// One-off historical extraction uses small per-vendor batches, never daily polling.
+// Product keywords identify the virtualization manufacturer even when an SI wins.
+export const VIRTUALIZATION_BID_KEYWORD_GROUPS = {
+  core: ["가상화", "HCI", "에이블스택", "클라우드잇", "Openstackit", "VMware"],
+  nutanix: ["Nutanix", "뉴타닉스", "AHV"],
+  vmware: ["vSphere", "ESXi", "vSAN", "VMware"],
+  redhat: ["OpenShift Virtualization", "Red Hat Virtualization", "오픈시프트 가상화"],
+  proxmox: ["Proxmox", "프록스목스"],
+} as const;
+export type VendorKeywordGroup = keyof typeof VIRTUALIZATION_BID_KEYWORD_GROUPS;
 const KINDS = [
   { category: "물품", operation: "getScsbidListSttusThngPPSSrch" },
   { category: "용역", operation: "getScsbidListSttusServcPPSSrch" },
@@ -46,7 +53,9 @@ function productBrand(title: string): string | null {
   if (/contrabass|콘트라베이스|viola|비올라/i.test(title)) return "오케스트로";
   if (/dstation|디스테이션/i.test(title)) return "틸론";
   if (/vmware|vsphere|vcenter|esxi/i.test(title)) return "VMware";
-  if (/nutanix|뉴타닉스/i.test(title)) return "Nutanix";
+  if (/nutanix|뉴타닉스|\bAHV\b|\bNCI\b/i.test(title)) return "Nutanix";
+  if (/red\s*hat.{0,16}virtualization|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(title)) return "Red Hat";
+  if (/proxmox|프록스목스/i.test(title)) return "Proxmox";
   return null;
 }
 function classify(title: string): Classification {
@@ -58,7 +67,7 @@ function classify(title: string): Classification {
     return "vdi";
   }
   if (/(\bhci\b|하이퍼.?컨버|hyper.?converg|에이블스택|ablestack)/i.test(title)) return "hci";
-  if (/(서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit)/i.test(title)) {
+  if (/(서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit|nutanix|뉴타닉스|\bAHV\b|\bNCI\b|proxmox|프록스목스|openshift.{0,16}virtualization|red\s*hat.{0,16}virtualization)/i.test(title)) {
     return "server_virtualization";
   }
   if (/가상화|virtuali[sz]/i.test(title)) return "virtualization_other";
@@ -121,7 +130,7 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
   }
   return {rows:collected,fetched,requestCount,excluded};
 }
-export async function collectVirtualizationAwardCandidatesMonth(year: number, month: number, persist: boolean) {
+export async function collectVirtualizationAwardCandidatesMonth(year: number, month: number, persist: boolean, group: VendorKeywordGroup = "core") {
   if (![2024, 2025, 2026].includes(year) || !Number.isInteger(month) || month < 1 || month > 12 || (year===2026 && month>10))
     throw new Error("2024~2026년 10월 범위의 월이 필요합니다.");
   const key = process.env.G2B_SERVICE_KEY?.trim();
@@ -131,7 +140,9 @@ export async function collectVirtualizationAwardCandidatesMonth(year: number, mo
   const last = [`${year}-${mm}-${String(lastDay).padStart(2,"0")}`,kstTodayYmd()].sort()[0];
   if (first > last) throw new Error("Future range");
   const start = first.replaceAll("-", "") + "0000", end = last.replaceAll("-", "") + "2359";
-  const tasks: Task[] = VIRTUALIZATION_BID_KEYWORDS.flatMap(keyword =>
+  if (!(group in VIRTUALIZATION_BID_KEYWORD_GROUPS)) throw new Error("Unsupported vendor keyword group");
+  const keywords:readonly string[] = VIRTUALIZATION_BID_KEYWORD_GROUPS[group];
+  const tasks: Task[] = keywords.flatMap(keyword =>
     KINDS.map(kind => ({ keyword, category: kind.category, operation: kind.operation })));
   // Public-data API occasionally times out when several requests overlap.
   // Use bounded concurrency and retry only failed keyword/category tasks.
@@ -186,7 +197,7 @@ export async function collectVirtualizationAwardCandidatesMonth(year: number, mo
     }
   }
   return {
-    ok: errors.length === 0,year,month,persist,
+    ok: errors.length === 0,year,month,persist,group,
     requestCount: results.reduce((n,x)=>n+x.requestCount,0),
     fetchedCount: results.reduce((n,x)=>n+x.fetched,0),
     excludedCount: results.reduce((n,x)=>n+x.excluded,0),
