@@ -73,6 +73,15 @@ export function vendorFromDelivery(row: DeliveryLike): Attribution | null {
   const named = vendorFromProduct([row.product_name??"",row.brand??""].join(" "));
   return named ? {vendor:named,evidence:"쇼핑몰 품목명"} : null;
 }
+export type ProductCategory = "server_virtualization" | "hci" | "vdi" | "virtualization_other";
+
+/** Deterministic product-title classification for the shared year/vendor/category filters. */
+export function classifyDeliveryProduct(title: string): ProductCategory {
+  if (/dstation|디스테이션|jdesktop|j-virtual|virtual mobile|\bvdi\b|daasxpert|데스크[톱탑]|nepyx|netdesktop|v-spacer|vd-i/i.test(title)) return "vdi";
+  if (/\bhci\b|하이퍼컨버|popcon|smartx|able\s*stack\s*v4|ablestack\s*v4|에이블스택\s*v4/i.test(title)) return "hci";
+  if (/contrabass|콘트라베이스|openstackit|cloudit|클라우드잇|nutanix|뉴타닉스|vmware|vsphere|vcenter|esxi|씨티클라우드|proxmox|가상화지원운영체제|서버.?가상화/i.test(title)) return "server_virtualization";
+  return "virtualization_other";
+}
 export function vendorLabel(id: VendorId): string {
   return VENDORS.find(v=>v.id===id)?.label??id;
 }
