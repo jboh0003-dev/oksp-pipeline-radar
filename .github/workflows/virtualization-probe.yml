@@ -1,4 +1,4 @@
-name: One-time 2024-2026 G2B award history backfill
+name: Signed virtualization tender discovery pilot
 on:
   push:
     paths:
@@ -7,59 +7,21 @@ permissions:
   contents: read
   id-token: write
 jobs:
-  backfill:
+  pilot:
     if: github.ref == 'refs/heads/fix/virtualization-procurement-2024-2026'
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        year: [2024, 2025, 2026]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      BASE_URL: https://oksp-pipeline-radar-80iorun7g-jaebok-oh-s-projects.vercel.app
-      YEAR: ${{ matrix.year }}
+    timeout-minutes: 8
     steps:
-      - name: Collect goods/services monthly, signed OIDC, no daily schedule
+      - name: Verify keyword tender discovery before committing data
         run: |
           set -euo pipefail
-          endpoint="$BASE_URL/api/verified-g2b-backfill"
-          code=0
-          for i in $(seq 1 30); do
-            code="$(curl --silent --show-error --max-time 15 -o /tmp/route.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "$endpoint")"
-            if [ "$code" = "401" ]; then echo "Authenticated collector ready"; break; fi
-            echo "Collector deployment not ready ($code, attempt $i)"
-            sleep 8
-          done
-          if [ "$code" != "401" ]; then exit 1; fi
-          max_month=12
-          if [ "$YEAR" = "2026" ]; then max_month=10; fi
-          failures=0
-          total_new=0
-          total_updated=0
-          total_fetched=0
-          echo "### $YEAR 나라장터 낙찰이력 (물품·용역)" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 월 | 상태 | 조회 | 고유 | 신규 | 수정 | 실패작업 |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|---:|---:|---:|---:|---:|" >> "$GITHUB_STEP_SUMMARY"
-          for month in $(seq 1 "$max_month"); do
-            # GitHub OIDC identity expires quickly; get a fresh signed token per month.
-            identity_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=oksp-pipeline-radar-virtualization-2024-2026"
-            jwt="$(curl --silent --show-error --fail --max-time 20 -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$identity_url" | jq -r '.value')"
-            payload="$(printf '{"year":%s,"month":%s,"persist":true}' "$YEAR" "$month")"
-            code="$(curl --silent --show-error --max-time 280 --output /tmp/award-result.json --write-out '%{http_code}' -X POST -H "Authorization: Bearer $jwt" -H 'Content-Type: application/json' -d "$payload" "$endpoint")"
-            jq -c '{year,month,ok,persist,logged,coverage,requestCount,fetchedCount,dedupedCount,insertedCount,updatedCount,failedTaskCount,errors,error}' /tmp/award-result.json || true
-            status="$(jq -r '.ok == true and .logged == true and .coverage == "goods_and_services"' /tmp/award-result.json 2>/dev/null || echo false)"
-            if [ "$code" != "200" ] || [ "$status" != "true" ]; then
-              failures=$((failures+1))
-              echo "| $month | 오류 | - | - | - | - | - |" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
-            read -r fetched dedup inserted updated failed < <(jq -r '[.fetchedCount,.dedupedCount,.insertedCount,.updatedCount,.failedTaskCount] | map(tostring) | join(" ")' /tmp/award-result.json)
-            total_fetched=$((total_fetched+fetched))
-            total_new=$((total_new+inserted))
-            total_updated=$((total_updated+updated))
-            echo "| $month | 정상 | $fetched | $dedup | $inserted | $updated | $failed |" >> "$GITHUB_STEP_SUMMARY"
-            sleep 1
-          done
-          echo "ANNUAL_SUMMARY year=$YEAR fetched=$total_fetched inserted=$total_new updated=$total_updated failed_months=$failures"
-          test "$failures" -eq 0
+          endpoint="https://oksp-pipeline-radar-231wvyqkc-jaebok-oh-s-projects.vercel.app/api/verified-g2b-candidates"
+          code="$(curl -sS --max-time 20 -o /tmp/unauth.json -w '%{http_code}' -X POST -d '{}' "$endpoint")"
+          echo "Unauthenticated access: HTTP $code"
+          test "$code" = 401
+          identity_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=oksp-pipeline-radar-virtualization-2024-2026"
+          jwt="$(curl -fsS --max-time 20 -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$identity_url" | jq -r '.value')"
+          code="$(curl -sS --max-time 240 -o result.json -w '%{http_code}' -X POST -H "Authorization: Bearer $jwt" -H 'Content-Type: application/json' -d '{"year":2025,"month":2,"persist":false}' "$endpoint")"
+          echo "HTTP $code"
+          jq '{ok,year,month,requestCount,fetchedCount,excludedCount,matchedCount,withNamedBrand,errors,error,samples}' result.json
+          test "$code" = 200
