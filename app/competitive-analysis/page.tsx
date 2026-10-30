@@ -40,8 +40,8 @@ type ApiResponse =
   | { ok: false; error: string };
 
 
-const VIRTUALIZATION_PATTERN = /(가상화|virtuali[sz]|hypervisor|hyper-v|kvm|openstack|오픈스택|hci|하이퍼컨버지드|하이퍼컨버전스|abelstack|ablestack|에이블스택|vmware|vsphere|vcenter|vcloud|클라우드잇|cloudit|contrabass|viola|클라우드s*네이티브s*전환)/i;
-const RELATED_PATTERN = /(클라우드|cloud|스토리지|storage|서버|server|데이터센터|data.?center|정보자원s*통합|iaas|paas|재해복구|\bdr\b|컨테이너|kubernetes|k8s|쿠버네티스)/i;
+const VIRTUALIZATION_PATTERN = /(가상화|virtuali[sz]|hypervisor|hyper-v|kvm|openstack|오픈스택|hci|하이퍼컨버지드|하이퍼컨버전스|abelstack|ablestack|에이블스택|vmware|vsphere|vcenter|vcloud|클라우드잇|cloudit|contrabass|viola)/i;
+const RELATED_PATTERN = /(클라우드|cloud|스토리지|storage|서버|server|데이터센터|data.?center|정보자원\s*통합|iaas|paas|재해복구|\bdr\b|컨테이너|kubernetes|k8s|쿠버네티스)/i;
 function classifyVirtualization(row: AwardRow): "virtualization" | "related" | "other" {
   // 회사가 가상화 업체라는 이유만으로 unrelated project를 가상화 수주로 분류하지 않는다.
   const evidence = [row.project, row.matched_keyword].filter(Boolean).join(" ");
