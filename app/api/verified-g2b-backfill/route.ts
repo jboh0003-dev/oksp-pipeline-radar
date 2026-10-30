@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorizedBackfillWorkflow } from "@/lib/githubOidcAuth";
-import { collectCompetitiveAwards } from "@/lib/g2b/competitiveAwards";
+import { collectCompetitiveAwards, kstTodayYmd } from "@/lib/g2b/competitiveAwards";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -20,11 +20,11 @@ export async function POST(request: NextRequest) {
   }
   const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const endDate = `${year}-${String(month).padStart(2, "0")}-${lastDay}`;
+  const endDate = [`${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`, kstTodayYmd()].sort()[0];
   try {
-    const result = await collectCompetitiveAwards({ startDate, endDate, persist, concurrency: 6 });
+    const result = await collectCompetitiveAwards({ startDate, endDate, persist, concurrency: 6, categories: ["물품", "용역"] });
     const stats = {
-      ok: result.ok, year, month, persist,
+      ok: result.ok, year, month, persist, coverage: "goods_and_services",
       requestCount: result.requestCount,
       fetchedCount: result.fetchedCount,
       verifiedCount: result.verifiedCount,
