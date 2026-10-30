@@ -11,6 +11,7 @@ export default function VirtualizationBackfillPage() {
   const [keyword, setKeyword] = useState(KEYWORDS[0]);
   const [busy, setBusy] = useState(false);
   const [awardResult, setAwardResult] = useState<Record<string, unknown> | null>(null);
+  const [candidateResult, setCandidateResult] = useState<Record<string, unknown> | null>(null);
   const [preview, setPreview] = useState<Result | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   async function run(save: boolean) {
@@ -40,6 +41,20 @@ export default function VirtualizationBackfillPage() {
       setAwardResult({ok:false,error:error instanceof Error?error.message:String(error)});
     } finally {setBusy(false);}
   }
+  async function runCandidates(persist: boolean) {
+    setBusy(true);
+    setCandidateResult(null);
+    try {
+      const res = await authedFetch("/api/admin/virtualization-candidates", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({year, month, persist}),
+      });
+      const body: Record<string, unknown> = await res.json();
+      setCandidateResult(body);
+    } catch (error) {
+      setCandidateResult({ok:false,error:error instanceof Error?error.message:String(error)});
+    } finally {setBusy(false);}
+  }
   return <AdminGuard><div className="mx-auto max-w-6xl px-5 py-6">
     <p className="text-xs font-semibold text-blue-600">Pipeline Maker · 관리자 전용</p>
     <h1 className="mt-1 text-2xl font-bold">2024~2026년 가상화 제품 조달 납품수집</h1>
@@ -59,6 +74,18 @@ export default function VirtualizationBackfillPage() {
         <button disabled={busy || awardResult?.ok !== true} onClick={()=>void runAwards(true)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">낙찰정보 수집·저장</button>
       </div>
       {awardResult && <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">상태: {String(awardResult.ok)} · 원천 {String(awardResult.fetchedCount ?? "-")}건 · 검증 {String(awardResult.dedupedCount ?? "-")}건 · 신규 {String(awardResult.insertedCount ?? "-")}건 · 오류 {JSON.stringify(awardResult.errors ?? awardResult.error ?? "-")}</p>}
+    </section>
+    <section className="mt-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900">
+      <h2 className="font-semibold">가상화·HCI 낙찰업체 발굴 (SI·총판 포함)</h2>
+      <p className="mt-1 text-xs leading-5 text-slate-500">선택한 월의 개찰정보에서 가상화·HCI 등 제품/사업 키워드로 낙찰건을 찾습니다. 낙찰업체와 제조사를 별도 표시하며, 제조사가 공고명에 없으면 "미확인"으로 남깁니다.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button disabled={busy} onClick={() => void runCandidates(false)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">가상화 낙찰 검색</button>
+        <button disabled={busy || candidateResult?.ok !== true} onClick={() => void runCandidates(true)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">검색 결과 DB 저장</button>
+      </div>
+      {candidateResult && <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">상태: {String(candidateResult.ok)} · 원천 {String(candidateResult.fetchedCount ?? "-")}건 · 고유 {String(candidateResult.matchedCount ?? "-")}건 · 제조사 명시 {String(candidateResult.withNamedBrand ?? "-")}건 · 신규 {String(candidateResult.insertedCount ?? "-")}건 · 오류 {JSON.stringify(candidateResult.errors ?? candidateResult.error ?? "-")}</p>}
+    </section>
+    <section className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+      조달쇼핑몰 납품요구 상세 API는 현재 403 (등록되지 않은 서비스키)입니다. 공공데이터포털에서 "나라장터쇼핑몰 품목정보 서비스" 추가 이용 신청 후 재시도하세요.
     </section>
     {result && <p className={`mt-4 rounded-lg p-4 text-sm ${result.ok?"bg-slate-100 dark:bg-slate-800":"bg-rose-50 text-rose-700"}`}>{result.ok?`수집 요청 ${result.requests}회 · 원천 ${result.fetched}건 · 매칭 ${result.matched}건 · 저장 요청 ${result.saved}건`:result.error}</p>}
     {preview && <section className="mt-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900">
