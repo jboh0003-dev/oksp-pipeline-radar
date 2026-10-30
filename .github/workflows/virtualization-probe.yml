@@ -19,7 +19,13 @@ jobs:
             code="$(curl --silent --show-error --location --max-time 90 --output probe.json --write-out '%{http_code}' "$url")"
             if [ "$code" = "200" ]; then
               echo "Response from preview:"
-              jq '{ok,responses:[.responses[]? | {month,keyword,ok,status,code,totalCount,error,items}]}' probe.json
+              if jq -e 'type == "object"' probe.json > /dev/null 2>&1; then
+                jq '{ok,responses:[.responses[]? | {month,keyword,ok,status,code,totalCount,error,items}]}' probe.json
+              else
+                echo "Non-JSON response, first bytes:"
+                head -c 450 probe.json | tr '\\n' ' '
+                echo
+              fi
               exit 0
             fi
             echo "Preview not ready (HTTP $code, attempt $i)"
