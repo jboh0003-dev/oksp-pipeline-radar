@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type DeliveryRow = {
+  external_key: string; delivery_request_no: string; receipt_date: string;
+  product_name: string; brand: string | null; supplier_name: string | null;
+  customer_name: string | null; amount: number | null; matched_keyword: string;
+};
+
 type CompanyName = "이노그리드" | "에이블클라우드" | "오케스트로" | "오케스트로클라우드";
 
 type AwardRow = {
@@ -80,6 +86,8 @@ function formatDate(value: string | null) {
 
 export default function CompetitiveAnalysisPage() {
   const [rows, setRows] = useState<AwardRow[]>([]);
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [year, setYear] = useState(RECENT_3Y);
@@ -110,6 +118,27 @@ export default function CompetitiveAnalysisPage() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/virtualization-deliveries", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error ?? "납품정보 조회 실패");
+        if (!cancelled) setDeliveries(data.rows);
+      }).catch((reason) => { if (!cancelled) setDeliveryError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const visibleDeliveries = useMemo(() => deliveries.filter((item) => {
+    const rowYear = item.receipt_date.slice(0, 4);
+    if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
+    if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
+    if (company !== "전체" && !(item.brand ?? "").includes(company) && !(item.supplier_name ?? "").includes(company)) return false;
+    const q = query.trim().toLowerCase();
+    if (q && ![item.product_name,item.brand,item.supplier_name,item.customer_name,item.delivery_request_no].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  }), [deliveries,year,company,query]);
 
   const availableYears = useMemo(
     () => Array.from(new Set(rows.map((row) => row.award_date?.slice(0, 4)).filter(Boolean) as string[])).sort((a, b) => Number(b) - Number(a)),
@@ -203,7 +232,7 @@ export default function CompetitiveAnalysisPage() {
         </header>
 
         <section className="mb-4 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-xs leading-5 text-cyan-900 dark:text-cyan-100 sm:text-sm">
-          <strong>데이터 기준:</strong> 회사는 최종낙찰업체 사업자번호로 조회하고, 에이블클라우드는 요청하신 <strong>ABLESTACK/에이블스택</strong>이 나라장터 공고명에 명시된 낙찰 결과도 함께 조회합니다. 홈페이지·기사·수기 구축이력은 사용하지 않습니다. 제3자단가·디지털서비스 단순 등록 {excludedCount.toLocaleString("ko-KR")}건은 제외합니다.
+          <strong>데이터 기준:</strong> 2024~2026년의 가상화 관련 낙찰과 나라장터 종합쇼핑몰 납품요구를 구분합니다. 사업자번호 조회는 실제 낙찰사를 뜻하며, 공고명만으로 특정 솔루션 공급 여부가 확인되지 않는 사업은 분리합니다. 단순 카탈로그 등록 {excludedCount.toLocaleString("ko-KR")}건은 낙찰실적에서 제외합니다. 납품요구는 수주 계약과 중복 합산하지 않습니다.
         </section>
 
         {error && <section className="mb-4 rounded-2xl border border-red-300/30 bg-red-400/10 px-4 py-3 text-sm text-red-700 dark:text-red-200">{error}</section>}
@@ -252,6 +281,30 @@ export default function CompetitiveAnalysisPage() {
               <p className="mt-1 text-[10px] text-slate-400">낙찰금액 확인 {item.amountKnown}건 기준</p>
             </div>
           ))}
+        </section>
+
+        <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
+          <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">종합쇼핑몰 가상화 제품 납품요구 · {visibleDeliveries.length.toLocaleString("ko-KR")}건</h2>
+            <p className="mt-0.5 text-[11px] text-slate-500">상품 등록이나 계약 한도 금액이 아닌 수요기관별 납품요구 상세 금액입니다. 낙찰정보와 중복 합산하지 않습니다.</p>
+          </div>
+          {deliveryError && <p className="px-4 py-3 text-xs text-amber-700 dark:text-amber-300">쇼핑몰 데이터 준비 상태: {deliveryError}</p>}
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm"><thead><tr className="border-b bg-slate-50 text-xs text-slate-500 dark:bg-slate-800/40">
+              <th className="px-4 py-3">납품요구일</th><th className="px-4 py-3">브랜드</th><th className="px-4 py-3">제품</th>
+              <th className="px-4 py-3">납품업체</th><th className="px-4 py-3">수요기관</th><th className="px-4 py-3 text-right">요구금액</th>
+            </tr></thead><tbody>
+              {visibleDeliveries.map((item) => <tr key={item.external_key} className="border-t text-slate-700 dark:border-white/10 dark:text-slate-200">
+                <td className="whitespace-nowrap px-4 py-3">{formatDate(item.receipt_date)}</td>
+                <td className="whitespace-nowrap px-4 py-3 font-semibold">{item.brand ?? "제품명만 확인"}</td>
+                <td className="min-w-[260px] px-4 py-3">{item.product_name}</td>
+                <td className="px-4 py-3">{item.supplier_name ?? "-"}</td>
+                <td className="px-4 py-3">{item.customer_name ?? "-"}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums">{formatAmount(item.amount)}</td>
+              </tr>)}
+              {!visibleDeliveries.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">검증된 납품요구 데이터가 없습니다. 관리자 페이지에서 기간별 수집 후 확인하세요.</td></tr>}
+            </tbody></table>
+          </div>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70">
