@@ -98,13 +98,13 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
     if (!result.ok) return { rows: [], fetched, requestCount, excluded, error: `${task.category}/${task.keyword}/p${page}: ${result.error}` };
     const parsed = items(result.data);
     fetched += parsed.rows.length;
-    const firstDate = `${start.slice(0,4)}-${start.slice(4,6)}-${start.slice(6,8)}`;
-    const lastDate = `${end.slice(0,4)}-${end.slice(4,6)}-${end.slice(6,8)}`;
     for (const row of parsed.rows) {
       const candidate = normalize(row, task.keyword, task.category);
-      // Some API keyword queries return awards outside the requested dates.
-      // Only retain records whose authoritative award date falls in this month.
-      if (candidate?.award_date && candidate.award_date >= firstDate && candidate.award_date <= lastDate) {
+      // inqryDiv=2 searches by OPENING DATE, not award date (G2B spec).
+      // The award may be finalized weeks later, in a different month.
+      // Keep such awards, grouped by final award_date, across the 2024-26 period.
+      if (candidate?.award_date && candidate.award_date >= "2024-01-01" &&
+          candidate.award_date <= ["2026-10-30", kstTodayYmd()].sort()[0]) {
         collected.push(candidate);
       } else excluded++;
     }
