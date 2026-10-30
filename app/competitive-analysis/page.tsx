@@ -159,6 +159,8 @@ export default function CompetitiveAnalysisPage() {
   }, []);
 
   const visibleCandidates = useMemo(() => candidates.filter(item => {
+    // Exclude title-only unrelated hits such as cryptocurrency, physical simulation, network switches.
+    if (item.classification === "review") return false;
     const rowYear = item.award_date?.slice(0, 4) ?? "";
     if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
     if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
