@@ -363,6 +363,13 @@ export default function CompetitiveAnalysisPage() {
               낙찰업체(실제 계약상대자)와 제품 제조사를 구분합니다. 제조사가 공고명에 없는 건은 미확인으로 표시합니다.
               동일 사업은 위 업체 직접 수주이력과 중복될 수 있어 금액을 합산하지 않습니다.
             </p>
+            <p className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              낙찰업체 {new Set(visibleCandidates.map(item => item.winner_business_no)).size.toLocaleString("ko-KR")}개사
+              <span className="mx-2 text-slate-300">|</span>
+              제조사 명시 {visibleCandidates.filter(item => item.product_brand != null).length.toLocaleString("ko-KR")}건
+              <span className="mx-2 text-slate-300">|</span>
+              전체 사업 낙찰금액 {formatCompactAmount(visibleCandidates.reduce((sum, item) => sum + Number(item.amount ?? 0), 0))}
+            </p>
           </div>
           {candidateError && <p className="px-4 py-3 text-xs text-amber-700 dark:text-amber-300">{candidateError}</p>}
           <div className="overflow-x-auto">
