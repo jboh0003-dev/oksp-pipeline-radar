@@ -62,6 +62,19 @@ function classifyVirtualization(row: AwardRow): "virtualization" | "related" | "
   return "other";
 }
 
+/** Manufacturer evidence published outside G2B. Do not treat entire award value as product revenue. */
+function vendorCaseEvidence(row: CandidateRow): {brand: string; url: string; label: string} | null {
+  if ((row.customer ?? "").includes("공영홈쇼핑") &&
+      row.project.includes("공영홈쇼핑 2026년 노후 가상화 시스템 교체")) {
+    return {brand: "ABLESTACK", url: "https://ablecloud.io/resource/blog/45", label: "에이블클라우드 공식 발표"};
+  }
+  if ((row.customer ?? "").includes("부산대학교") &&
+      row.project.includes("부산대학교 통합대학 교육정보시스템 고도화를 위한 통합 가상화시스템(HCI) 구축")) {
+    return {brand: "ABLESTACK", url: "https://ablecloud.io/resource/blog/47", label: "에이블클라우드 공식 발표"};
+  }
+  return null;
+}
+
 const COMPANIES = ["전체", "오케스트로", "오케스트로클라우드", "이노그리드", "에이블클라우드"] as const;
 const COMPANY_ORDER: CompanyName[] = ["오케스트로", "오케스트로클라우드", "이노그리드", "에이블클라우드"];
 const RECENT_3Y = "2024~2026년";
@@ -164,7 +177,7 @@ export default function CompetitiveAnalysisPage() {
     const rowYear = item.award_date?.slice(0, 4) ?? "";
     if (year === RECENT_3Y && (rowYear < "2024" || rowYear > "2026")) return false;
     if (year !== RECENT_3Y && year !== ALL_YEARS && year !== rowYear) return false;
-    if (company !== "전체" && !(item.product_brand ?? "").includes(company) && !(item.winner_name ?? "").includes(company)) return false;
+    if (company !== "전체" && !(item.product_brand ?? "").includes(company) && !(item.winner_name ?? "").includes(company) && !(company === "에이블클라우드" && vendorCaseEvidence(item)?.brand === "ABLESTACK")) return false;
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return [item.project, item.winner_name, item.customer, item.product_brand, item.bid_no, ...item.matched_keywords]
@@ -246,8 +259,8 @@ export default function CompetitiveAnalysisPage() {
     downloadCsv(`가상화_HCI_수주업체_2024-2026_${year}.csv`, [
       ["최종낙찰일", "사업명", "낙찰업체", "사업자번호", "명시된 제조사", "사업분류", "수요기관", "공고번호", "낙찰금액(프로젝트 전체)", "공고명 매칭키워드", "근거"],
       ...visibleCandidates.map(r => [r.award_date, r.project, r.winner_name, r.winner_business_no,
-        r.product_brand ?? "미확인", candidateClassLabel[r.classification], r.customer, r.bid_no, r.amount, r.matched_keywords.join(", "),
-        "조달청 낙찰정보서비스"]),
+        r.product_brand ?? (vendorCaseEvidence(r) ? "ABLESTACK (공식 구축사례 교차확인)" : "미확인"), candidateClassLabel[r.classification], r.customer, r.bid_no, r.amount, r.matched_keywords.join(", "),
+        vendorCaseEvidence(r)?.url ?? "조달청 낙찰정보서비스"]),
     ]);
   }
   function exportDeliveriesCsv() {
@@ -360,7 +373,7 @@ export default function CompetitiveAnalysisPage() {
               <button type="button" onClick={exportCandidatesCsv} disabled={!visibleCandidates.length} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">가상화 낙찰 CSV</button>
             </div>
             <p className="mt-1 text-[11px] text-slate-500">
-              낙찰업체(실제 계약상대자)와 제품 제조사를 구분합니다. 제조사가 공고명에 없는 건은 미확인으로 표시합니다.
+              낙찰업체(실제 계약상대자)와 제품 제조사를 구분합니다. 제조사가 공고명에 없는 건은 미확인으로 표시하되, 공식 구축사례와 동일 사업으로 대조되는 건은 출처를 별도 표시합니다.
               동일 사업은 위 업체 직접 수주이력과 중복될 수 있어 금액을 합산하지 않습니다.
             </p>
             <p className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
@@ -389,7 +402,15 @@ export default function CompetitiveAnalysisPage() {
                     <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{formatDate(item.award_date)}</td>
                     <td className="px-4 py-3.5"><p className="font-medium text-slate-800 dark:text-slate-100">{item.project}</p><p className="mt-0.5 text-[10px] text-slate-400">{item.bid_no} · {item.matched_keywords.join(", ")}</p></td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-slate-700 dark:text-slate-200">{item.winner_name}</td>
-                    <td className="whitespace-nowrap px-4 py-3.5 font-semibold text-slate-800 dark:text-slate-100">{item.product_brand ?? "미확인"}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 font-semibold text-slate-800 dark:text-slate-100">
+                      {item.product_brand ? item.product_brand : vendorCaseEvidence(item) ? (
+                        <div>
+                          <p>ABLESTACK <span className="font-normal text-[10px] text-slate-500">(제조사 발표)</span></p>
+                          <a href={vendorCaseEvidence(item)?.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-normal text-blue-600 underline dark:text-blue-300">공식 구축사례 확인</a>
+                          <p className="font-normal text-[10px] text-slate-500">나라장터 공고명에는 제조사 미기재</p>
+                        </div>
+                      ) : "미확인"}
+                    </td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{candidateClassLabel[item.classification]}</td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">{item.customer ?? "-"}</td>
                     <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-100">{formatAmount(item.amount)}</td>
