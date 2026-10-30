@@ -100,7 +100,7 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
       inqryDiv: 2, inqryBgnDt: start, inqryEndDt: end, bidNtceNm: task.keyword,
     });
     const result = await fetchG2bApi(url, {
-      timeoutMs: 12000, retries: 2, label: `virtualization-candidate-${task.category}-${task.keyword}-${page}`,
+      timeoutMs: 20000, retries: 2, label: `virtualization-candidate-${task.category}-${task.keyword}-${page}`,
     });
     requestCount += result.debug.attempts;
     if (!result.ok) return { rows: [], fetched, requestCount, excluded, error: `${task.category}/${task.keyword}/p${page}: ${result.error}` };
@@ -133,15 +133,27 @@ export async function collectVirtualizationAwardCandidatesMonth(year: number, mo
   const start = first.replaceAll("-", "") + "0000", end = last.replaceAll("-", "") + "2359";
   const tasks: Task[] = VIRTUALIZATION_BID_KEYWORDS.flatMap(keyword =>
     KINDS.map(kind => ({ keyword, category: kind.category, operation: kind.operation })));
-  // Max six simultaneous requests to respect public API rate limits.
+  // Public-data API occasionally times out when several requests overlap.
+  // Use bounded concurrency and retry only failed keyword/category tasks.
   let cursor = 0;
   const results = new Array<TaskResult>(tasks.length);
-  await Promise.all(Array.from({length: 6}, async () => {
-    while(cursor < tasks.length) {
+  await Promise.all(Array.from({length: 3}, async () => {
+    while (cursor < tasks.length) {
       const idx = cursor++;
       results[idx] = await fetchTask(tasks[idx], start, end, key);
     }
   }));
+  const failedIndexes = results.flatMap((result, i) => result.error ? [i] : []);
+  if (failedIndexes.length) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    let next = 0;
+    await Promise.all(Array.from({length:2}, async () => {
+      while (next < failedIndexes.length) {
+        const idx = failedIndexes[next++];
+        results[idx] = await fetchTask(tasks[idx], start, end, key);
+      }
+    }));
+  }
   const errors = results.flatMap(x => x.error ? [x.error] : []);
   const deduped = new Map<string, VirtualizationBidCandidate>();
   for (const batch of results) for (const row of batch.rows) {
