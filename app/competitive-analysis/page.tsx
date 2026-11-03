@@ -3,6 +3,9 @@
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, isDirectVendorSupply, hasConfirmedVendorBusinessNo, type VendorId} from "@/lib/competitive/vendorEvidence";
+import {VIRTUALIZATION_KEYWORDS} from "@/lib/competitive/keywords";
+import {authedFetch} from "@/lib/authedFetch";
+import {useAuth} from "@/lib/auth";
 
 type Candidate = {
   external_key:string;bid_no:string;bid_ord:string|null;award_date:string|null;
@@ -24,9 +27,7 @@ type DirectAward = {
 type Source = "award" | "delivery";
 type Direction = "asc" | "desc";
 type SortState = {key:string;direction:Direction};
-type Metric = "amount" | "count";
 type SupplyGroup = "all" | "direct" | "other" | "unidentified";
-const PRIORITY_VENDORS: readonly VendorId[] = ["오케스트로", "이노그리드", "에이블클라우드", "Nutanix", "VMware"];
 const TYPE_LABELS:Record<string,string>={
   server_virtualization:"서버 가상화",hci:"HCI",vdi:"VDI",
   virtualization_other:"기타 가상화",review:"검토 필요",
@@ -102,13 +103,18 @@ export default function CompetitiveAnalysisPage(){
   const [agency,setAgency]=useState("전체");
   const [si,setSi]=useState("전체");
   const [query,setQuery]=useState("");
-  const [metric,setMetric]=useState<Metric>("amount");
   const [awardSort,setAwardSort]=useState<SortState>({key:"award_date",direction:"desc"});
   const [deliverySort,setDeliverySort]=useState<SortState>({key:"receipt_date",direction:"desc"});
   const [awardPage,setAwardPage]=useState(1);
   const [deliveryPage,setDeliveryPage]=useState(1);
   const [pageSize,setPageSize]=useState(30);
   const [drilldown,setDrilldown]=useState<{vendor:VendorId;group:SupplyGroup}|null>(null);
+  const [refreshKey,setRefreshKey]=useState(0);
+  const [collecting,setCollecting]=useState(false);
+  const [collectMessage,setCollectMessage]=useState("");
+  const [exporting,setExporting]=useState(false);
+  const auth=useAuth();
+  const canAdmin=auth.profileStatus==="ready"&&auth.role==="admin";
   useEffect(()=>{
     if(!drilldown)return;
     const onKey=(event:KeyboardEvent)=>{if(event.key==="Escape")setDrilldown(null);};
@@ -130,7 +136,7 @@ export default function CompetitiveAnalysisPage(){
         .finally(()=>{if(!cancelled)setReady(old=>({...old,[source.key]:true}));});
     }
     return ()=>{cancelled=true;};
-  },[]);
+  },[refreshKey]);
 
   useEffect(()=>{
     let cancelled=false;
@@ -139,7 +145,7 @@ export default function CompetitiveAnalysisPage(){
         if(!cancelled)setCoverage(data.baseline);})
       .catch(()=>{if(!cancelled)setCoverage(null);});
     return ()=>{cancelled=true;};
-  },[]);
+  },[refreshKey]);
 
   const relevantDeliveries=useMemo(()=>deliveries.filter(r=>isCompetitiveDeliveryProduct(r.product_name)),[deliveries]);
   const agencies=useMemo(()=>[...new Set([...candidates.map(x=>x.customer),...relevantDeliveries.map(x=>x.customer_name)]
@@ -204,12 +210,9 @@ export default function CompetitiveAnalysisPage(){
       unidentifiedCount:unidentified.length,unidentifiedAmount:unidentified.reduce((sum,r)=>sum+money(r.amount),0),
       supplierCount:partners.size};
   }),[verifiedAwards,verifiedDeliveries]);
-  const ranking=useMemo(()=>[...vendorStats].sort((a,b)=>{
-    const ai=PRIORITY_VENDORS.indexOf(a.vendor),bi=PRIORITY_VENDORS.indexOf(b.vendor);
-    if(ai!==bi)return (ai<0?PRIORITY_VENDORS.length:ai)-(bi<0?PRIORITY_VENDORS.length:bi);
-    const k=metric==="amount"?"deliveryAmount":"deliveryCount";
-    return b[k]-a[k]||a.label.localeCompare(b.label,"ko-KR");
-  }),[vendorStats,metric]);
+  const ranking=useMemo(()=>vendorStats.filter(row=>row.deliveryCount>0).sort((a,b)=>
+    b.deliveryAmount-a.deliveryAmount||b.deliveryCount-a.deliveryCount||a.label.localeCompare(b.label,"ko-KR")
+  ),[vendorStats]);
   const comparisonDeliveries=useMemo(()=>relevantDeliveries.filter(r=>{
     const attribution=vendorFromDelivery(r);
     const q=query.trim().toLocaleLowerCase();
@@ -243,7 +246,36 @@ export default function CompetitiveAnalysisPage(){
   const deliveryPages=Math.max(1,Math.ceil(orderDeliveries.length/pageSize));
   useEffect(()=>{setAwardPage(1);setDeliveryPage(1);},[year,vendor,type,agency,si,query,pageSize,awardSort,deliverySort]);
 
-  function reset(){setYear("2026");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setMetric("amount");}
+  function reset(){setYear("2026");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");}
+  function refresh(){reset();setDrilldown(null);setErrors({});setReady({});setRefreshKey(key=>key+1);}
+  async function collectLatest(){
+    if(collecting)return;
+    setCollecting(true);setCollectMessage("나라장터 최신 자료 수집 중 · 0건 완료");
+    const [yearNow,monthNow]=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit"}).format(new Date()).split("-").map(Number);
+    const tasks=[
+      ...VIRTUALIZATION_KEYWORDS.map(keyword=>({url:"/api/admin/virtualization-backfill",body:{year:yearNow,month:monthNow,keyword}})),
+      ...(["core","nutanix","vmware","redhat","proxmox"] as const).map(group=>({url:"/api/admin/virtualization-candidates",body:{year:yearNow,month:monthNow,group,persist:true}})),
+      {url:"/api/admin/competitive-awards-backfill",body:{year:yearNow,month:monthNow,persist:true}},
+    ];
+    let failed=0;
+    try{
+      for(let i=0;i<tasks.length;i++){
+        const task=tasks[i];
+        try{const response=await authedFetch(task.url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(task.body)});
+          const result=await response.json();if(!response.ok||!result.ok)failed++;
+        }catch{failed++;}
+        setCollectMessage(`나라장터 최신 자료 수집 중 · ${i+1}/${tasks.length} 완료${failed?` · 실패 ${failed}건`:""}`);
+      }
+      setCollectMessage(failed?`수집 완료 · ${tasks.length-failed}/${tasks.length}개 작업 성공. 실패 ${failed}건은 다시 시도해 주세요.`:"최신 자료 수집 완료");
+      setRefreshKey(key=>key+1);
+    }finally{setCollecting(false);}
+  }
+  async function downloadExcel(){
+    if(exporting)return;setExporting(true);
+    try{const {exportCompetitiveWorkbook}=await import("@/lib/competitive/exportWorkbook");
+      await exportCompetitiveWorkbook({deliveries,awards:candidates,directAwards,year,vendor,type,agency,si,query});
+    }catch(error){setCollectMessage(`엑셀 생성 실패: ${error instanceof Error?error.message:String(error)}`);}finally{setExporting(false);}
+  }
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
   const pricedDeliveryCount=verifiedDeliveries.filter(r=>r.amount!=null).length;
   const maxVendorAmount=Math.max(0,...ranking.map(r=>r.deliveryAmount));
@@ -276,7 +308,7 @@ export default function CompetitiveAnalysisPage(){
           {YEARS.map(y=><option key={y} value={y}>{y==="전체"?"2024~2026년 전체":y+"년"}</option>)}
         </select></Field>
         <Field label="경쟁 제조사"><select className={inputClass} value={vendor} onChange={e=>setVendor(e.target.value as typeof vendor)}>
-          <option value="전체">전체 제조사</option>{VENDORS.map(v=><option value={v.id} key={v.id}>{v.label}</option>)}
+          <option value="전체">전체 제조사</option>{VENDORS.filter(v=>relevantDeliveries.some(r=>vendorFromDelivery(r)?.vendor===v.id)).map(v=><option value={v.id} key={v.id}>{v.label}</option>)}
         </select></Field>
         <Field label="가상화 분야"><select className={inputClass} value={type} onChange={e=>setType(e.target.value)}>
           <option value="전체">전체 분야</option>{Object.entries(TYPE_LABELS).filter(([id])=>id!=="review").map(([id,label])=><option key={id} value={id}>{label}</option>)}
@@ -292,9 +324,16 @@ export default function CompetitiveAnalysisPage(){
               <option value="전체">전체 SI·총판·공급업체</option>{supplierOptions.map(([id,item])=><option value={id} key={id}>{item.name} ({item.count}건)</option>)}
             </select></div>
           </details>
-          <button type="button" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 dark:border-white/10 dark:text-slate-300" onClick={reset}>필터 초기화</button>
+          <div className="flex flex-wrap gap-2">
+            {vendor!=="전체"&&<button type="button" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-semibold text-blue-700 dark:border-blue-500/30 dark:bg-blue-950/30 dark:text-blue-300" onClick={()=>setVendor("전체")}>← 전체 제조사 보기</button>}
+            <button type="button" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 dark:border-white/10 dark:text-slate-300" onClick={reset}>필터 초기화</button>
+            <button type="button" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 dark:border-white/10 dark:text-slate-300" onClick={refresh}>↻ 새로고침</button>
+            {canAdmin&&<button type="button" disabled={collecting} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50" onClick={()=>void collectLatest()}>{collecting?"최신 자료 수집 중…":"나라장터 최신화"}</button>}
+            <button type="button" disabled={exporting||!ready.delivery} className="rounded-lg border border-blue-300 px-3 py-1.5 text-sm font-semibold text-blue-700 disabled:opacity-50 dark:text-blue-300" onClick={()=>void downloadExcel()}>{exporting?"엑셀 생성 중…":"분석 엑셀 다운로드"}</button>
+          </div>
         </div>
       </div>
+      {collectMessage&&<p role="status" className="mb-3 text-sm text-slate-600 dark:text-slate-300">{collectMessage}</p>}
 
       <div className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <Summary label="조달 공급 실적" value={!ready.delivery?"확인 중":verifiedDeliveries.length.toLocaleString("ko-KR")+"건"} sub="제조사 확인 · SI·총판 공급 포함"/>
@@ -326,11 +365,8 @@ export default function CompetitiveAnalysisPage(){
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-white/10">
           <div><h2 className="text-xl font-bold text-slate-900 dark:text-white">제조사별 조달 공급 현황</h2>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">우선 비교 제조사 상단 고정 · 동일 기간·필터 적용 · 나라장터 납품요구 상세 기준</p></div>
-          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10" aria-label="그 외 제조사 정렬">
-            <button type="button" onClick={()=>setMetric("amount")} aria-pressed={metric==="amount"} className={"rounded-md px-3 py-1.5 text-sm font-semibold "+(metric==="amount"?"bg-blue-600 text-white":"text-slate-500")}>금액순</button>
-            <button type="button" onClick={()=>setMetric("count")} aria-pressed={metric==="count"} className={"rounded-md px-3 py-1.5 text-sm font-semibold "+(metric==="count"?"bg-blue-600 text-white":"text-slate-500")}>건수순</button>
-          </div>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">조달 공급금액 내림차순 · 동일 기간·필터 적용 · 나라장터 납품요구 상세 기준</p></div>
+          <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">공급금액 높은순</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1050px] table-fixed border-collapse text-base">
@@ -343,8 +379,8 @@ export default function CompetitiveAnalysisPage(){
               <th scope="col" className="px-4 py-3 text-right">타 공급업체</th>
               <th scope="col" className="px-4 py-3 text-right">경로 미확인</th>
             </tr></thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-white/10">{ranking.map((row,index)=><tr key={row.vendor} className={index<PRIORITY_VENDORS.length?"bg-blue-50/40 dark:bg-blue-950/20":""}>
-              <th scope="row" className="px-5 py-4 text-left align-middle"><button type="button" onClick={()=>setVendor(row.vendor)} className="text-lg font-bold text-slate-900 hover:text-blue-600 hover:underline dark:text-white">{row.label}</button><p className="mt-1 break-words text-sm font-normal text-slate-600 dark:text-slate-300">{row.products}</p></th>
+            <tbody className="divide-y divide-slate-200 dark:divide-white/10">{ranking.map(row=><tr key={row.vendor}>
+              <th scope="row" className="px-5 py-4 text-left align-middle"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"all"})} aria-label={`${row.label} 조달 공급 상세 보기`} className="text-lg font-bold text-slate-900 hover:text-blue-600 hover:underline dark:text-white">{row.label}</button><p className="mt-1 break-words text-sm font-normal text-slate-600 dark:text-slate-300">{row.products}</p></th>
               <td className="px-4 py-4 text-right align-middle text-xl font-bold tabular-nums text-slate-900 dark:text-white"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"all"})} aria-label={`${row.label} 조달 ${row.deliveryCount}건 상세`} className="rounded hover:text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500">{row.deliveryCount.toLocaleString("ko-KR")}건</button></td>
               <td className="px-4 py-4 align-middle"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"all"})} aria-label={`${row.label} 조달 공급금액 상세`} className="block w-full rounded text-left hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"><strong className="text-xl tabular-nums text-blue-700 dark:text-blue-300">{row.pricedCount?fmtCompact(row.deliveryAmount):"금액 미확인"}</strong>
                 <div className="mt-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" role="img" aria-label={`${row.label} 금액 비중 ${maxVendorAmount?Math.round(100*row.deliveryAmount/maxVendorAmount):0}%`}><div className="h-full rounded-full bg-blue-600" style={{width:`${maxVendorAmount?100*row.deliveryAmount/maxVendorAmount:0}%`}}/></div>

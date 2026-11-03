@@ -286,10 +286,18 @@ export async function fetchG2bApi(
             debug: buildDebug(url, attempt, Date.now() - startedAt, status, null, 0),
           };
         }
+        // 공공 API가 간헐적으로 HTTP 200 + HTML 오류 페이지를 반환한다.
+        // 정상 JSON 응답으로 복귀할 기회를 주되 최종 실패는 그대로 기록한다.
+        lastError = `JSON 파싱 실패 · ${text.slice(0, 200)}`;
+        lastErrorKind = "JSON_PARSE_ERROR";
+        if (attempt < retries && /^\s*</.test(text)) {
+          await sleep(baseDelay * 2 ** (attempt - 1) + Math.random() * 200);
+          continue;
+        }
         return {
           ok: false,
-          errorKind: "JSON_PARSE_ERROR",
-          error: `JSON 파싱 실패 · ${text.slice(0, 200)}`,
+          errorKind: lastErrorKind,
+          error: lastError,
           debug: buildDebug(url, attempt, Date.now() - startedAt, status, null, 0),
         };
       }

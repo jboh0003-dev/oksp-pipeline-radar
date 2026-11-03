@@ -1,15 +1,11 @@
 import { buildG2bUrl, fetchG2bApi } from "@/lib/g2b/client";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { VIRTUALIZATION_KEYWORDS } from "@/lib/competitive/keywords";
+export { VIRTUALIZATION_KEYWORDS } from "@/lib/competitive/keywords";
 
 const BASE = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService";
 const OP = "getDlvrReqDtlInfoList";
 // A curated product-name probe is intentionally separate from the broader company-award collector.
-export const VIRTUALIZATION_KEYWORDS = [
-  "가상화", "HCI", "하이퍼바이저", "에이블스택", "ABLESTACK",
-  "Nutanix", "뉴타닉스", "AHV", "VMware", "vSphere", "vSAN", "ESXi",
-  "CONTRABASS", "VIOLA", "클라우드잇", "Openstackit", "Proxmox",
-  "OpenShift Virtualization", "Red Hat Virtualization",
-] as const;
 type RawItem = Record<string, unknown>;
 export type DeliveryItem = {
   external_key: string; delivery_request_no: string; delivery_change_order: string | null;
@@ -94,8 +90,8 @@ function compareVersions(a: DeliveryItem, b: DeliveryItem): number {
 }
 export async function collectVirtualizationDeliveryMonth(year: number, month: number, keyword: string, persist = false, previewLimit = 30) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  if (![2024, 2025, 2026].includes(year) || !Number.isInteger(month) || month < 1 || month > 12)
-    throw new Error("조회기간은 2024~2026년 중 한 달이어야 합니다.");
+  if (!Number.isInteger(year) || year < 2024 || year > Number(today.slice(0,4)) || !Number.isInteger(month) || month < 1 || month > 12)
+    throw new Error("조회기간은 2024년 이후 현재까지의 한 달이어야 합니다.");
   const firstDay = `${year}-${String(month).padStart(2, "0")}-01`;
   if (firstDay > today.slice(0, 7) + "-01") throw new Error("미래 월을 수집할 수 없습니다.");
   if (!VIRTUALIZATION_KEYWORDS.includes(keyword as typeof VIRTUALIZATION_KEYWORDS[number]))

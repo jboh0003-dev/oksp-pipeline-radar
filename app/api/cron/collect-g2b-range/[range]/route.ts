@@ -6,7 +6,9 @@ import { recordBidSnapshot } from "@/lib/bidSnapshot";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const LOOKBACK_DAYS = 30;
+// 매일 최근 7일을 다시 훑어 일시적인 API 실패도 다음 실행에서 복구한다.
+// 30일 전체를 매일 재조회하면 나라장터에 요청이 집중되어 페이지 timeout이 잦다.
+const LOOKBACK_DAYS = 7;
 /**
  * Cron 슬롯은 1~40을 5페이지씩 8개 lane 으로 나눈다.
  * 40은 더 이상 조회 상한이 아니다. 각 lane 은 +40 간격으로 계속 진행해
@@ -108,7 +110,7 @@ async function recordRun(args: {
     skipped_no_product_count: args.aggregate.skippedNoProductCount,
     errors: args.errors,
     warnings: [
-      `dynamic-lane=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · fixed 40-page cap removed · totalCount driven`,
+      `dynamic-lane=${args.start}-${args.end} · lookback=${LOOKBACK_DAYS}일 · totalCount driven`,
     ],
     message: `자동수집 lane ${args.start}-${args.end} · 마지막 시도 p${args.lastPageAttempted}`,
   };

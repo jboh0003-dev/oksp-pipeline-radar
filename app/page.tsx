@@ -5,12 +5,9 @@ import BudgetFilter, {
   matchesBudgetFilter,
   type BudgetFilterValue,
 } from "@/components/BudgetFilter";
-import CollectionDiagnosticsPanel from "@/components/CollectionDiagnosticsPanel";
-import CollectionErrorPanel from "@/components/CollectionErrorPanel";
 import DashboardLoading from "@/components/DashboardLoading";
 import { clearBidLocalCache } from "@/lib/cacheReset";
 import Header from "@/components/Header";
-import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import { useAuth } from "@/lib/auth";
 import { authedFetch } from "@/lib/authedFetch";
 import { parseApiResponse } from "@/lib/apiResponse";
@@ -21,10 +18,6 @@ import SearchBar from "@/components/SearchBar";
 import SummaryCards from "@/components/SummaryCards";
 import { parseBudgetAmount } from "@/lib/budget";
 import {
-  makeCollectionError,
-  type CollectionError,
-} from "@/lib/collectionErrors";
-import {
   CONTRABASS_FAMILY,
   type Notice,
   type ProductFilter as ProductFilterValue,
@@ -33,10 +26,6 @@ import {
   dedupeByAnnouncementKey,
   getAnnouncementKey,
 } from "@/lib/announcementKey";
-import {
-  fetchLastCollectionRun,
-  fetchLastSuccessfulRun,
-} from "@/lib/fetchLastCollectionRun";
 import { fetchNotices, type NoticeDataSource } from "@/lib/fetchNotices";
 import {
   loadNoticesCache,
@@ -64,9 +53,8 @@ import {
   type DashboardSummaryCounts,
 } from "@/lib/noticeVisibility";
 import { getPrimaryProduct, type PrimaryProduct } from "@/lib/primaryProduct";
-import { getSupabaseClient, type CollectionRunRow } from "@/lib/supabase";
+import { getSupabaseClient } from "@/lib/supabase";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
-import { isIsoStaleSinceMorningCutoff } from "@/lib/freshness";
 
 const CONTRABASS_FAMILY_SET = new Set<string>(CONTRABASS_FAMILY);
 
@@ -297,8 +285,6 @@ export default function Home() {
   const [dataSource, setDataSource] = useState<NoticeDataSource>("sample");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  /** 첫 페인트가 캐시에서 즉시 그려졌는지 — Header 우상단에 cache 배지로 표시. */
-  const [fromCache, setFromCache] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   /** 키 입력마다 filteredNotices 재계산을 막기 위해 250ms debounce. */
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
@@ -324,34 +310,12 @@ export default function Home() {
   /** "피드백 있음" 필터 — 사용자가 관리하는 의견이 있는 공고만 추리기. */
   const [showFeedbackOnly, setShowFeedbackOnly] = useState(false);
   const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
-  const [lastRun, setLastRun] = useState<CollectionRunRow | null>(null);
-  const [lastRunError, setLastRunError] = useState<string | null>(null);
-  const [isLastRunLoading, setIsLastRunLoading] = useState(true);
-  /**
-   * 마지막 "성공" 수집 row.
-   *  - lastRun.ok=true 이면 동일하지만, 마지막 시도가 실패면 더 과거의 성공 row 를 가리킨다.
-   *  - 화면의 "데이터 신선도" / "업데이트 필요" 판정 기준이 되는 값.
-   */
-  const [lastSuccessRun, setLastSuccessRun] = useState<CollectionRunRow | null>(
-    null,
-  );
 
   const auth = useAuth();
   const canAdmin =
     auth.status === "authed" &&
     auth.profileStatus === "ready" &&
     auth.role === "admin";
-
-  /**
-   * 일반 사용자용 짧은 안내 토스트 (검색/조회 중 부가 API 실패 등).
-   * 기존 공고 데이터는 유지하고, 시스템 오류처럼 보이지 않게 한다.
-   */
-  const [userNoticeToast, setUserNoticeToast] = useState<string | null>(null);
-  useEffect(() => {
-    if (!userNoticeToast) return;
-    const id = window.setTimeout(() => setUserNoticeToast(null), 5_000);
-    return () => window.clearTimeout(id);
-  }, [userNoticeToast]);
 
   /**
    * 페이지네이션 — 페이지당 50/100/200/전체.
@@ -380,6 +344,14 @@ export default function Home() {
   type ManualCollectStatus = "idle" | "running" | "success" | "error";
   const [manualStatus, setManualStatus] = useState<ManualCollectStatus>("idle");
   const [manualMessage, setManualMessage] = useState<string | null>(null);
+  useEffect(() => {
+    if (manualStatus === "running" || !manualMessage) return;
+    const id = window.setTimeout(() => {
+      setManualMessage(null);
+      setManualStatus("idle");
+    }, manualStatus === "error" ? 12_000 : 6_000);
+    return () => window.clearTimeout(id);
+  }, [manualStatus, manualMessage]);
 
   /**
    * 동시에 같은 fetchNotices 호출이 두 번 일어나는 것을 막는 mutex.
@@ -407,6 +379,11 @@ export default function Home() {
     fetchInFlightRef.current = true;
     try {
       const result = await fetchNotices();
+      if (result.source === "sample" && process.env.NODE_ENV === "production") {
+        setErrorMessage(result.error);
+        // 저장된 실제 공고가 있으면 그대로 두고 다음 자동 재조회에서 복구한다.
+        return { newCount: 0, matchError: null };
+      }
       const withRaw = await attachRawData(result.notices, result.source);
 
       // primaryProduct 부착 + dedup (한 입찰의 같은 차수는 1건)
@@ -437,7 +414,6 @@ export default function Home() {
       setDataSource(result.source);
       setErrorMessage(result.error);
       saveNoticesCache(result.notices, result.source);
-      setFromCache(false);
       return {
         newCount: flagged.filter((notice) => notice.isNew).length,
         matchError: result.matchError,
@@ -451,28 +427,14 @@ export default function Home() {
     (matchError: string | null) => {
       if (!matchError) return;
       console.error("[page] customer match API failed", { error: matchError });
-      if (!canAdmin) {
-        setUserNoticeToast("검색 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
-      }
     },
-    [canAdmin],
+    [],
   );
-
-  const loadLastRun = useCallback(async () => {
-    // last attempt + last success 를 병렬 조회. last success 가 stale 판정 기준이 된다.
-    const [attempt, success] = await Promise.all([
-      fetchLastCollectionRun(),
-      fetchLastSuccessfulRun(),
-    ]);
-    setLastRun(attempt.run);
-    setLastRunError(attempt.error);
-    setLastSuccessRun(success.run);
-  }, []);
 
   /**
    * 첫 진입 흐름 — 캐시가 있으면 즉시 화면에 보여주고, 백그라운드에서 최신 데이터를 받아온다.
    *  1) localStorage 에서 csg2b:notices 읽기 → 즉시 setNotices (skeleton 미표시)
-   *  2) 백그라운드 fetchNotices() / fetchLastCollectionRun() 병렬 실행
+   *  2) 백그라운드 fetchNotices() 실행
    *  3) 응답이 도착하면 화면 갱신 + 새 캐시 저장
    */
   useEffect(() => {
@@ -480,7 +442,7 @@ export default function Home() {
 
     // (1) 캐시 즉시 페인트
     const cached = loadNoticesCache();
-    if (cached && cached.notices.length > 0) {
+    if (cached && cached.notices.length > 0 && (cached.source === "supabase" || process.env.NODE_ENV !== "production")) {
       const enriched = cached.notices.map((n) => ({
         ...n,
         primaryProduct: getPrimaryProduct(n as DisplayNotice),
@@ -491,21 +453,18 @@ export default function Home() {
       setNotices(deduped.map((notice) => ({ ...notice, isNew: false })));
       setDataSource(cached.source);
       setIsLoading(false);
-      setFromCache(true);
     }
 
     // (2) 백그라운드 최신화
     async function refresh() {
       // 캐시 hit 이 아니면 일반 로딩 스켈레톤을 그대로 보여준다.
       if (!cached) setIsLoading(true);
-      setIsLastRunLoading(true);
       try {
-        const [{ matchError }] = await Promise.all([loadNotices(), loadLastRun()]);
+        const { matchError } = await loadNotices();
         notifyMatchApiFailure(matchError);
       } finally {
         if (isMounted) {
           setIsLoading(false);
-          setIsLastRunLoading(false);
         }
       }
     }
@@ -515,7 +474,27 @@ export default function Home() {
     return () => {
       isMounted = false;
     };
-  }, [loadNotices, loadLastRun, notifyMatchApiFailure]);
+  }, [loadNotices, notifyMatchApiFailure]);
+
+  // 열린 탭도 DB에 수집된 새 공고를 자동으로 읽는다. 탭 복귀 시에는 간격을 둬 중복 조회를 피한다.
+  useEffect(() => {
+    let lastCheck = Date.now();
+    const refresh = () => {
+      if (manualStatus === "running" || document.visibilityState !== "visible" || Date.now() - lastCheck < 30_000) return;
+      lastCheck = Date.now();
+      void loadNotices().then(result => {
+        notifyMatchApiFailure(result.matchError);
+      }).catch(error => console.error("[page] automatic refresh failed", error));
+    };
+    const interval = window.setInterval(refresh, 2 * 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [loadNotices, notifyMatchApiFailure, manualStatus]);
 
   /** 첫 마운트에 localStorage 에서 입찰공고용 피드백만 읽어 메모리에 캐싱. */
   useEffect(() => {
@@ -557,7 +536,6 @@ export default function Home() {
    *  - displayedBidItems : 페이지네이션 적용 후 실제 화면 표시 (= pagedNotices)
    *
    * 통계는 반드시 이 기준으로:
-   *   조회      = lastRun.fetched_count (G2B 원천 조회 수)
    *   진행중    = activeBidItems.length
    *   제품매칭  = sum(relatedProducts.length) on activeBidItems
    *   표출      = filteredBidItems / displayedBidItems
@@ -662,65 +640,6 @@ export default function Home() {
    */
   const activeTotal = visibleCandidates.length;
 
-  /**
-   * 수집 오류 패널용 CollectionError[].
-   *  - Supabase config 오류 / 마지막 cron 실행에서 errors[]
-   *  - 직전 수동 수집(manualMessage) 가 error 인 경우.
-   * 0건이면 panel 자체가 렌더되지 않는다.
-   */
-  const collectionErrors: CollectionError[] = useMemo(() => {
-    if (!canAdmin) return [];
-    const list: CollectionError[] = [];
-    if (dataSource === "sample" && errorMessage) {
-      list.push(
-        makeCollectionError({
-          scope: "BID",
-          kind: "API_RESPONSE_ERROR",
-          message: `Supabase 연결 실패 — 샘플 데이터 표시 중`,
-          detail: errorMessage,
-        }),
-      );
-    }
-    if (manualStatus === "error" && manualMessage) {
-      list.push(
-        makeCollectionError({
-          scope: "BID",
-          kind: "API_RESPONSE_ERROR",
-          message: manualMessage,
-        }),
-      );
-    }
-    if (lastRun?.errors && lastRun.errors.length > 0) {
-      for (const e of lastRun.errors) {
-        const lower = (e ?? "").toLowerCase();
-        const kind = lower.includes("timeout")
-          ? "API_TIMEOUT"
-          : lower.includes("json") || lower.includes("파싱")
-            ? "JSON_PARSE_ERROR"
-            : lower.includes("hcsp") || lower.includes("auth") || lower.includes("키")
-              ? "API_KEY_MISSING"
-              : "API_RESPONSE_ERROR";
-        list.push(
-          makeCollectionError({
-            scope: "BID",
-            kind,
-            endpoint: "cron/collect-g2b",
-            message: e ?? "(unknown)",
-          }),
-        );
-      }
-    }
-    return list;
-  }, [canAdmin, dataSource, errorMessage, manualStatus, manualMessage, lastRun]);
-
-  /** 일반 사용자 — 저장된 데이터는 있으나 최신 수집이 지연된 경우만 약한 안내. */
-  const showUserStaleHint = useMemo(() => {
-    if (canAdmin || dataSource !== "supabase" || notices.length === 0) return false;
-    const stale = isIsoStaleSinceMorningCutoff(lastSuccessRun?.finished_at ?? null);
-    const lastAttemptFailed = Boolean(lastRun && !lastRun.ok);
-    return stale || lastAttemptFailed;
-  }, [canAdmin, dataSource, notices.length, lastSuccessRun, lastRun]);
-
   // 필터/검색/페이지사이즈가 바뀌면 1페이지로 리셋.
   useEffect(() => {
     setCurrentPage(1);
@@ -746,9 +665,9 @@ export default function Home() {
   };
 
   const handleRefresh = () => {
-    if (typeof window !== "undefined") {
-      window.location.reload();
-    }
+    void loadNotices().then(result => {
+      notifyMatchApiFailure(result.matchError);
+    }).catch(error => console.error("[page] refresh failed", error));
   };
 
   /**
@@ -762,7 +681,7 @@ export default function Home() {
   const handleManualCollect = async () => {
     if (manualStatus === "running") return;
     setManualStatus("running");
-    setManualMessage("나라장터 공고 수집 중... (60초 정도 걸릴 수 있어요)");
+    setManualMessage("새 공고를 수집하고 있습니다.");
 
     type ManualResp = {
       ok: boolean;
@@ -789,7 +708,7 @@ export default function Home() {
       });
       if (!parsed.ok) {
         setManualStatus("error");
-        setManualMessage(`수집 실패: ${parsed.error}`);
+        setManualMessage("수집을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         console.error("[page] manual collect failed", {
           status: parsed.status,
           error: parsed.error,
@@ -799,15 +718,14 @@ export default function Home() {
       }
       resp = parsed.data;
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
       setManualStatus("error");
-      setManualMessage(`수집 실패: 네트워크 오류 (${reason})`);
+      setManualMessage("연결이 원활하지 않아 수집을 완료하지 못했습니다.");
       console.error("[page] manual collect exception:", err);
       return;
     }
 
     // 어쨌든 끝났으니 화면 데이터는 다시 읽어온다. (DB 로그가 안 남았더라도 notices 는 갱신됐을 수 있음)
-    const [{ newCount, matchError }] = await Promise.all([loadNotices(), loadLastRun()]);
+    const { newCount, matchError } = await loadNotices();
     notifyMatchApiFailure(matchError);
 
     if (!resp) {
@@ -820,33 +738,24 @@ export default function Home() {
       // runCollect 내부 에러 (G2B / Supabase / 환경변수 등)
       const reason = resp.error ?? resp.errors?.[0] ?? `HTTP ${httpStatus}`;
       setManualStatus("error");
-      setManualMessage(`수집 실패: ${reason}`);
+      setManualMessage("수집을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      console.error("[page] collection failed", reason);
       return;
     }
 
     const inserted = resp.insertedCount ?? 0;
-    const updated = resp.updatedCount ?? 0;
-    const fetched = resp.fetchedCount ?? 0;
-    const matched = resp.matchedCount ?? 0;
-    const parts = [
-      `DB 신규 ${inserted.toLocaleString("ko-KR")}건`,
-      `업데이트 ${updated.toLocaleString("ko-KR")}건`,
-      `조회 ${fetched.toLocaleString("ko-KR")}건`,
-      `매칭 ${matched.toLocaleString("ko-KR")}건`,
-    ];
 
     if (resp.loggedToDb === false) {
       // 수집 자체는 성공했지만 collection_runs 가 갱신되지 않은 케이스.
       // → 화면의 "최근 수집" 카드는 갱신되지 않는다. 사용자에게 명확히 알린다.
-      setManualStatus("error");
-      setManualMessage(
-        `수집은 완료됐지만 DB 로그 기록 실패: ${parts.join(" / ")} · 사유: ${resp.dbLogError ?? "(unknown)"}`,
-      );
+      console.error("[page] collection run log failed", resp.dbLogError);
+      setManualStatus("success");
+      setManualMessage(`수집 완료 · 신규 ${inserted.toLocaleString("ko-KR")}건`);
       return;
     }
 
     setManualStatus("success");
-    setManualMessage(`수집 완료: ${parts.join(" / ")}`);
+    setManualMessage(`수집 완료 · 신규 ${inserted.toLocaleString("ko-KR")}건`);
 
     // 사용자에게 즉시 보이는 신규 공고 건수를 토스트로 안내. (loadNotices 가 snapshot diff 로
     // 산출한 값이라 이번 수집에서 새로 등장한 공고만 잡힌다.)
@@ -854,10 +763,6 @@ export default function Home() {
       setCollectToast(`신규 ${newCount.toLocaleString("ko-KR")}건이 추가됐어요`);
     }
 
-    // 일부 환경에서 Supabase 의 read replica 가 약간 지연될 수 있어, 1초 후 한 번 더 lastRun 을 갱신한다.
-    setTimeout(() => {
-      void loadLastRun();
-    }, 1500);
   };
 
   const handleSortChange = (column: SortColumn) => {
@@ -879,10 +784,7 @@ export default function Home() {
   return (
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
-        <Header
-          matchedCount={activeTotal}
-          fromCache={fromCache}
-        />
+        <Header matchedCount={activeTotal} />
 
         {/*
           수집 직후 짧게 보이는 토스트.
@@ -905,69 +807,10 @@ export default function Home() {
           </div>
         )}
 
-        {dataSource === "sample" && errorMessage && canAdmin && (
+        {errorMessage && notices.length === 0 && (
           <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200">
-            <p className="font-semibold">
-              Supabase 연결에 실패해 샘플 데이터를 표시하고 있습니다.
-            </p>
-            <p className="mt-1 break-all rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-rose-900 dark:bg-slate-900/60 dark:text-rose-200">
-              {errorMessage}
-            </p>
+            <p className="font-semibold">공고 데이터를 불러오지 못했습니다. 자동으로 다시 확인합니다.</p>
           </div>
-        )}
-
-        {userNoticeToast && (
-          <div
-            role="status"
-            className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow-sm dark:border-amber-400/30 dark:bg-amber-500/15 dark:text-amber-200 sm:text-sm"
-          >
-            <span>{userNoticeToast}</span>
-            <button
-              type="button"
-              onClick={() => setUserNoticeToast(null)}
-              className="text-[11px] font-medium text-amber-700/80 hover:text-amber-900 dark:text-amber-200/80"
-            >
-              닫기
-            </button>
-          </div>
-        )}
-
-        {!canAdmin && showUserStaleHint && (
-          <p
-            role="status"
-            className="mb-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200"
-          >
-            일부 최신 데이터 갱신이 지연될 수 있습니다. 기존 데이터는 정상 조회 가능합니다.
-          </p>
-        )}
-
-        {/*
-          구조화된 수집 오류 패널 — admin 에게만 노출.
-          일반 사용자에겐 운영성 메시지(수집 실패 / 환경변수 누락 등)를 보여주지 않는다.
-        */}
-        {canAdmin && (
-          <CollectionErrorPanel errors={collectionErrors} title="입찰공고 수집 오류" />
-        )}
-
-        {canAdmin && (
-          <LastCollectionRunCard
-            run={lastRun}
-            error={lastRunError}
-            isLoading={isLastRunLoading}
-            lastSuccess={lastSuccessRun}
-          />
-        )}
-
-        {/*
-          관리자 전용 수집 진단 패널 — 일반 사용자에게는 보이지 않는다.
-          기본 접힘 상태로 운영 화면을 깔끔하게 유지한다.
-        */}
-        {canAdmin && !isLastRunLoading && (
-          <CollectionDiagnosticsPanel
-            lastAttempt={lastRun}
-            lastSuccess={lastSuccessRun}
-            fetchError={lastRunError}
-          />
         )}
 
         <SummaryCards {...summaryCounts} />
@@ -1108,7 +951,7 @@ export default function Home() {
                 title="DB에 저장된 공고 목록을 다시 불러옵니다. 나라장터에서 새로 수집하지는 않습니다."
                 className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white px-3 text-xs font-semibold text-blue-600 ring-1 ring-blue-200 transition hover:bg-blue-50 dark:bg-slate-900/60 dark:text-blue-300 dark:ring-blue-400/30 dark:hover:bg-slate-800 sm:text-sm"
               >
-                ⟳ 화면 새로고침
+                ⟳ 공고 다시 확인
               </button>
 
               {/* "캐시 초기화" 는 운영성 도구이므로 admin 에게만 노출. */}
@@ -1169,20 +1012,11 @@ export default function Home() {
         {/*
           상단 표출 카운트 + 페이지 사이즈 선택 + 페이지 이동 — PC/모바일 공통.
           기준 (사용자 혼동 방지):
-            - 조회      : 마지막 수집 fetched_count (G2B 원천 조회 수, 없으면 미표시)
             - 관련      : CONTRABASS/VIOLA 매칭 + 마감 제외 후 unique 공고 수
             - 표출      : 현재 화면 필터/검색/페이지 적용 후 실제 보이는 건수 (1-50 / N건 형태)
         */}
         <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm">
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
-            {lastRun?.fetched_count != null && (
-              <span title="G2B 원천 조회 수 (마지막 수집 기준)">
-                <span className="text-slate-500 dark:text-slate-400">조회 </span>
-                <span className="font-semibold tabular-nums">
-                  {lastRun.fetched_count.toLocaleString("ko-KR")}
-                </span>
-              </span>
-            )}
             <span title="제품 매칭 + 마감 제외, unique 공고 수">
               <span className="text-slate-500 dark:text-slate-400">관련 </span>
               <span className="font-semibold tabular-nums">

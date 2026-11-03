@@ -253,7 +253,10 @@ function mapRowToNotice(
 }
 
 function filterVisibleSample(): Notice[] {
-  return sortNoticesForDisplay(sampleNotices.filter((notice) => isNoticeVisible(notice)));
+  // 운영 화면에서 샘플 공고를 실제 입찰공고처럼 보여주지 않는다.
+  return process.env.NODE_ENV === "production"
+    ? []
+    : sortNoticesForDisplay(sampleNotices.filter((notice) => isNoticeVisible(notice)));
 }
 
 export async function fetchNotices(): Promise<FetchNoticesResult> {

@@ -12,11 +12,9 @@ type HeaderProps = {
    * (호환을 위해 prop 은 그대로 유지.)
    */
   filteredCount?: number;
-  /** 캐시 hit 여부 — true 면 우상단 칩에 작은 "cache" 배지 표시. */
-  fromCache?: boolean;
 };
 
-export default function Header({ matchedCount, fromCache }: HeaderProps) {
+export default function Header({ matchedCount }: HeaderProps) {
   return (
     <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
       <div
@@ -59,11 +57,6 @@ export default function Header({ matchedCount, fromCache }: HeaderProps) {
             </div>
             <p className="hidden text-[10px] text-slate-200/70 sm:block">
               마감 전 제품 관련 공고 기준
-              {fromCache && (
-                <span className="ml-1.5 rounded-full bg-cyan-400/30 px-1.5 py-0.5 font-semibold uppercase tracking-wide text-cyan-50">
-                  cache
-                </span>
-              )}
             </p>
           </div>
         </div>

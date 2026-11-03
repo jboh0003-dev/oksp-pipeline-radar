@@ -122,7 +122,7 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
       // The award may be finalized weeks later, in a different month.
       // Keep such awards, grouped by final award_date, across the 2024-26 period.
       if (candidate?.award_date && candidate.award_date >= "2024-01-01" &&
-          candidate.award_date <= ["2026-10-30", kstTodayYmd()].sort()[0]) {
+          candidate.award_date <= kstTodayYmd()) {
         collected.push(candidate);
       } else excluded++;
     }
@@ -132,8 +132,8 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
   return {rows:collected,fetched,requestCount,excluded};
 }
 export async function collectVirtualizationAwardCandidatesMonth(year: number, month: number, persist: boolean, group: VendorKeywordGroup = "core") {
-  if (![2024, 2025, 2026].includes(year) || !Number.isInteger(month) || month < 1 || month > 12 || (year===2026 && month>10))
-    throw new Error("2024~2026년 10월 범위의 월이 필요합니다.");
+  if (year < 2024 || year > Number(kstTodayYmd().slice(0,4)) || !Number.isInteger(month) || month < 1 || month > 12)
+    throw new Error("2024년 이후 현재까지의 월이 필요합니다.");
   const key = process.env.G2B_SERVICE_KEY?.trim();
   if (!key) throw new Error("G2B_SERVICE_KEY missing");
   const mm = String(month).padStart(2, "0");
