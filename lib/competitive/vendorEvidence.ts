@@ -37,6 +37,14 @@ const VENDOR_BIZNOS: Record<string, VendorId> = {
   "8868602158": "에이블클라우드",
   "2208736743": "이노그리드",
 };
+export function hasConfirmedVendorBusinessNo(vendor: VendorId): boolean {
+  return Object.values(VENDOR_BIZNOS).includes(vendor);
+}
+/** Supplier identity confirmed by the procurement registration number, not product text. */
+export function isDirectVendorSupply(vendor: VendorId, businessNo: string | null | undefined): boolean {
+  const normalized=String(businessNo??"").replace(/\D/g, "");
+  return Boolean(normalized && VENDOR_BIZNOS[normalized]===vendor);
+}
 export function vendorFromProduct(text: string): VendorId | null {
   // Match actual brand/product names only. 'HCI', 'KVM', 'OpenStack', '가상화' alone
   // do not identify a manufacturer and must not contribute to its sales totals.
