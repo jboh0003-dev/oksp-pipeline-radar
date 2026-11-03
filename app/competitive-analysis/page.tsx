@@ -95,7 +95,7 @@ export default function CompetitiveAnalysisPage(){
   const [errors,setErrors]=useState<Record<string,string>>({});
   const [ready,setReady]=useState<Record<string,boolean>>({});
   const [coverage,setCoverage]=useState<{expectedMonths:number;successfulMonths:number;failedMonths:string[]}|null>(null);
-  const [year,setYear]=useState("전체");
+  const [year,setYear]=useState("2026");
   const [vendor,setVendor]=useState<"전체"|VendorId>("전체");
   const [type,setType]=useState("전체");
   const [agency,setAgency]=useState("전체");
@@ -212,11 +212,9 @@ export default function CompetitiveAnalysisPage(){
       (!q||[r.product_name,r.brand,r.supplier_name,r.customer_name,r.delivery_request_no,r.product_id,attribution?.vendor].filter(Boolean).join(" ").toLocaleLowerCase().includes(q))&&attribution!=null;
   }),[relevantDeliveries,vendor,type,agency,si,query]);
   const yearly=useMemo(()=>[2024,2025,2026].map(y=>{
-    const rows=verifiedAwards.filter(x=>String(x.award_date??"").startsWith(String(y)));
     const ds=comparisonDeliveries.filter(x=>String(x.receipt_date??"").startsWith(String(y)));
-    return {year:y,awardCount:rows.length,awardAmount:rows.reduce((s,x)=>s+money(x.amount),0),
-      deliveryCount:ds.length,deliveryAmount:ds.reduce((s,x)=>s+money(x.amount),0)};
-  }),[verifiedAwards,comparisonDeliveries]);
+    return {year:y,deliveryCount:ds.length,deliveryAmount:ds.reduce((s,x)=>s+money(x.amount),0)};
+  }),[comparisonDeliveries]);
   const leadingAgencies=useMemo(()=>{
     const map=new Map<string,{count:number;amount:number;last:string;vendors:Set<string>}>();
     for(const r of verifiedDeliveries){const name=r.customer_name?.trim();if(!name)continue;
@@ -237,7 +235,7 @@ export default function CompetitiveAnalysisPage(){
   const deliveryPages=Math.max(1,Math.ceil(orderDeliveries.length/pageSize));
   useEffect(()=>{setAwardPage(1);setDeliveryPage(1);},[year,vendor,type,agency,si,query,pageSize,awardSort,deliverySort]);
 
-  function reset(){setYear("전체");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setMetric("amount");}
+  function reset(){setYear("2026");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");setMetric("amount");}
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
   const pricedDeliveryCount=verifiedDeliveries.filter(r=>r.amount!=null).length;
   const maxVendorAmount=Math.max(0,...ranking.map(r=>r.deliveryAmount));
@@ -253,7 +251,7 @@ export default function CompetitiveAnalysisPage(){
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-2xl bg-slate-900 px-5 py-4 text-white dark:ring-1 dark:ring-white/10">
         <div><p className="text-sm font-semibold tracking-widest text-cyan-300">PIPELINE MAKER</p>
           <h1 className="mt-1 text-xl font-bold sm:text-2xl">가상화 벤더 경쟁분석</h1></div>
-        <div className="text-sm text-slate-300">2024–2026 · 나라장터 기준</div>
+        <div className="text-sm text-slate-300">{year==="전체"?"2024–2026년 전체":year+"년"} · 나라장터 기준</div>
       </header>
 
       <div className="mb-4 grid grid-cols-2 gap-2.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-slate-900/70 md:grid-cols-3 xl:grid-cols-5">
@@ -289,6 +287,24 @@ export default function CompetitiveAnalysisPage(){
       {(errors.award||errors.delivery)&&<div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-950/20 dark:text-rose-300">
         {[errors.award,errors.delivery].filter(Boolean).join(" / ")}
       </div>}
+
+      <section className="mb-5 rounded-xl border border-slate-200 bg-white p-5 dark:border-white/10 dark:bg-slate-900/70">
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white">연도별 조달 공급 비교</h2>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">연도를 눌러 해당 연도 현황을 조회하세요. 막대는 현재 연도 선택과 관계없이 모든 연도를 같은 기준으로 비교합니다.</p>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {yearly.map(item=>{
+            const maxAmount=Math.max(0,...yearly.map(x=>x.deliveryAmount));
+            const maxCount=Math.max(0,...yearly.map(x=>x.deliveryCount));
+            return <button type="button" key={item.year} onClick={()=>setYear(String(item.year))} aria-pressed={year===String(item.year)} className={"rounded-xl border p-4 text-left transition-colors "+(year===String(item.year)?"border-blue-500 bg-blue-50 dark:bg-blue-950/30":"border-slate-200 hover:border-blue-300 dark:border-white/10 dark:hover:border-blue-500")}>
+              <span className="text-lg font-bold text-slate-900 dark:text-white">{item.year}년</span>
+              <div className="mt-4 flex items-baseline justify-between gap-2"><span className="text-sm text-slate-600 dark:text-slate-300">공급금액</span><strong className="text-xl tabular-nums text-blue-700 dark:text-blue-300">{fmtCompact(item.deliveryAmount)}</strong></div>
+              <div className="mt-2 h-3 rounded-full bg-slate-200 dark:bg-slate-700" role="img" aria-label={`${item.year}년 금액 ${fmtWon(item.deliveryAmount)}`}><div className="h-full rounded-full bg-blue-600" style={{width:`${maxAmount?100*item.deliveryAmount/maxAmount:0}%`}}/></div>
+              <div className="mt-4 flex items-baseline justify-between gap-2"><span className="text-sm text-slate-600 dark:text-slate-300">조달 건수</span><strong className="text-xl tabular-nums text-slate-900 dark:text-white">{item.deliveryCount.toLocaleString("ko-KR")}건</strong></div>
+              <div className="mt-2 h-3 rounded-full bg-slate-200 dark:bg-slate-700" role="img" aria-label={`${item.year}년 ${item.deliveryCount}건`}><div className="h-full rounded-full bg-cyan-500" style={{width:`${maxCount?100*item.deliveryCount/maxCount:0}%`}}/></div>
+            </button>;
+          })}
+        </div>
+      </section>
 
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-white/10">
@@ -336,21 +352,7 @@ export default function CompetitiveAnalysisPage(){
         <p className="mt-3 text-sm text-slate-500">유사사업의 사업명·낙찰업체·전체 계약금액은 아래 ‘입찰사업 수주’에서 확인할 수 있습니다. 수주 가능성은 근거 데이터가 없어 산정하지 않았습니다.</p>
       </section>
 
-      <section className="mb-5 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900/70">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white">연도별 경쟁제품 구매요구</h2>
-          <div className="mt-4 space-y-4">
-            {yearly.map(item=>{
-              const max=Math.max(...yearly.map(x=>metric==="amount"?x.deliveryAmount:x.deliveryCount),0);
-              const n=metric==="amount"?item.deliveryAmount:item.deliveryCount;
-              const pct=max?100*n/max:0;
-              return <button type="button" key={item.year} onClick={()=>setYear(String(item.year))} className="block w-full rounded-md text-left hover:bg-slate-50 dark:hover:bg-white/5">
-                <div className="mb-1.5 flex items-center justify-between text-sm"><span className="font-semibold">{item.year}년</span><span className="font-bold tabular-nums">{metric==="amount"?fmtCompact(item.deliveryAmount):item.deliveryCount+"건"}</span></div>
-                <div className="h-2 rounded bg-slate-100 dark:bg-slate-800"><div className="h-full rounded bg-blue-600" style={{width:pct+"%"}}/></div>
-              </button>;
-            })}
-          </div>
-        </div>
+      <section className="mb-5">
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900/70">
           <h2 className="text-sm font-bold text-slate-900 dark:text-white">집계 범위</h2>
           <div className="mt-4 grid grid-cols-2 gap-2.5">
