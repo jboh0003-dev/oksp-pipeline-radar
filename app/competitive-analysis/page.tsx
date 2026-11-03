@@ -25,6 +25,7 @@ type Source = "award" | "delivery";
 type Direction = "asc" | "desc";
 type SortState = {key:string;direction:Direction};
 type Metric = "amount" | "count";
+const PRIORITY_VENDORS: readonly VendorId[] = ["오케스트로", "이노그리드", "에이블클라우드", "Nutanix", "VMware"];
 const TYPE_LABELS:Record<string,string>={
   server_virtualization:"서버 가상화",hci:"HCI",vdi:"VDI",
   virtualization_other:"기타 가상화",review:"검토 필요",
@@ -196,6 +197,8 @@ export default function CompetitiveAnalysisPage(){
       supplierCount:partners.size};
   }),[verifiedAwards,verifiedDeliveries]);
   const ranking=useMemo(()=>[...vendorStats].sort((a,b)=>{
+    const ai=PRIORITY_VENDORS.indexOf(a.vendor),bi=PRIORITY_VENDORS.indexOf(b.vendor);
+    if(ai!==bi)return (ai<0?PRIORITY_VENDORS.length:ai)-(bi<0?PRIORITY_VENDORS.length:bi);
     const k=metric==="amount"?"deliveryAmount":"deliveryCount";
     return b[k]-a[k]||a.label.localeCompare(b.label,"ko-KR");
   }),[vendorStats,metric]);
@@ -238,7 +241,6 @@ export default function CompetitiveAnalysisPage(){
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
   const pricedDeliveryCount=verifiedDeliveries.filter(r=>r.amount!=null).length;
   const maxVendorAmount=Math.max(0,...ranking.map(r=>r.deliveryAmount));
-  const maxVendorCount=Math.max(0,...ranking.map(r=>r.deliveryCount));
   const noData=ready.award&&ready.delivery&&!verifiedAwards.length&&!verifiedDeliveries.length;
   const directVisible=directAwards.filter(r=>inYear(r.award_date,year)&&
     (vendor==="전체"||r.competitor===vendor)&&
@@ -289,31 +291,38 @@ export default function CompetitiveAnalysisPage(){
       </div>}
 
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 dark:border-white/10">
-          <div><h2 className="text-lg font-bold text-slate-900 dark:text-white">경쟁 제조사별 조달 공급 실적</h2>
-            <p className="mt-1 text-sm text-slate-500">제조사 확인 제품 기준 · 직접 공급과 파트너·총판 등 타사 공급업체를 합산</p></div>
-          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-white/10">
+          <div><h2 className="text-xl font-bold text-slate-900 dark:text-white">제조사별 조달 공급 현황</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">우선 비교 제조사 상단 고정 · 동일 기간·필터 적용 · 나라장터 납품요구 상세 기준</p></div>
+          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10" aria-label="그 외 제조사 정렬">
             <button type="button" onClick={()=>setMetric("amount")} aria-pressed={metric==="amount"} className={"rounded-md px-3 py-1.5 text-sm font-semibold "+(metric==="amount"?"bg-blue-600 text-white":"text-slate-500")}>금액순</button>
             <button type="button" onClick={()=>setMetric("count")} aria-pressed={metric==="count"} className={"rounded-md px-3 py-1.5 text-sm font-semibold "+(metric==="count"?"bg-blue-600 text-white":"text-slate-500")}>건수순</button>
           </div>
         </div>
-        <div className="divide-y divide-slate-100 px-5 dark:divide-white/10">
-          {ranking.map(row=><div key={row.vendor} className="grid gap-3 py-4 lg:grid-cols-[220px_1fr_1fr] lg:items-center lg:gap-6">
-            <div><button type="button" onClick={()=>setVendor(row.vendor)} className="text-left text-base font-bold text-slate-900 hover:text-blue-600 hover:underline dark:text-slate-100">{row.label}</button>
-              <p className="mt-0.5 text-sm text-slate-500">{row.products} · 납품업체 {row.supplierCount}곳</p></div>
-            <div><div className="mb-2 flex items-baseline justify-between gap-2"><span className="text-sm text-slate-500">조달 건수</span><strong className="text-xl tabular-nums text-slate-900 dark:text-white">{row.deliveryCount.toLocaleString("ko-KR")}건</strong></div>
-              <div className="h-3 rounded-full bg-slate-100 dark:bg-slate-800" role="img" aria-label={`${row.label} 주문 ${row.deliveryCount}건`}><div className="h-full rounded-full bg-cyan-500" style={{width:`${maxVendorCount?100*row.deliveryCount/maxVendorCount:0}%`}}/></div></div>
-            <div><div className="mb-2 flex flex-wrap items-baseline justify-between gap-2"><span className="text-sm text-slate-500">조달 공급금액</span><strong className="text-xl tabular-nums text-blue-700 dark:text-blue-300">{row.pricedCount?fmtCompact(row.deliveryAmount):"금액 미확인"}</strong></div>
-              <div className="h-3 rounded-full bg-slate-100 dark:bg-slate-800" role="img" aria-label={`${row.label} 조달 공급금액 ${row.pricedCount?fmtWon(row.deliveryAmount):"미확인"}`}><div className="h-full rounded-full bg-blue-600" style={{width:`${maxVendorAmount?100*row.deliveryAmount/maxVendorAmount:0}%`}}/></div>
-              <p className="mt-1.5 text-right text-sm tabular-nums text-slate-600 dark:text-slate-300">{row.pricedCount?`${fmtWon(row.deliveryAmount)} · ${row.pricedCount}/${row.deliveryCount}건 금액 확인`:"금액 확인 자료 없음"}</p>
-              <div className="mt-3 grid gap-1 rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-800/60">
-                <p className="flex justify-between gap-3"><span>제조사 직접 공급 <span className="tabular-nums">{row.directCount}건</span></span><strong className="tabular-nums">{fmtWon(row.directAmount)}</strong></p>
-                <p className="flex justify-between gap-3"><span>제조사 외 공급업체 <span className="tabular-nums">{row.otherCount}건</span></span><strong className="tabular-nums">{fmtWon(row.otherAmount)}</strong></p>
-                {row.unidentifiedCount>0&&<p className="flex justify-between gap-3 text-amber-700 dark:text-amber-300"><span>공급경로 미확인 {row.unidentifiedCount}건</span><strong className="tabular-nums">{fmtWon(row.unidentifiedAmount)}</strong></p>}
-              </div></div>
-          </div>)}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1050px] table-fixed border-collapse text-base">
+            <colgroup><col className="w-[22%]"/><col className="w-[12%]"/><col className="w-[27%]"/><col className="w-[13%]"/><col className="w-[13%]"/><col className="w-[13%]"/></colgroup>
+            <thead className="bg-slate-100 text-sm font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr>
+              <th scope="col" className="px-5 py-3 text-left">제조사 / 제품</th>
+              <th scope="col" className="px-4 py-3 text-right">조달 건수</th>
+              <th scope="col" className="px-4 py-3 text-left">조달 공급금액</th>
+              <th scope="col" className="px-4 py-3 text-right">제조사 직접</th>
+              <th scope="col" className="px-4 py-3 text-right">타 공급업체</th>
+              <th scope="col" className="px-4 py-3 text-right">경로 미확인</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-200 dark:divide-white/10">{ranking.map((row,index)=><tr key={row.vendor} className={index<PRIORITY_VENDORS.length?"bg-blue-50/40 dark:bg-blue-950/20":""}>
+              <th scope="row" className="px-5 py-4 text-left align-middle"><button type="button" onClick={()=>setVendor(row.vendor)} className="text-lg font-bold text-slate-900 hover:text-blue-600 hover:underline dark:text-white">{row.label}</button><p className="mt-1 break-words text-sm font-normal text-slate-600 dark:text-slate-300">{row.products}</p></th>
+              <td className="px-4 py-4 text-right align-middle text-xl font-bold tabular-nums text-slate-900 dark:text-white">{row.deliveryCount.toLocaleString("ko-KR")}건</td>
+              <td className="px-4 py-4 align-middle"><div className="flex items-baseline justify-between gap-2"><strong className="text-xl tabular-nums text-blue-700 dark:text-blue-300">{row.pricedCount?fmtCompact(row.deliveryAmount):"금액 미확인"}</strong></div>
+                <div className="mt-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" role="img" aria-label={`${row.label} 금액 비중 ${maxVendorAmount?Math.round(100*row.deliveryAmount/maxVendorAmount):0}%`}><div className="h-full rounded-full bg-blue-600" style={{width:`${maxVendorAmount?100*row.deliveryAmount/maxVendorAmount:0}%`}}/></div>
+                <p className="mt-1 break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{row.pricedCount?fmtWon(row.deliveryAmount):"-"} · 금액 확인 {row.pricedCount}/{row.deliveryCount}건</p></td>
+              <td className="px-4 py-4 text-right align-middle"><strong className="block tabular-nums">{row.directCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.directAmount)}</span></td>
+              <td className="px-4 py-4 text-right align-middle"><strong className="block tabular-nums">{row.otherCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.otherAmount)}</span></td>
+              <td className="px-4 py-4 text-right align-middle"><strong className="block tabular-nums">{row.unidentifiedCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.unidentifiedAmount)}</span></td>
+            </tr>)}</tbody>
+          </table>
         </div>
-        <p className="border-t border-slate-100 px-5 py-3 text-sm text-slate-500 dark:border-white/10">조달 공급금액은 나라장터 구매요구 기록의 합계입니다. 실제 납품 완료액이나 경쟁사의 확정 매출액으로 해석할 수 없습니다.</p>
+        <p className="border-t border-slate-200 px-5 py-3 text-sm leading-relaxed text-slate-600 dark:border-white/10 dark:text-slate-300">금액은 나라장터 납품요구액이며 회계상 확정 매출이 아닙니다. ‘타 공급업체’는 공급업체 사업자번호가 제조사와 다른 건으로, 파트너·총판 여부는 확인되지 않았습니다. ‘경로 미확인’은 제조사 사업자번호 또는 공급업체 사업자번호 확인이 불가능한 건입니다. 별도 입찰사업 수주 금액은 이 표에 합산하지 않습니다.</p>
       </section>
 
       <section className="mb-5 rounded-xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900/70">
