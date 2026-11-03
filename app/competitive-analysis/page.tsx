@@ -25,6 +25,7 @@ type Source = "award" | "delivery";
 type Direction = "asc" | "desc";
 type SortState = {key:string;direction:Direction};
 type Metric = "amount" | "count";
+type SupplyGroup = "all" | "direct" | "other" | "unidentified";
 const PRIORITY_VENDORS: readonly VendorId[] = ["오케스트로", "이노그리드", "에이블클라우드", "Nutanix", "VMware"];
 const TYPE_LABELS:Record<string,string>={
   server_virtualization:"서버 가상화",hci:"HCI",vdi:"VDI",
@@ -107,6 +108,13 @@ export default function CompetitiveAnalysisPage(){
   const [awardPage,setAwardPage]=useState(1);
   const [deliveryPage,setDeliveryPage]=useState(1);
   const [pageSize,setPageSize]=useState(30);
+  const [drilldown,setDrilldown]=useState<{vendor:VendorId;group:SupplyGroup}|null>(null);
+  useEffect(()=>{
+    if(!drilldown)return;
+    const onKey=(event:KeyboardEvent)=>{if(event.key==="Escape")setDrilldown(null);};
+    document.addEventListener("keydown",onKey);
+    return ()=>document.removeEventListener("keydown",onKey);
+  },[drilldown]);
 
   useEffect(()=>{
     let cancelled=false;
@@ -239,6 +247,15 @@ export default function CompetitiveAnalysisPage(){
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
   const pricedDeliveryCount=verifiedDeliveries.filter(r=>r.amount!=null).length;
   const maxVendorAmount=Math.max(0,...ranking.map(r=>r.deliveryAmount));
+  const drilldownRows=drilldown?verifiedDeliveries.filter(r=>{
+    if(vendorFromDelivery(r)?.vendor!==drilldown.vendor)return false;
+    if(drilldown.group==="all")return true;
+    const identified=Boolean(r.supplier_business_no)&&hasConfirmedVendorBusinessNo(drilldown.vendor);
+    if(drilldown.group==="unidentified")return !identified;
+    const direct=isDirectVendorSupply(drilldown.vendor,r.supplier_business_no);
+    return identified&&(drilldown.group==="direct"?direct:!direct);
+  }).sort((a,b)=>String(b.receipt_date).localeCompare(String(a.receipt_date))):[];
+  const drilldownTitle=drilldown?`${drilldown.vendor} · ${{all:"전체 조달 공급",direct:"제조사 직접 공급",other:"타 공급업체 공급",unidentified:"공급경로 미확인"}[drilldown.group]}`:"";
   const noData=ready.award&&ready.delivery&&!verifiedAwards.length&&!verifiedDeliveries.length;
   const directVisible=directAwards.filter(r=>inYear(r.award_date,year)&&
     (vendor==="전체"||r.competitor===vendor)&&
@@ -328,13 +345,13 @@ export default function CompetitiveAnalysisPage(){
             </tr></thead>
             <tbody className="divide-y divide-slate-200 dark:divide-white/10">{ranking.map((row,index)=><tr key={row.vendor} className={index<PRIORITY_VENDORS.length?"bg-blue-50/40 dark:bg-blue-950/20":""}>
               <th scope="row" className="px-5 py-4 text-left align-middle"><button type="button" onClick={()=>setVendor(row.vendor)} className="text-lg font-bold text-slate-900 hover:text-blue-600 hover:underline dark:text-white">{row.label}</button><p className="mt-1 break-words text-sm font-normal text-slate-600 dark:text-slate-300">{row.products}</p></th>
-              <td className="px-4 py-4 text-right align-middle text-xl font-bold tabular-nums text-slate-900 dark:text-white">{row.deliveryCount.toLocaleString("ko-KR")}건</td>
-              <td className="px-4 py-4 align-middle"><div className="flex items-baseline justify-between gap-2"><strong className="text-xl tabular-nums text-blue-700 dark:text-blue-300">{row.pricedCount?fmtCompact(row.deliveryAmount):"금액 미확인"}</strong></div>
+              <td className="px-4 py-4 text-right align-middle text-xl font-bold tabular-nums text-slate-900 dark:text-white"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"all"})} aria-label={`${row.label} 조달 ${row.deliveryCount}건 상세`} className="rounded hover:text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500">{row.deliveryCount.toLocaleString("ko-KR")}건</button></td>
+              <td className="px-4 py-4 align-middle"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"all"})} aria-label={`${row.label} 조달 공급금액 상세`} className="block w-full rounded text-left hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"><strong className="text-xl tabular-nums text-blue-700 dark:text-blue-300">{row.pricedCount?fmtCompact(row.deliveryAmount):"금액 미확인"}</strong>
                 <div className="mt-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" role="img" aria-label={`${row.label} 금액 비중 ${maxVendorAmount?Math.round(100*row.deliveryAmount/maxVendorAmount):0}%`}><div className="h-full rounded-full bg-blue-600" style={{width:`${maxVendorAmount?100*row.deliveryAmount/maxVendorAmount:0}%`}}/></div>
-                <p className="mt-1 break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{row.pricedCount?fmtWon(row.deliveryAmount):"-"} · 금액 확인 {row.pricedCount}/{row.deliveryCount}건</p></td>
-              <td className="px-4 py-4 text-right align-middle"><strong className="block tabular-nums">{row.directCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.directAmount)}</span></td>
-              <td className="px-4 py-4 text-right align-middle"><strong className="block tabular-nums">{row.otherCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.otherAmount)}</span></td>
-              <td className="px-4 py-4 text-right align-middle"><strong className="block tabular-nums">{row.unidentifiedCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.unidentifiedAmount)}</span></td>
+                <span className="mt-1 block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{row.pricedCount?fmtWon(row.deliveryAmount):"-"} · 금액 확인 {row.pricedCount}/{row.deliveryCount}건</span></button></td>
+              <td className="px-4 py-4 text-right align-middle"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"direct"})} aria-label={`${row.label} 제조사 직접 공급 상세`} className="rounded hover:text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"><strong className="block tabular-nums">{row.directCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.directAmount)}</span></button></td>
+              <td className="px-4 py-4 text-right align-middle"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"other"})} aria-label={`${row.label} 타 공급업체 상세`} className="rounded hover:text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"><strong className="block tabular-nums">{row.otherCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.otherAmount)}</span></button></td>
+              <td className="px-4 py-4 text-right align-middle"><button type="button" onClick={()=>setDrilldown({vendor:row.vendor,group:"unidentified"})} aria-label={`${row.label} 공급경로 미확인 상세`} className="rounded hover:text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"><strong className="block tabular-nums">{row.unidentifiedCount}건</strong><span className="block break-words text-sm tabular-nums text-slate-600 dark:text-slate-300">{fmtCompact(row.unidentifiedAmount)}</span></button></td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -484,6 +501,23 @@ export default function CompetitiveAnalysisPage(){
       </details>
       {noData&&<p className="mt-3 text-sm text-slate-500">현재 조건에 일치하는 벤더 확인 실적이 없습니다. 조건을 초기화해 주세요.</p>}
     </div>
+    {drilldown&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-3 sm:p-6" onMouseDown={e=>{if(e.target===e.currentTarget)setDrilldown(null);}}>
+      <section role="dialog" aria-modal="true" aria-labelledby="drilldown-title" className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-slate-900">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 dark:border-white/10">
+          <div><h2 id="drilldown-title" className="text-xl font-bold text-slate-900 dark:text-white">{drilldownTitle}</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{year==="전체"?"전체 기간":year+"년"} · {drilldownRows.length.toLocaleString("ko-KR")}건 · 금액 확인 {drilldownRows.filter(r=>r.amount!=null).length}건 · {fmtWon(drilldownRows.reduce((sum,r)=>sum+money(r.amount),0))}</p></div>
+          <button type="button" onClick={()=>setDrilldown(null)} aria-label="상세 닫기" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold hover:bg-slate-100 dark:border-white/20 dark:hover:bg-white/10">닫기 ✕</button>
+        </div>
+        <div className="overflow-auto"><table className="w-full min-w-[920px] text-sm">
+          <thead className="sticky top-0 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"><tr><th className="p-3 text-left">요구일</th><th className="p-3 text-left">제품 / 납품요구번호</th><th className="p-3 text-left">공급업체</th><th className="p-3 text-left">수요기관</th><th className="p-3 text-right">금액</th></tr></thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-white/10">{drilldownRows.map(r=><tr key={r.external_key} className="hover:bg-slate-50 dark:hover:bg-white/5">
+            <td className="whitespace-nowrap p-3">{dateText(r.receipt_date)}</td>
+            <td className="min-w-[290px] p-3"><Link href={detail("delivery",r.external_key)} className="font-semibold text-blue-700 hover:underline dark:text-blue-300">{r.product_name}</Link><span className="mt-1 block text-slate-500">{r.delivery_request_no}</span></td>
+            <td className="p-3">{r.supplier_name??"-"}</td><td className="p-3">{r.customer_name??"-"}</td><td className="whitespace-nowrap p-3 text-right font-semibold tabular-nums">{fmtWon(r.amount)}</td>
+          </tr>)}{!drilldownRows.length&&<tr><td colSpan={5} className="p-8 text-center text-slate-500">현재 조건에 해당하는 내역이 없습니다.</td></tr>}</tbody>
+        </table></div>
+      </section>
+    </div>}
   </div>;
 }
 
