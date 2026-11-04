@@ -66,6 +66,18 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    href: "/recent-awards",
+    label: "최근 낙찰",
+    description: "가상화·HCI 낙찰업체",
+    scope: "all",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M4 20h16M7 16V9m5 7V4m5 12v-5" />
+        <path d="m17 7 2 2 3-3" />
+      </svg>
+    ),
+  },
+  {
     href: "/competitive-analysis",
     label: "수주 이력·경쟁분석",
     description: "경쟁사 수주·SI 협업 분석",

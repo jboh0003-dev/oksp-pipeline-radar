@@ -35,6 +35,18 @@
     {
       "path": "/api/cron/collect-g2b-range/36-40",
       "schedule": "40 0 * * *"
+    },
+    {
+      "path": "/api/cron/recent-awards/0",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/recent-awards/1",
+      "schedule": "10 1 * * *"
+    },
+    {
+      "path": "/api/cron/recent-awards/2",
+      "schedule": "20 1 * * *"
     }
   ]
 }

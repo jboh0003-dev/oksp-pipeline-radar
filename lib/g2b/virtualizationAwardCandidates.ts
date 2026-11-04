@@ -1,13 +1,14 @@
 import { buildG2bUrl, fetchG2bApi } from "@/lib/g2b/client";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { kstTodayYmd } from "@/lib/g2b/competitiveAwards";
+import { isRecentAward } from "@/lib/competitive/recentAwardFilter";
 
 const BASE = "https://apis.data.go.kr/1230000/as/ScsbidInfoService";
 const SOURCE_URL = "https://www.data.go.kr/data/15129397/openapi.do";
 // One-off historical extraction uses small per-vendor batches, never daily polling.
 // Product keywords identify the virtualization manufacturer even when an SI wins.
 export const VIRTUALIZATION_BID_KEYWORD_GROUPS = {
-  core: ["가상화", "HCI", "에이블스택", "클라우드잇", "Openstackit", "VMware"],
+  core: ["가상화", "HCI", "하이퍼바이저", "CONTRABASS", "VIOLA", "에이블스택", "클라우드잇", "Openstackit", "VMware"],
   nutanix: ["Nutanix", "뉴타닉스", "AHV"],
   vmware: ["vSphere", "ESXi", "vSAN", "VMware"],
   redhat: ["OpenShift Virtualization", "Red Hat Virtualization", "오픈시프트 가상화"],
@@ -68,7 +69,7 @@ function classify(title: string): Classification {
     return "vdi";
   }
   if (/(\bhci\b|하이퍼.?컨버|hyper.?converg|에이블스택|ablestack)/i.test(title)) return "hci";
-  if (/(서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit|nutanix|뉴타닉스|\bAHV\b|\bNCI\b|proxmox|프록스목스|openshift.{0,16}virtualization|red\s*hat.{0,16}virtualization)/i.test(title)) {
+  if (/(contrabass|콘트라베이스|\bviola\b|비올라|서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit|nutanix|뉴타닉스|\bAHV\b|\bNCI\b|proxmox|프록스목스|openshift.{0,16}virtualization|red\s*hat.{0,16}virtualization)/i.test(title)) {
     return "server_virtualization";
   }
   if (/가상화|virtuali[sz]/i.test(title)) return "virtualization_other";
@@ -131,7 +132,7 @@ async function fetchTask(task: Task, start: string, end: string, key: string): P
   }
   return {rows:collected,fetched,requestCount,excluded};
 }
-export async function collectVirtualizationAwardCandidatesMonth(year: number, month: number, persist: boolean, group: VendorKeywordGroup = "core") {
+export async function collectVirtualizationAwardCandidatesMonth(year: number, month: number, persist: boolean, group: VendorKeywordGroup = "core", strict = false) {
   if (year < 2024 || year > Number(kstTodayYmd().slice(0,4)) || !Number.isInteger(month) || month < 1 || month > 12)
     throw new Error("2024년 이후 현재까지의 월이 필요합니다.");
   const key = process.env.G2B_SERVICE_KEY?.trim();
@@ -176,7 +177,7 @@ export async function collectVirtualizationAwardCandidatesMonth(year: number, mo
       if (!previous.product_brand && row.product_brand) previous.product_brand = row.product_brand;
     }
   }
-  const rows = [...deduped.values()];
+  const rows = [...deduped.values()].filter(row => !strict || isRecentAward(row, kstTodayYmd()));
   let inserted = 0, updated = 0;
   if (persist && errors.length === 0 && rows.length) {
     const db = getSupabaseAdmin();

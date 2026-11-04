@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ok:false,error:"지원되지 않는 벤더 검색그룹입니다."},{status:400});
     }
     const result = await collectVirtualizationAwardCandidatesMonth(
-      Number(body.year),Number(body.month),body.persist===true,group as VendorKeywordGroup
+      Number(body.year),Number(body.month),body.persist===true,group as VendorKeywordGroup,body.strict===true
     );
     return NextResponse.json(result,{status:result.ok?200:502,headers:{"Cache-Control":"no-store"}});
   } catch(error) {
