@@ -25,5 +25,27 @@ export async function GET() {
     const key = [row.bid_no, row.bid_ord || "000", row.winner_business_no].join(":");
     if (!unique.has(key)) unique.set(key, { ...row, amount: Number(row.amount) });
   }
-  return NextResponse.json({ ok: true, rows: [...unique.values()], asOf: today }, { headers: { "Cache-Control": "no-store" } });
+  const directRows: Record<string, unknown>[] = [];
+  for (let offset = 0; offset < 10000; offset += 500) {
+    const { data, error } = await db.from("competitive_awards")
+      .select("external_key,bid_no,bid_ord,award_date,winner_name,winner_business_no,project,customer,amount,category,competitor,updated_at")
+      .eq("source_type", "g2b_award")
+      .eq("match_type", "company")
+      .gte("award_date", "2024-01-01").lte("award_date", today)
+      .order("award_date", { ascending: false }).range(offset, offset + 499);
+    if (error) return NextResponse.json({ ok: false, error: "업체 낙찰 자료 조회 실패" }, { status: 503 });
+    directRows.push(...(data ?? []));
+    if ((data?.length ?? 0) < 500) break;
+    if (offset === 9500) return NextResponse.json({ ok: false, error: "업체 낙찰 조회 한도 초과" }, { status: 422 });
+  }
+  const directUnique = new Map<string, Record<string, unknown>>();
+  for (const row of directRows) {
+    const amount = Number(row.amount);
+    if (!row.award_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(row.award_date)) || !row.winner_name ||
+        !row.winner_business_no || !row.project || !row.customer || row.customer === "각 수요기관" ||
+        !Number.isSafeInteger(amount) || amount <= 0) continue;
+    const key = [row.bid_no, row.bid_ord || "000", row.winner_business_no].join(":");
+    if (!directUnique.has(key)) directUnique.set(key, { ...row, amount, classification: "direct_other", product_brand: null });
+  }
+  return NextResponse.json({ ok: true, rows: [...unique.values()], directRows: [...directUnique.values()], asOf: today }, { headers: { "Cache-Control": "no-store" } });
 }

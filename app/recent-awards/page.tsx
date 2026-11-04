@@ -6,7 +6,8 @@ import { authedFetch } from "@/lib/authedFetch";
 import { useAuth } from "@/lib/auth";
 import type { RecentAward } from "@/lib/competitive/recentAwardFilter";
 
-type ViewRow = RecentAward & { updated_at: string };
+type ViewRow = RecentAward & { updated_at: string; source?: "direct" };
+const category = (row: ViewRow) => row.source === "direct" ? "업체 직접 낙찰 · 제품 미확인" : row.classification === "hci" ? "HCI" : "서버 가상화";
 const won = (amount: number) => amount.toLocaleString("ko-KR") + "원";
 const compact = (amount: number) => amount >= 1e8
   ? (amount / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "억 원"
@@ -16,6 +17,7 @@ const pill = "rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold
 
 export default function RecentAwardsPage() {
   const [rows, setRows] = useState<ViewRow[]>([]);
+  const [directRows, setDirectRows] = useState<ViewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [range, setRange] = useState<number | "all">("all");
@@ -31,19 +33,28 @@ export default function RecentAwardsPage() {
     const controller = new AbortController();
     fetch("/api/recent-awards", { cache: "no-store", signal: controller.signal })
       .then(async response => { const body = await response.json(); if (!response.ok || !body.ok) throw new Error(body.error || "조회 실패"); return body; })
-      .then(body => { setRows(body.rows); setError(""); })
+      .then(body => { setRows(body.rows); setDirectRows(body.directRows.map((row: ViewRow) => ({ ...row, source: "direct" }))); setError(""); })
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "조회 실패"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [reload]);
 
+  const searchRows = useMemo(() => {
+    if (!search.trim()) return rows;
+    const found = new Map<string, ViewRow>();
+    for (const row of [...rows, ...directRows]) {
+      const key = [row.bid_no, row.bid_ord || "000", row.winner_business_no].join(":");
+      if (!found.has(key)) found.set(key, row);
+    }
+    return [...found.values()].sort((a, b) => b.award_date.localeCompare(a.award_date) || b.bid_no.localeCompare(a.bid_no));
+  }, [rows, directRows, search]);
   const base = useMemo(() => {
-    if (range === "all") return rows;
+    if (range === "all") return searchRows;
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     const cutoff = new Date(`${today}T00:00:00Z`);
     cutoff.setUTCDate(cutoff.getUTCDate() - range);
-    return rows.filter(row => row.award_date >= cutoff.toISOString().slice(0, 10));
-  }, [rows, range]);
+    return searchRows.filter(row => row.award_date >= cutoff.toISOString().slice(0, 10));
+  }, [searchRows, range]);
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
     return base.filter(row => (!winner || row.winner_business_no === winner)
@@ -94,7 +105,7 @@ export default function RecentAwardsPage() {
 
   function download() {
     const header = ["낙찰일", "공고번호", "사업명", "낙찰업체", "사업자번호", "수요기관", "분류", "사업 전체 낙찰금액(원)", "공고명에 확인된 제조사"];
-    const lines = [header, ...filtered.map(row => [row.award_date, row.bid_no, row.project, row.winner_name, row.winner_business_no, row.customer, row.classification === "hci" ? "HCI" : "서버 가상화", row.amount, row.product_brand ?? "미확인"])];
+    const lines = [header, ...filtered.map(row => [row.award_date, row.bid_no, row.project, row.winner_name, row.winner_business_no, row.customer, category(row), row.amount, row.product_brand ?? "미확인"])];
     const csv = "\uFEFF" + lines.map(line => line.map(value => {
       const raw = String(value ?? "");
       const safe = /^[=+\-@\t\r]/.test(raw) ? "'" + raw : raw;
@@ -122,20 +133,21 @@ export default function RecentAwardsPage() {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
         <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "전체" : `${day}일`}</button>)}</div>
-        <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
-        <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option></select>
+        <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색 (업체 전체 직접 낙찰 포함)" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
+        <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="direct_other">업체 직접 낙찰</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
       </div>
+      {search.trim() && filtered.some(row => row.source === "direct") && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">업체 직접 낙찰에는 가상화 제품 공급 여부를 확인할 수 없는 사업도 포함됩니다. 쇼핑몰 납품요구는 <Link href="/competitive-analysis" className="font-bold underline">수주 이력·경쟁분석</Link>에서 확인할 수 있습니다.</p>}
       {notice && <p role="status" className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{notice}</p>}
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]">
         <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#101f36]">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? "전체 기간" : `최근 ${range}일`} · 전체 {rows.length}건</span></div>
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? "전체 기간" : `최근 ${range}일`} · 가상화·HCI 전체 {rows.length}건</span></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[800px] table-fixed text-left text-sm"><colgroup><col className="w-[90px]"/><col/><col className="w-[145px]"/><col className="w-[125px]"/><col className="w-[130px]"/></colgroup>
             <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-white/5"><tr><th className="p-3">낙찰일</th><th className="p-3">사업명</th><th className="p-3">낙찰업체</th><th className="p-3">수요기관</th><th className="p-3 text-right">전체 낙찰금액</th></tr></thead>
             <tbody>{filtered.map(row => <tr key={row.external_key} className="border-t border-slate-100 align-top dark:border-white/10">
               <td className="p-3 tabular-nums text-slate-500">{row.award_date.slice(2).replaceAll("-", ".")}</td>
-              <td className="p-3"><Link href={`/competitive-analysis/detail?kind=award&key=${encodeURIComponent(row.external_key)}&from=recent`} className="font-semibold leading-5 hover:text-blue-600 hover:underline dark:hover:text-cyan-300">{row.project}</Link><div className="mt-1 text-xs text-slate-500">{row.classification === "hci" ? "HCI" : "서버 가상화"}{row.product_brand && ` · 공고명: ${row.product_brand}`}</div></td>
+              <td className="p-3"><Link href={`/competitive-analysis/detail?kind=${row.source === "direct" ? "direct" : "award"}&key=${encodeURIComponent(row.external_key)}&from=recent`} className="font-semibold leading-5 hover:text-blue-600 hover:underline dark:hover:text-cyan-300">{row.project}</Link><div className="mt-1 text-xs text-slate-500">{category(row)}{row.product_brand && ` · 공고명: ${row.product_brand}`}</div></td>
               <td className="p-3 font-semibold">{row.winner_name}</td><td className="p-3 text-slate-600 dark:text-slate-300">{row.customer}</td>
               <td className="p-3 text-right font-bold tabular-nums text-blue-600 dark:text-cyan-200" title={won(row.amount)}>{compact(row.amount)}</td>
             </tr>)}</tbody></table></div>
