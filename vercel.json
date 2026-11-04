@@ -47,6 +47,22 @@
     {
       "path": "/api/cron/recent-awards/2",
       "schedule": "20 1 * * *"
+    },
+    {
+      "path": "/api/cron/collect-competitive-awards",
+      "schedule": "30 1 * * *"
+    },
+    {
+      "path": "/api/cron/recent-deliveries/0",
+      "schedule": "40 1 * * *"
+    },
+    {
+      "path": "/api/cron/recent-deliveries/1",
+      "schedule": "50 1 * * *"
+    },
+    {
+      "path": "/api/cron/recent-deliveries/2",
+      "schedule": "0 2 * * *"
     }
   ]
 }
