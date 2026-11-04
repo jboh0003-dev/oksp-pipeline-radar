@@ -23,7 +23,7 @@ export async function GET() {
   for (const row of rows) {
     if (!isRecentAward(row, today)) continue;
     const key = [row.bid_no, row.bid_ord || "000", row.winner_business_no].join(":");
-    if (!unique.has(key)) unique.set(key, row);
+    if (!unique.has(key)) unique.set(key, { ...row, amount: Number(row.amount) });
   }
   return NextResponse.json({ ok: true, rows: [...unique.values()], asOf: today }, { headers: { "Cache-Control": "no-store" } });
 }
