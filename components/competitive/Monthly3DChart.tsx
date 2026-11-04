@@ -3,6 +3,10 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
+const compactAmount = (value: number) => value >= 1e8
+  ? `${(value / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억`
+  : value >= 1e4 ? `${Math.round(value / 1e4).toLocaleString("ko-KR")}만` : `${value.toLocaleString("ko-KR")}원`;
+
 export type ChartMonth = { key: string; amount: number; count: number };
 
 export default function Monthly3DChart({ months, selectedMonth, onMonth }: {
@@ -47,6 +51,10 @@ export default function Monthly3DChart({ months, selectedMonth, onMonth }: {
     scene.add(floor);
     const max = Math.max(1, ...months.map(month => month.amount));
     const bars: THREE.Mesh[] = [];
+    const labels = document.createElement("div");
+    labels.className = "pointer-events-none absolute inset-0";
+    host.appendChild(labels);
+    camera.updateMatrixWorld();
     const geometry = new THREE.BoxGeometry(.5, 1, .5);
     months.forEach((month, index) => {
       if (!month.amount) return;
@@ -60,6 +68,14 @@ export default function Monthly3DChart({ months, selectedMonth, onMonth }: {
       bar.userData.month = month.key;
       scene.add(bar);
       bars.push(bar);
+      const top = new THREE.Vector3(bar.position.x, h, 0).project(camera);
+      const label = document.createElement("span");
+      label.textContent = compactAmount(month.amount);
+      label.title = `${month.amount.toLocaleString("ko-KR")}원`;
+      label.className = "absolute -translate-x-1/2 -translate-y-full whitespace-nowrap text-[11px] font-bold tabular-nums text-cyan-100";
+      label.style.left = `${(top.x + 1) * width / 2}px`;
+      label.style.top = `${Math.max(16, (1 - top.y) * height / 2 - 10)}px`;
+      labels.appendChild(label);
     });
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -78,6 +94,7 @@ export default function Monthly3DChart({ months, selectedMonth, onMonth }: {
       renderer.domElement.removeEventListener("pointermove", move);
       renderer.domElement.removeEventListener("pointerup", click);
       host.removeChild(renderer.domElement);
+      host.removeChild(labels);
       bars.forEach(bar => (bar.material as THREE.Material).dispose());
       geometry.dispose();
       floor.geometry.dispose();
@@ -86,5 +103,5 @@ export default function Monthly3DChart({ months, selectedMonth, onMonth }: {
     };
   }, [months, selectedMonth, onMonth]);
 
-  return <div ref={mount} className="monthly-3d-canvas h-[215px]" aria-hidden="true" />;
+  return <div ref={mount} className="monthly-3d-canvas relative h-[215px]" aria-hidden="true" />;
 }

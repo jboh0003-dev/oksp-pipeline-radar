@@ -57,11 +57,6 @@ export default function VendorInsight({ rows, year, selectedMonth, onMonth }: {
     </div>
     <div className="overflow-x-auto pb-4">
       <div className="relative min-w-max rounded-xl border border-white/10 bg-gradient-to-b from-[#0b2343] to-[#071529] px-2 pt-4" style={{ width: Math.max(700, months.length * 84 + 16) }}>
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${months.length}, 84px)` }}>
-          {months.map(month => <div key={month.key} className="truncate px-1 text-center text-[11px] font-semibold tabular-nums text-cyan-100" title={`${month.amount.toLocaleString("ko-KR")}원`}>
-            {month.amount ? compact(month.amount) : ""}
-          </div>)}
-        </div>
         <Monthly3DChart months={months} selectedMonth={selectedMonth} onMonth={onMonth} />
         <div className="grid border-t border-white/10 pb-3 pt-2" style={{ gridTemplateColumns: `repeat(${months.length}, 84px)` }} role="group" aria-label="월별 조달 공급금액과 건수">
           {months.map(month => {
