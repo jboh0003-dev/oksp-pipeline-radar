@@ -66,7 +66,7 @@ export default function RecentAwardsPage() {
       const key = monthKey(row.award_date), old = map.get(key);
       map.set(key, { count: (old?.count ?? 0) + 1, amount: (old?.amount ?? 0) + row.amount });
     }
-    return [...map].sort(([a], [b]) => a.localeCompare(b));
+    return [...map].sort(([a], [b]) => b.localeCompare(a));
   }, [filtered]);
   const largest = Math.max(1, ...vendorStats.map(v => v.amount));
   const monthlyMax = Math.max(1, ...monthly.map(([, v]) => v.amount));
