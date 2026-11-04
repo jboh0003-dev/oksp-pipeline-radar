@@ -35,7 +35,10 @@ export default function RecentAwardsPage() {
   useEffect(() => {
     const requestedYear = new URLSearchParams(window.location.search).get("year");
     if (requestedYear && ["2024", "2025", "2026"].includes(requestedYear)) {
-      const timer = window.setTimeout(() => (setStartYear(requestedYear), setEndYear(requestedYear)), 0);
+      const timer = window.setTimeout(() => {
+        setStartYear(requestedYear);
+        setEndYear(requestedYear);
+      }, 0);
       return () => window.clearTimeout(timer);
     }
   }, []);
@@ -66,25 +69,28 @@ export default function RecentAwardsPage() {
     return searchRows.filter(row => row.award_date >= cutoff.toISOString().slice(0, 10));
   }, [searchRows, range]);
   const periodRows = useMemo(() => base.filter(row => row.award_date.slice(0, 4) >= startYear && row.award_date.slice(0, 4) <= endYear), [base, startYear, endYear]);
-  const filtered = useMemo(() => {
+  const matchingRows = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
-    return periodRows.filter(row => true
-      && (!winner || row.winner_business_no === winner)
-      && (kind === "전체" || row.classification === kind)
+    return periodRows.filter(row =>
+      (kind === "전체" || row.classification === kind)
       && (!term || [row.project, row.winner_name, row.customer, row.bid_no, row.product_brand]
         .join(" ").toLocaleLowerCase().includes(term)));
-  }, [periodRows, winner, kind, search]);
+  }, [periodRows, kind, search]);
+  const filtered = useMemo(() =>
+    winner ? matchingRows.filter(row => row.winner_business_no === winner) : matchingRows
+  , [matchingRows, winner]);
   const samePeriodAwards = periodRows.filter(row => row.source !== "direct");
   const attributedAwards = samePeriodAwards.filter(row => vendorFromAward(row) != null).length;
   const total = filtered.reduce((sum, row) => sum + row.amount, 0);
+  const filteredVendorCount = new Set(filtered.map(row => row.winner_business_no)).size;
   const vendorStats = useMemo(() => {
     const map = new Map<string, { no: string; name: string; count: number; amount: number }>();
-    for (const row of periodRows.filter(row => (kind === "전체" || row.classification === kind) && (!search.trim() || [row.project, row.winner_name, row.customer, row.bid_no, row.product_brand].join(" ").toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())))) {
+    for (const row of matchingRows) {
       const old = map.get(row.winner_business_no);
       map.set(row.winner_business_no, { no: row.winner_business_no, name: row.winner_name, count: (old?.count ?? 0) + 1, amount: (old?.amount ?? 0) + row.amount });
     }
     return [...map.values()].sort((a, b) => b.amount - a.amount);
-  }, [periodRows, kind, search]);
+  }, [matchingRows]);
   const monthly = useMemo(() => {
     const map = new Map<string, { count: number; amount: number }>();
     for (const row of filtered) {
@@ -142,7 +148,7 @@ export default function RecentAwardsPage() {
         </div>
       </header>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[["낙찰", `${filtered.length.toLocaleString()}건`], ["사업 전체 낙찰금액", compact(total)], ["낙찰업체", `${vendorStats.length.toLocaleString()}곳`], ["최근 낙찰일", latest]].map(([label, value]) =>
+        {[["낙찰", `${filtered.length.toLocaleString()}건`], ["사업 전체 낙찰금액", compact(total)], ["낙찰업체", `${filteredVendorCount.toLocaleString()}곳`], ["최근 낙찰일", latest]].map(([label, value]) =>
           <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><p className="text-xs text-slate-500 dark:text-slate-400">{label}</p><p className="mt-2 text-xl font-extrabold tabular-nums text-blue-600 dark:text-cyan-200">{value}</p></div>)}
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
