@@ -22,7 +22,7 @@ export default function RecentAwardsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [range, setRange] = useState<number | "all">("all");
-  const [year, setYear] = useState("전체");
+  const [year, setYear] = useState("2026");
   const [search, setSearch] = useState("");
   const [winner, setWinner] = useState("");
   const [kind, setKind] = useState("전체");
@@ -144,8 +144,8 @@ export default function RecentAwardsPage() {
           <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><p className="text-xs text-slate-500 dark:text-slate-400">{label}</p><p className="mt-2 text-xl font-extrabold tabular-nums text-blue-600 dark:text-cyan-200">{value}</p></div>)}
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
-        <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "수집 기간 전체" : `${day}일`}</button>)}</div>
-        <select aria-label="낙찰 연도" value={year} onChange={e => { setYear(e.target.value); setWinner(""); }} className={`${pill} bg-transparent`}><option>전체</option><option>2026</option><option>2025</option><option>2024</option></select>
+        <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "기간 전체" : `${day}일`}</button>)}</div>
+        <select aria-label="낙찰 연도" value={year} onChange={e => { setYear(e.target.value); setRange("all"); setWinner(""); }} className={`${pill} bg-transparent`}><option value="전체">2024~현재 전체</option><option>2026</option><option>2025</option><option>2024</option></select>
         <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색 (업체 전체 직접 낙찰 포함)" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
         <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="direct_other">업체 직접 낙찰</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
@@ -156,7 +156,7 @@ export default function RecentAwardsPage() {
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]">
         <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#101f36]">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? "2024년 이후 수집분" : `최근 ${range}일`} · 가상화·HCI 기준 충족 {rows.length}건</span></div>
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? year === "전체" ? "2024년 이후" : `${year}년` : `최근 ${range}일`} · 가상화·HCI 기준 충족 {samePeriodAwards.length}건</span></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[800px] table-fixed text-left text-sm"><colgroup><col className="w-[90px]"/><col/><col className="w-[145px]"/><col className="w-[125px]"/><col className="w-[130px]"/></colgroup>
             <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-white/5"><tr><th className="p-3">낙찰일</th><th className="p-3">사업명</th><th className="p-3">낙찰업체</th><th className="p-3">수요기관</th><th className="p-3 text-right">전체 낙찰금액</th></tr></thead>
             <tbody>{filtered.map(row => <tr key={row.external_key} className="border-t border-slate-100 align-top dark:border-white/10">

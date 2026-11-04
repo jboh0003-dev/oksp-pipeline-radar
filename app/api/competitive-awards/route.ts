@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { kstTodayYmd } from "@/lib/g2b/competitiveAwards";
+import { PROCUREMENT_START_DATE } from "@/lib/competitive/period";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +33,8 @@ export async function GET() {
     .from("competitive_awards")
     .select("id,external_key,competitor,winner_name,winner_business_no,award_date,opening_at,bid_no,bid_ord,project,customer,amount,rate,category,source_label,source_url,source_type,evidence,match_type,matched_keyword,collected_at,updated_at")
     .eq("source_type", "g2b_award")
+    .gte("award_date", PROCUREMENT_START_DATE)
+    .lte("award_date", kstTodayYmd())
     .order("award_date", { ascending: false, nullsFirst: false })
     .order("bid_no", { ascending: false });
 

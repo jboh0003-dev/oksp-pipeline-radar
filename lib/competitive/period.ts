@@ -1,0 +1,1 @@
+export const PROCUREMENT_START_DATE = "2024-01-01";
