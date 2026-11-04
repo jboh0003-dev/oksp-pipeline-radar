@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "@/lib/authedFetch";
 import { useAuth } from "@/lib/auth";
 import type { RecentAward } from "@/lib/competitive/recentAwardFilter";
+import { vendorFromAward } from "@/lib/competitive/vendorEvidence";
 
 type ViewRow = RecentAward & { updated_at: string; source?: "direct" };
 const category = (row: ViewRow) => row.source === "direct" ? "업체 직접 낙찰 · 제품 미확인" : row.classification === "hci" ? "HCI" : "서버 가상화";
@@ -21,6 +22,7 @@ export default function RecentAwardsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [range, setRange] = useState<number | "all">("all");
+  const [year, setYear] = useState("전체");
   const [search, setSearch] = useState("");
   const [winner, setWinner] = useState("");
   const [kind, setKind] = useState("전체");
@@ -29,6 +31,13 @@ export default function RecentAwardsPage() {
   const [notice, setNotice] = useState("");
   const auth = useAuth();
   const canCollect = auth.profileStatus === "ready" && auth.role === "admin";
+  useEffect(() => {
+    const requestedYear = new URLSearchParams(window.location.search).get("year");
+    if (requestedYear && ["2024", "2025", "2026"].includes(requestedYear)) {
+      const timer = window.setTimeout(() => setYear(requestedYear), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/recent-awards", { cache: "no-store", signal: controller.signal })
@@ -57,11 +66,14 @@ export default function RecentAwardsPage() {
   }, [searchRows, range]);
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
-    return base.filter(row => (!winner || row.winner_business_no === winner)
+    return base.filter(row => (year === "전체" || row.award_date.startsWith(year))
+      && (!winner || row.winner_business_no === winner)
       && (kind === "전체" || row.classification === kind)
       && (!term || [row.project, row.winner_name, row.customer, row.bid_no, row.product_brand]
         .join(" ").toLocaleLowerCase().includes(term)));
-  }, [base, winner, kind, search]);
+  }, [base, year, winner, kind, search]);
+  const samePeriodAwards = rows.filter(row => year === "전체" || row.award_date.startsWith(year));
+  const attributedAwards = samePeriodAwards.filter(row => vendorFromAward(row) != null).length;
   const total = filtered.reduce((sum, row) => sum + row.amount, 0);
   const vendorStats = useMemo(() => {
     const map = new Map<string, { no: string; name: string; count: number; amount: number }>();
@@ -120,7 +132,7 @@ export default function RecentAwardsPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[.17em] text-blue-600 dark:text-cyan-300">G2B AWARD RADAR</p>
           <h1 className="mt-1 text-2xl font-extrabold">최근 낙찰</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">2024년 이후 수집한 가상화·HCI 키워드 낙찰 자료</p></div>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">가상화·HCI 입찰 낙찰 · 조달 공급 실적은 별도 집계</p></div>
         <div className="flex items-center gap-2">
           {canCollect && <button type="button" disabled={collecting} className={`${pill} bg-blue-50 text-blue-700 disabled:opacity-40 dark:bg-blue-500/10 dark:text-blue-200`} onClick={() => void collectNow()}>{collecting ? "수집 중…" : "지금 수집"}</button>}
           <button type="button" className={pill} onClick={() => { setLoading(true); setReload(x => x + 1); }}>화면 새로고침</button>
@@ -133,11 +145,12 @@ export default function RecentAwardsPage() {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
         <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "수집 기간 전체" : `${day}일`}</button>)}</div>
+        <select aria-label="낙찰 연도" value={year} onChange={e => { setYear(e.target.value); setWinner(""); }} className={`${pill} bg-transparent`}><option>전체</option><option>2026</option><option>2025</option><option>2024</option></select>
         <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색 (업체 전체 직접 낙찰 포함)" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
         <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="direct_other">업체 직접 낙찰</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
       </div>
-      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">가상화·HCI 키워드로 수집한 자료 중 기준을 충족한 낙찰 {rows.length}건입니다. 나라장터 전국 낙찰 전체 건수가 아니며, 업체 직접 낙찰 자료는 업체명을 검색하면 함께 표시됩니다.</p>
+      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{year === "전체" ? "2024년 이후" : `${year}년`} 같은 입찰 원자료 · 기준 충족 {samePeriodAwards.length}건 · 제조사 확인 {attributedAwards}건 · 제조사 미확인 {samePeriodAwards.length - attributedAwards}건. <Link href="/competitive-analysis" className="font-semibold text-blue-600 underline">수주·경쟁 이력에서 비교</Link> · 쇼핑몰 납품요구는 별도 집계입니다.</p>
       {search.trim() && filtered.some(row => row.source === "direct") && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">업체 직접 낙찰에는 가상화 제품 공급 여부를 확인할 수 없는 사업도 포함됩니다. 쇼핑몰 납품요구는 <Link href="/competitive-analysis" className="font-bold underline">수주 이력·경쟁분석</Link>에서 확인할 수 있습니다.</p>}
       {notice && <p role="status" className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{notice}</p>}
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}

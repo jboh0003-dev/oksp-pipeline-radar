@@ -7,6 +7,7 @@ import {VIRTUALIZATION_KEYWORDS} from "@/lib/competitive/keywords";
 import {authedFetch} from "@/lib/authedFetch";
 import {useAuth} from "@/lib/auth";
 import VendorInsight from "@/components/competitive/VendorInsight";
+import {isRecentAward} from "@/lib/competitive/recentAwardFilter";
 
 type Candidate = {
   external_key:string;bid_no:string;bid_ord:string|null;award_date:string|null;
@@ -140,6 +141,11 @@ export default function CompetitiveAnalysisPage(){
   },[refreshKey]);
 
   const relevantDeliveries=useMemo(()=>deliveries.filter(r=>isCompetitiveDeliveryProduct(r.product_name)),[deliveries]);
+  const comparableAwards=useMemo(()=>{
+    const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+    return candidates.filter(row=>inYear(row.award_date,year)&&isRecentAward(row,today));
+  },[candidates,year]);
+  const comparableAttributed=comparableAwards.filter(row=>vendorFromAward(row)!=null).length;
   const agencies=useMemo(()=>[...new Set([...candidates.map(x=>x.customer),...relevantDeliveries.map(x=>x.customer_name)]
     .filter((s):s is string=>!!s))].sort((a,b)=>a.localeCompare(b,"ko-KR")),[candidates,relevantDeliveries]);
   const supplierOptions=useMemo(()=>{
@@ -332,6 +338,10 @@ export default function CompetitiveAnalysisPage(){
         <Summary label="조달 공급 실적" value={!ready.delivery?"확인 중":verifiedDeliveries.length.toLocaleString("ko-KR")+"건"} sub=""/>
         <Summary label="조달 공급금액 합계" value={!ready.delivery?"확인 중":fmtCompact(deliveryAmount)} sub=""/>
         <Summary label="별도 입찰사업 수주" value={!ready.award?"확인 중":verifiedAwards.length+"건"} sub=""/>
+      </div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm dark:border-blue-500/20 dark:bg-blue-500/10">
+        <span><strong>입찰 낙찰 동일 기준</strong> · {year==="전체"?"2024년 이후":`${year}년`} {comparableAwards.length}건 · 제조사 확인 {comparableAttributed}건 · 미확인 {comparableAwards.length-comparableAttributed}건</span>
+        <Link href={`/recent-awards${year==="전체"?"":`?year=${year}`}`} className="font-semibold text-blue-700 underline dark:text-cyan-200">낙찰 원자료 보기</Link>
       </div>
       {(errors.award||errors.delivery)&&<div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-950/20 dark:text-rose-300">
         {[errors.award,errors.delivery].filter(Boolean).join(" / ")}
