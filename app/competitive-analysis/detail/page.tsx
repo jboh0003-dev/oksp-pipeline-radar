@@ -6,20 +6,22 @@ import CopyReference from "./CopyReference";
 export const dynamic="force-dynamic";
 export const metadata={title:"납품·낙찰 상세 | Pipeline Maker"};
 
-type Params={kind?:string;key?:string};
+type Params={kind?:string;key?:string;from?:string};
 type DetailRow=Record<string,unknown>;
 const fmt=(value:unknown)=>value==null||value===""?"-":String(value);
 const won=(value:unknown)=>value==null?"-":Number(value).toLocaleString("ko-KR")+"원";
 
 export default async function CompetitiveDetail({searchParams}:{searchParams:Promise<Params>}) {
-  const {kind,key}=await searchParams;
+  const {kind,key,from}=await searchParams;
+  const backHref=from==="recent"?"/recent-awards":"/competitive-analysis";
+  const backLabel=from==="recent"?"최근 낙찰":"경쟁분석";
   const tables:Record<string,string>={
     award:"virtualization_award_candidates",
     delivery:"virtualization_delivery_items",
     direct:"competitive_awards",
   };
   const table=kind?tables[kind]:undefined;
-  if (!table || !key || key.length>256) return <main className="mx-auto max-w-5xl p-6"><Link href="/competitive-analysis" className="text-sm text-blue-600">경쟁분석으로 돌아가기</Link><p className="mt-5 text-sm">조회할 내역을 선택해 주세요.</p></main>;
+  if (!table || !key || key.length>256) return <main className="mx-auto max-w-5xl p-6"><Link href={backHref} className="text-sm text-blue-600">{backLabel}으로 돌아가기</Link><p className="mt-5 text-sm">조회할 내역을 선택해 주세요.</p></main>;
   const db=getSupabaseAdmin();
   if(!db) return <main className="mx-auto max-w-5xl p-6"><p>데이터베이스 연결을 확인할 수 없습니다.</p></main>;
   const result=await db.from(table).select("*").eq("external_key",key).maybeSingle();
@@ -38,6 +40,9 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
   const date=isDelivery?fmt(row?.receipt_date):fmt(row?.award_date);
   const customer=isDelivery?fmt(row?.customer_name):fmt(row?.customer);
   const amount=isDelivery?row?.amount:row?.amount;
+  const g2bAwardUrl = !isDelivery && /^[A-Za-z0-9]+$/.test(reference)
+    ? `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${encodeURIComponent(reference)}&bidPbancOrd=${encodeURIComponent(fmt(row?.bid_ord) === "-" ? "000" : fmt(row?.bid_ord))}`
+    : null;
   const fields:[string,unknown][]=[
     [isDirect?"추적업체":"제조사",isDirect?row?.competitor:(evidence?.vendor??"미확인")],
     [isDirect?"실적 구분":"제조사 확인 근거",isDirect?"기업 전체 직접 낙찰 이력 · 가상화 제품 공급 여부 미확인":(evidence?.evidence??"자료에 제조사 미기재")],
@@ -59,7 +64,7 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
     ]),
   ];
   return <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-7">
-    <nav className="mb-4 flex items-center gap-2 text-xs text-slate-500"><Link href="/competitive-analysis" className="font-semibold text-blue-600 hover:underline">경쟁분석</Link><span>/</span><span>상세 내역</span></nav>
+    <nav className="mb-4 flex items-center gap-2 text-xs text-slate-500"><Link href={backHref} className="font-semibold text-blue-600 hover:underline">{backLabel}</Link><span>/</span><span>상세 내역</span></nav>
     {!row?<section className="rounded-xl border border-slate-200 bg-white p-8 dark:border-white/10 dark:bg-slate-900"><p className="font-semibold">내역을 찾지 못했습니다.</p><p className="mt-2 text-sm text-slate-500">기존 자료가 변경되었거나 조회에 실패했습니다.</p></section>:<>
     <header className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm dark:border-white/10 dark:bg-slate-900">
       <p className="text-[11px] font-bold tracking-wide text-blue-600">{isDelivery?"조달제품 구매요구":isDirect?"업체 전체 입찰사업":"가상화 입찰사업 수주"}</p>
@@ -85,7 +90,7 @@ export default async function CompetitiveDetail({searchParams}:{searchParams:Pro
         <p className="mt-4 break-all rounded-lg bg-slate-50 p-3 font-mono text-xs dark:bg-slate-800">{reference}</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <CopyReference value={reference}/>
-          <a href="https://www.g2b.go.kr/" target="_blank" rel="noopener noreferrer" className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white dark:bg-slate-100 dark:text-slate-900">나라장터 검색</a>
+          {g2bAwardUrl && <a href={g2bAwardUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white dark:bg-slate-100 dark:text-slate-900">나라장터 공고 바로가기 ↗</a>}
         </div>
         {evidence?.url&&<a href={evidence.url} target="_blank" rel="noopener noreferrer" className="mt-4 block rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 dark:border-blue-500/20 dark:text-blue-300">제조사 공식 구축사례 확인 ↗</a>}
         <a href={isDelivery?"https://www.data.go.kr/data/15129471/openapi.do":"https://www.data.go.kr/data/15129397/openapi.do"} target="_blank" rel="noopener noreferrer" className="mt-3 block text-xs text-blue-600 hover:underline">조달청 원천 API 안내 ↗</a>

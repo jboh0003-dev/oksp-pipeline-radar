@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { addDaysYmd, kstTodayYmd } from "@/lib/g2b/competitiveAwards";
+import { kstTodayYmd } from "@/lib/g2b/competitiveAwards";
 import { isRecentAward } from "@/lib/competitive/recentAwardFilter";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export async function GET() {
   for (let offset = 0; offset < 10000; offset += 500) {
     const { data, error } = await db.from("virtualization_award_candidates")
       .select("external_key,bid_no,bid_ord,award_date,winner_name,winner_business_no,project,customer,amount,category,classification,product_brand,matched_keywords,updated_at")
-      .gte("award_date", addDaysYmd(today, -365)).lte("award_date", today)
+      .gte("award_date", "2024-01-01").lte("award_date", today)
       .order("award_date", { ascending: false }).range(offset, offset + 499);
     if (error) return NextResponse.json({ ok: false, error: "낙찰 자료 조회 실패" }, { status: 503 });
     rows.push(...(data ?? []));

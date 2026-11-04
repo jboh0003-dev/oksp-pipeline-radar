@@ -18,11 +18,10 @@ export default function RecentAwardsPage() {
   const [rows, setRows] = useState<ViewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [range, setRange] = useState(90);
+  const [range, setRange] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
   const [winner, setWinner] = useState("");
   const [kind, setKind] = useState("전체");
-  const [limit, setLimit] = useState(30);
   const [reload, setReload] = useState(0);
   const [collecting, setCollecting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -39,6 +38,7 @@ export default function RecentAwardsPage() {
   }, [reload]);
 
   const base = useMemo(() => {
+    if (range === "all") return rows;
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     const cutoff = new Date(`${today}T00:00:00Z`);
     cutoff.setUTCDate(cutoff.getUTCDate() - range);
@@ -121,8 +121,8 @@ export default function RecentAwardsPage() {
           <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><p className="text-xs text-slate-500 dark:text-slate-400">{label}</p><p className="mt-2 text-xl font-extrabold tabular-nums text-blue-600 dark:text-cyan-200">{value}</p></div>)}
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
-        <div className="flex gap-1">{[30, 90, 180, 365].map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); setLimit(30); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day}일</button>)}</div>
-        <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색" value={search} onChange={e => { setSearch(e.target.value); setLimit(30); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
+        <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "전체" : `${day}일`}</button>)}</div>
+        <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
         <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
       </div>
@@ -130,18 +130,17 @@ export default function RecentAwardsPage() {
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]">
         <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#101f36]">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">낙찰일 최신순</span></div>
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? "전체 기간" : `최근 ${range}일`} · 전체 {rows.length}건</span></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[800px] table-fixed text-left text-sm"><colgroup><col className="w-[90px]"/><col/><col className="w-[145px]"/><col className="w-[125px]"/><col className="w-[130px]"/></colgroup>
             <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-white/5"><tr><th className="p-3">낙찰일</th><th className="p-3">사업명</th><th className="p-3">낙찰업체</th><th className="p-3">수요기관</th><th className="p-3 text-right">전체 낙찰금액</th></tr></thead>
-            <tbody>{filtered.slice(0, limit).map(row => <tr key={row.external_key} className="border-t border-slate-100 align-top dark:border-white/10">
+            <tbody>{filtered.map(row => <tr key={row.external_key} className="border-t border-slate-100 align-top dark:border-white/10">
               <td className="p-3 tabular-nums text-slate-500">{row.award_date.slice(2).replaceAll("-", ".")}</td>
-              <td className="p-3"><Link href={`/competitive-analysis/detail?kind=award&key=${encodeURIComponent(row.external_key)}`} className="font-semibold leading-5 hover:text-blue-600 hover:underline dark:hover:text-cyan-300">{row.project}</Link><div className="mt-1 text-xs text-slate-500">{row.classification === "hci" ? "HCI" : "서버 가상화"}{row.product_brand && ` · 공고명: ${row.product_brand}`}</div></td>
+              <td className="p-3"><Link href={`/competitive-analysis/detail?kind=award&key=${encodeURIComponent(row.external_key)}&from=recent`} className="font-semibold leading-5 hover:text-blue-600 hover:underline dark:hover:text-cyan-300">{row.project}</Link><div className="mt-1 text-xs text-slate-500">{row.classification === "hci" ? "HCI" : "서버 가상화"}{row.product_brand && ` · 공고명: ${row.product_brand}`}</div></td>
               <td className="p-3 font-semibold">{row.winner_name}</td><td className="p-3 text-slate-600 dark:text-slate-300">{row.customer}</td>
               <td className="p-3 text-right font-bold tabular-nums text-blue-600 dark:text-cyan-200" title={won(row.amount)}>{compact(row.amount)}</td>
             </tr>)}</tbody></table></div>
           {loading && <p className="p-8 text-center text-sm text-slate-500">낙찰 내역을 불러오는 중입니다.</p>}
           {!loading && !filtered.length && <p className="p-8 text-center text-sm text-slate-500">해당 조건의 낙찰 건이 없습니다.</p>}
-          {filtered.length > limit && <button type="button" onClick={() => setLimit(x => x + 30)} className="w-full border-t border-slate-200 p-3 text-sm font-semibold text-blue-600 dark:border-white/10">30건 더 보기</button>}
         </section>
         <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><h2 className="font-bold">월별 낙찰 추이</h2><div className="mt-4 space-y-3">{monthly.map(([month, value]) => <div key={month} className="grid grid-cols-[55px_1fr_85px] items-center gap-2 text-xs"><span className="tabular-nums text-slate-500">{month.slice(2)}</span><div className="h-5 overflow-hidden rounded bg-slate-100 dark:bg-white/10"><div className="h-full rounded bg-gradient-to-r from-blue-600 to-cyan-400" style={{ width: `${value.amount / monthlyMax * 100}%` }} /></div><span className="text-right font-bold tabular-nums">{compact(value.amount)}</span></div>)}</div></section>
