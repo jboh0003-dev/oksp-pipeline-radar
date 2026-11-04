@@ -22,7 +22,8 @@ export default function RecentAwardsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [range, setRange] = useState<number | "all">("all");
-  const [year, setYear] = useState("2026");
+  const [startYear, setStartYear] = useState("2024");
+  const [endYear, setEndYear] = useState("2026");
   const [search, setSearch] = useState("");
   const [winner, setWinner] = useState("");
   const [kind, setKind] = useState("전체");
@@ -34,7 +35,7 @@ export default function RecentAwardsPage() {
   useEffect(() => {
     const requestedYear = new URLSearchParams(window.location.search).get("year");
     if (requestedYear && ["2024", "2025", "2026"].includes(requestedYear)) {
-      const timer = window.setTimeout(() => setYear(requestedYear), 0);
+      const timer = window.setTimeout(() => (setStartYear(requestedYear), setEndYear(requestedYear)), 0);
       return () => window.clearTimeout(timer);
     }
   }, []);
@@ -64,25 +65,26 @@ export default function RecentAwardsPage() {
     cutoff.setUTCDate(cutoff.getUTCDate() - range);
     return searchRows.filter(row => row.award_date >= cutoff.toISOString().slice(0, 10));
   }, [searchRows, range]);
+  const periodRows = useMemo(() => base.filter(row => row.award_date.slice(0, 4) >= startYear && row.award_date.slice(0, 4) <= endYear), [base, startYear, endYear]);
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
-    return base.filter(row => (year === "전체" || row.award_date.startsWith(year))
+    return periodRows.filter(row => true
       && (!winner || row.winner_business_no === winner)
       && (kind === "전체" || row.classification === kind)
       && (!term || [row.project, row.winner_name, row.customer, row.bid_no, row.product_brand]
         .join(" ").toLocaleLowerCase().includes(term)));
-  }, [base, year, winner, kind, search]);
-  const samePeriodAwards = rows.filter(row => year === "전체" || row.award_date.startsWith(year));
+  }, [periodRows, winner, kind, search]);
+  const samePeriodAwards = periodRows.filter(row => row.source !== "direct");
   const attributedAwards = samePeriodAwards.filter(row => vendorFromAward(row) != null).length;
   const total = filtered.reduce((sum, row) => sum + row.amount, 0);
   const vendorStats = useMemo(() => {
     const map = new Map<string, { no: string; name: string; count: number; amount: number }>();
-    for (const row of filtered) {
+    for (const row of periodRows.filter(row => (kind === "전체" || row.classification === kind) && (!search.trim() || [row.project, row.winner_name, row.customer, row.bid_no, row.product_brand].join(" ").toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())))) {
       const old = map.get(row.winner_business_no);
       map.set(row.winner_business_no, { no: row.winner_business_no, name: row.winner_name, count: (old?.count ?? 0) + 1, amount: (old?.amount ?? 0) + row.amount });
     }
     return [...map.values()].sort((a, b) => b.amount - a.amount);
-  }, [filtered]);
+  }, [periodRows, kind, search]);
   const monthly = useMemo(() => {
     const map = new Map<string, { count: number; amount: number }>();
     for (const row of filtered) {
@@ -145,18 +147,21 @@ export default function RecentAwardsPage() {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
         <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "기간 전체" : `${day}일`}</button>)}</div>
-        <select aria-label="낙찰 연도" value={year} onChange={e => { setYear(e.target.value); setRange("all"); setWinner(""); }} className={`${pill} bg-transparent`}><option value="전체">2024~현재 전체</option><option>2026</option><option>2025</option><option>2024</option></select>
+        <label className="text-sm font-semibold">조회 연도</label>
+        <select aria-label="시작 연도" value={startYear} onChange={e => { setStartYear(e.target.value); if (e.target.value > endYear) setEndYear(e.target.value); setRange("all"); setWinner(""); }} className={`${pill} bg-transparent`}>{["2024", "2025", "2026"].map(y => <option key={y} value={y}>{y}년</option>)}</select>
+        <span className="text-sm">~</span>
+        <select aria-label="종료 연도" value={endYear} onChange={e => { setEndYear(e.target.value); if (e.target.value < startYear) setStartYear(e.target.value); setRange("all"); setWinner(""); }} className={`${pill} bg-transparent`}>{["2024", "2025", "2026"].map(y => <option key={y} value={y}>{y}년</option>)}</select>
         <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색 (업체 전체 직접 낙찰 포함)" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
         <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="direct_other">업체 직접 낙찰</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
       </div>
-      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{year === "전체" ? "2024년 이후" : `${year}년`} 같은 입찰 원자료 · 기준 충족 {samePeriodAwards.length}건 · 제조사 확인 {attributedAwards}건 · 제조사 미확인 {samePeriodAwards.length - attributedAwards}건. <Link href="/competitive-analysis" className="font-semibold text-blue-600 underline">수주·경쟁 이력에서 비교</Link> · 쇼핑몰 납품요구는 별도 집계입니다.</p>
+      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년`} 같은 입찰 원자료 · 기준 충족 {samePeriodAwards.length}건 · 제조사 확인 {attributedAwards}건 · 제조사 미확인 {samePeriodAwards.length - attributedAwards}건. <Link href="/competitive-analysis" className="font-semibold text-blue-600 underline">수주·경쟁 이력에서 비교</Link> · 쇼핑몰 납품요구는 별도 집계입니다.</p>
       {search.trim() && filtered.some(row => row.source === "direct") && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">업체 직접 낙찰에는 가상화 제품 공급 여부를 확인할 수 없는 사업도 포함됩니다. 쇼핑몰 납품요구는 <Link href="/competitive-analysis" className="font-bold underline">수주 이력·경쟁분석</Link>에서 확인할 수 있습니다.</p>}
       {notice && <p role="status" className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{notice}</p>}
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]">
         <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#101f36]">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? year === "전체" ? "2024년 이후" : `${year}년` : `최근 ${range}일`} · 가상화·HCI 기준 충족 {samePeriodAwards.length}건</span></div>
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년` : `최근 ${range}일`} · 가상화·HCI 기준 충족 {samePeriodAwards.length}건</span></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[800px] table-fixed text-left text-sm"><colgroup><col className="w-[90px]"/><col/><col className="w-[145px]"/><col className="w-[125px]"/><col className="w-[130px]"/></colgroup>
             <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-white/5"><tr><th className="p-3">낙찰일</th><th className="p-3">사업명</th><th className="p-3">낙찰업체</th><th className="p-3">수요기관</th><th className="p-3 text-right">전체 낙찰금액</th></tr></thead>
             <tbody>{filtered.map(row => <tr key={row.external_key} className="border-t border-slate-100 align-top dark:border-white/10">
