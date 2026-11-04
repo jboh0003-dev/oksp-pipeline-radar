@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+
+const Monthly3DChart = dynamic(() => import("./Monthly3DChart"), { ssr: false });
 
 export type InsightDelivery = {
   receipt_date: string; amount: number | null; product_id: string | null;
@@ -25,7 +28,6 @@ export default function VendorInsight({ rows, year, selectedMonth, onMonth }: {
       return { key, count: matching.length, amount: matching.reduce((sum, row) => sum + Number(row.amount ?? 0), 0) };
     }));
   }, [rows, year]);
-  const maxAmount = Math.max(1, ...months.map(month => month.amount));
   const products = useMemo(() => {
     const map = new Map<string, { id: string | null; name: string; count: number; amount: number }>();
     for (const row of rows.filter(row => !selectedMonth || row.receipt_date.startsWith(selectedMonth))) {
@@ -54,26 +56,25 @@ export default function VendorInsight({ rows, year, selectedMonth, onMonth }: {
       {selectedMonth && <button type="button" onClick={() => onMonth(null)} className="rounded-full border border-cyan-400/50 px-3 py-1 text-xs font-semibold text-cyan-200">전체 기간 보기</button>}
     </div>
     <div className="overflow-x-auto pb-4">
-      <div className="flex min-w-max items-end gap-2 border-b border-white/10 px-2 pb-3 pt-4" role="group" aria-label="월별 조달 공급금액과 건수">
-        {months.map(month => {
-          const height = month.amount ? Math.max(12, Math.round(month.amount / maxAmount * 150)) : 3;
-          const active = selectedMonth === month.key;
-          return <button type="button" key={month.key} onClick={() => onMonth(active ? null : month.key)} aria-pressed={active}
-            title={`${month.key} · ${month.count}건 · ${compact(month.amount)}`}
-            className={`group flex w-[70px] shrink-0 flex-col items-center rounded-lg px-1 pb-1 text-center transition-colors hover:bg-white/10 ${active ? "bg-cyan-400/15 ring-1 ring-cyan-400/60" : ""}`}>
-            <span className="mb-2 text-[11px] font-semibold tabular-nums text-cyan-100">{month.amount ? compact(month.amount) : ""}</span>
-            <span className="relative flex h-[155px] w-full items-end justify-center" style={{ perspective: "220px" }}>
-              <span className={`relative block w-9 rounded-t-[3px] shadow-[0_0_24px_rgba(34,211,238,.24)] transition-all duration-300 group-hover:brightness-125 ${active ? "bg-gradient-to-t from-blue-700 to-cyan-300" : "bg-gradient-to-t from-blue-800 to-blue-400"}`}
-                style={{ height, transform: "rotateX(5deg) skewY(-3deg)", transformOrigin: "bottom" }}>
-                <span className="absolute -right-[6px] top-[3px] h-full w-[6px] origin-left skew-y-[38deg] bg-blue-950/90" />
-                <span className="absolute -top-[5px] left-[3px] h-[5px] w-full skew-x-[48deg] bg-cyan-200/80" />
-              </span>
-            </span>
-            <span className="mt-2 text-xs font-bold tabular-nums">{month.key.slice(5)}월</span>
-            <span className="text-[11px] tabular-nums text-slate-400">{month.count}건</span>
-            {month.key.endsWith("-12") && <span className="text-[10px] text-slate-500">{month.key.slice(0, 4)}</span>}
-          </button>;
-        })}
+      <div className="relative min-w-max rounded-xl border border-white/10 bg-gradient-to-b from-[#0b2343] to-[#071529] px-2 pt-4" style={{ width: Math.max(700, months.length * 84 + 16) }}>
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${months.length}, 84px)` }}>
+          {months.map(month => <div key={month.key} className="truncate px-1 text-center text-[11px] font-semibold tabular-nums text-cyan-100" title={`${month.amount.toLocaleString("ko-KR")}원`}>
+            {month.amount ? compact(month.amount) : ""}
+          </div>)}
+        </div>
+        <Monthly3DChart months={months} selectedMonth={selectedMonth} onMonth={onMonth} />
+        <div className="grid border-t border-white/10 pb-3 pt-2" style={{ gridTemplateColumns: `repeat(${months.length}, 84px)` }} role="group" aria-label="월별 조달 공급금액과 건수">
+          {months.map(month => {
+            const active = selectedMonth === month.key;
+            return <button type="button" key={month.key} onClick={() => onMonth(active ? null : month.key)} aria-pressed={active}
+              title={`${month.key} · ${month.count}건 · ${month.amount.toLocaleString("ko-KR")}원`}
+              className={`mx-1 flex flex-col items-center rounded-lg py-1 text-center transition-colors hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-300 ${active ? "bg-cyan-400/15 text-cyan-200" : "text-white"}`}>
+              <span className="text-xs font-bold tabular-nums">{month.key.slice(5)}월</span>
+              <span className="text-[11px] tabular-nums text-slate-400">{month.count}건</span>
+              {year === "전체" && <span className="text-[10px] text-slate-500">{month.key.slice(0, 4)}</span>}
+            </button>;
+          })}
+        </div>
       </div>
     </div>
     <div className="mt-4 flex items-center justify-between"><h3 className="text-sm font-bold">주요 제품</h3><span className="text-xs text-slate-400">{selectedMonth ?? "전체 기간"}</span></div>
