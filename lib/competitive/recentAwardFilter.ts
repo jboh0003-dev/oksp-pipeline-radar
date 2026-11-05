@@ -1,3 +1,4 @@
+import { productFamily } from "./productFamily";
 /** Strict title evidence for the recent-winners view. A winner is an SI, not a proven manufacturer. */
 export type RecentAward = {
   external_key: string; bid_no: string; bid_ord: string | null; award_date: string;
@@ -21,6 +22,6 @@ export function isRecentAward(row: {
     && !!row.winner_name?.trim() && /^\d{10}$/.test(String(row.winner_business_no ?? ""))
     && !!row.customer?.trim() && row.customer !== "각 수요기관"
     && Number.isSafeInteger(amount) && amount > 0 && !!title
-    && (row.classification === "server_virtualization" || row.classification === "hci")
-    && relevant.test(title) && !exclude.test(title) && !peripheral.test(title) && !catalog.test(title);
+    && (row.classification === "server_virtualization" || row.classification === "hci" || row.classification === "paas")
+    && (relevant.test(title) || productFamily(title) === "PaaS") && !exclude.test(title) && !peripheral.test(title) && !catalog.test(title);
 }

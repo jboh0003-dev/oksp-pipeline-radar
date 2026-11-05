@@ -13,6 +13,7 @@ export const VIRTUALIZATION_BID_KEYWORD_GROUPS = {
   vmware: ["vSphere", "ESXi", "vSAN", "VMware"],
   redhat: ["OpenShift Virtualization", "Red Hat Virtualization", "오픈시프트 가상화"],
   proxmox: ["Proxmox", "프록스목스"],
+  paas: ["PaaS", "VIOLA", "쿠버네티스", "Kubernetes", "OpenShift", "오픈시프트", "K-PaaS", "Tanzu"],
 } as const;
 export type VendorKeywordGroup = keyof typeof VIRTUALIZATION_BID_KEYWORD_GROUPS;
 const KINDS = [
@@ -20,7 +21,7 @@ const KINDS = [
   { category: "용역", operation: "getScsbidListSttusServcPPSSrch" },
 ] as const;
 type Raw = Record<string, unknown>;
-type Classification = "server_virtualization" | "hci" | "vdi" | "virtualization_other" | "review";
+type Classification = "server_virtualization" | "hci" | "vdi" | "virtualization_other" | "paas" | "review";
 export type VirtualizationBidCandidate = {
   external_key: string; bid_no: string; bid_ord: string | null; award_date: string | null;
   winner_name: string; winner_business_no: string; project: string; customer: string;
@@ -65,11 +66,12 @@ function classify(title: string): Classification {
   if (/(가상\s*화폐|암호화폐|블록체인|가상화\s*스위치|백본\s*가상화|네트워크\s*가상화|가상화.{0,8}물리모델|물리모델.{0,8}가상화|가상화.{0,10}수치해석)/i.test(title)) {
     return "review";
   }
+  if (/(\bviola\b|비올라|\bpaas\b|쿠버네티스|\bkubernetes\b|\bk8s\b|오픈시프트(?!\s*가상화)|\bopenshift\b(?!\s*virtualization)|\btanzu\b)/i.test(title) && !/가상화|virtualization|contrabass|콘트라베이스/i.test(title)) return "paas";
   if (/(가상화.{0,10}데스크톱|데스크톱.{0,10}가상화|가상\s*데스크톱|\bvdi\b|dstation|디스테이션|\bdaas\b|원격근무.{0,10}가상화|원격접속.{0,12}가상화|모바일.{0,8}가상화|가상화.{0,10}스마트오피스)/i.test(title)) {
     return "vdi";
   }
   if (/(\bhci\b|하이퍼.?컨버|hyper.?converg|에이블스택|ablestack)/i.test(title)) return "hci";
-  if (/(contrabass|콘트라베이스|\bviola\b|비올라|서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit|nutanix|뉴타닉스|\bAHV\b|\bNCI\b|proxmox|프록스목스|openshift.{0,16}virtualization|red\s*hat.{0,16}virtualization)/i.test(title)) {
+  if (/(contrabass|콘트라베이스|서버.{0,10}가상화|가상화.{0,10}서버|통합가상화|가상화\s*시스템|가상화소프트웨어|가상화\s*솔루션|가상화\s*인프라|가상화\s*sw|하이퍼바이저|hypervisor|vsphere|vmware|openstackit|오픈스택잇|클라우드잇|cloudit|nutanix|뉴타닉스|\bAHV\b|\bNCI\b|proxmox|프록스목스|openshift.{0,16}virtualization|red\s*hat.{0,16}virtualization)/i.test(title)) {
     return "server_virtualization";
   }
   if (/가상화|virtuali[sz]/i.test(title)) return "virtualization_other";
