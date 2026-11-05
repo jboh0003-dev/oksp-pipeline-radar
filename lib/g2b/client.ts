@@ -93,7 +93,7 @@ const DEFAULT_BASE_DELAY_MS = 600;
  * 입찰공고 4개 엔드포인트는 한 수집 안에서 연속 호출되므로, 외부 API가 느릴 때
  * 요청 하나가 60초 이상을 잡아먹지 않도록 별도 상한을 둔다.
  */
-const BID_REQUEST_TIMEOUT_CAP_MS = 12_000;
+const BID_REQUEST_TIMEOUT_CAP_MS = 20_000;
 const BID_REQUEST_RETRY_CAP = 2;
 
 /**

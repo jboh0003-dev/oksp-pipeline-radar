@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {belongsToFamily, type ProductFamily} from "@/lib/competitive/productFamily";
 import { authedFetch } from "@/lib/authedFetch";
 import { useAuth } from "@/lib/auth";
 import type { RecentAward } from "@/lib/competitive/recentAwardFilter";
@@ -10,7 +9,7 @@ import { vendorFromAward, vendorFromDelivery, isCompetitiveDeliveryProduct } fro
 
 type ViewRow = RecentAward & { updated_at: string; source?: "direct" };
 type DeliveryRow = { receipt_date: string; product_name: string; brand: string | null; supplier_name: string | null; customer_name: string | null; amount: number | null };
-const category = (row: ViewRow) => row.source === "direct" ? "업체 직접 낙찰 · 제품 미확인" : row.classification === "paas" ? "PaaS" : row.classification === "hci" ? "HCI" : "서버 가상화";
+const category = (row: ViewRow) => row.source === "direct" ? "업체 직접 낙찰 · 제품 미확인" : row.classification === "hci" ? "HCI" : "서버 가상화";
 const won = (amount: number) => amount.toLocaleString("ko-KR") + "원";
 const compact = (amount: number) => amount >= 1e8
   ? (amount / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 2 }) + "억 원"
@@ -31,7 +30,6 @@ export default function RecentAwardsPage() {
   const [search, setSearch] = useState("");
   const [winner, setWinner] = useState("");
   const [kind, setKind] = useState("전체");
-  const [family,setFamily] = useState<ProductFamily>("통합");
   const [reload, setReload] = useState(0);
   const [collecting, setCollecting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -87,10 +85,10 @@ export default function RecentAwardsPage() {
   const matchingRows = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
     return periodRows.filter(row =>
-      belongsToFamily(row.project,family) && (kind === "전체" || row.classification === kind)
+      (kind === "전체" || row.classification === kind)
       && (!term || [row.project, row.winner_name, row.customer, row.bid_no, row.product_brand]
         .join(" ").toLocaleLowerCase().includes(term)));
-  }, [periodRows, kind, family, search]);
+  }, [periodRows, kind, search]);
   const filtered = useMemo(() =>
     winner ? matchingRows.filter(row => row.winner_business_no === winner) : matchingRows
   , [matchingRows, winner]);
@@ -111,8 +109,7 @@ export default function RecentAwardsPage() {
     const map = new Map<string, { name: string; count: number; amount: number }>();
     for (const row of deliveries) {
       if (row.receipt_date.slice(0, 4) < startYear || row.receipt_date.slice(0, 4) > endYear) continue;
-      if (!isCompetitiveDeliveryProduct(row.product_name) && !belongsToFamily(row.product_name,"PaaS")) continue;
-      if (!belongsToFamily(row.product_name,family)) continue;
+      if (!isCompetitiveDeliveryProduct(row.product_name)) continue;
       const maker = vendorFromDelivery(row)?.vendor;
       if (!maker) continue;
       if (term && ![maker, row.product_name, row.supplier_name, row.customer_name].join(" ").toLocaleLowerCase().includes(term)) continue;
@@ -122,7 +119,7 @@ export default function RecentAwardsPage() {
       map.set(maker, { name: maker, count: (old?.count ?? 0) + 1, amount: (old?.amount ?? 0) + amount });
     }
     return [...map.values()].sort((a, b) => b.amount - a.amount || b.count - a.count || a.name.localeCompare(b.name, "ko-KR"));
-  }, [deliveries, startYear, endYear, search, family]);
+  }, [deliveries, startYear, endYear, search]);
   const monthly = useMemo(() => {
     const map = new Map<string, { count: number; amount: number }>();
     for (const row of filtered) {
@@ -173,7 +170,7 @@ export default function RecentAwardsPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[.17em] text-blue-600 dark:text-cyan-300">G2B AWARD RADAR</p>
           <h1 className="mt-1 text-2xl font-extrabold">최근 낙찰</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">가상화·PaaS 낙찰 및 추적업체 직접 낙찰</p></div>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">가상화·HCI 낙찰 및 추적업체 직접 낙찰</p></div>
         <div className="flex items-center gap-2">
           {canCollect && <button type="button" disabled={collecting} className={`${pill} bg-blue-50 text-blue-700 disabled:opacity-40 dark:bg-blue-500/10 dark:text-blue-200`} onClick={() => void collectNow()}>{collecting ? "수집 중…" : "지금 수집"}</button>}
           <button type="button" className={pill} onClick={() => { setLoading(true); setReload(x => x + 1); }}>화면 새로고침</button>
@@ -184,7 +181,6 @@ export default function RecentAwardsPage() {
         {[["낙찰", `${filtered.length.toLocaleString()}건`], ["사업 전체 낙찰금액", compact(total)], ["낙찰업체", `${filteredVendorCount.toLocaleString()}곳`], ["최근 낙찰일", latest]].map(([label, value]) =>
           <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><p className="text-xs text-slate-500 dark:text-slate-400">{label}</p><p className="mt-2 text-xl font-extrabold tabular-nums text-blue-600 dark:text-cyan-200">{value}</p></div>)}
       </div>
-      <div className="mt-4 flex gap-2" role="group" aria-label="제품군 선택">{(["통합","가상화","PaaS"] as const).map(option=><button key={option} type="button" aria-pressed={family===option} onClick={()=>{setFamily(option);setKind("전체");setWinner("");}} className={`${pill} ${family===option?"border-blue-600 bg-blue-600 text-white":"bg-white dark:bg-[#101f36]"}`}>{option}</button>)}</div>
       <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#101f36]">
         <div className="flex gap-1">{(["all", 30, 90, 180, 365] as const).map(day => <button key={day} type="button" onClick={() => { setRange(day); setWinner(""); }} className={`${pill} ${range === day ? "border-blue-500 bg-blue-600 text-white" : ""}`}>{day === "all" ? "기간 전체" : `${day}일`}</button>)}</div>
         <label className="text-sm font-semibold">조회 연도</label>
@@ -192,7 +188,7 @@ export default function RecentAwardsPage() {
         <span className="text-sm">~</span>
         <select aria-label="종료 연도" value={endYear} onChange={e => { setEndYear(e.target.value); if (e.target.value < startYear) setStartYear(e.target.value); setRange("all"); setWinner(""); }} className={`${pill} bg-transparent`}>{["2024", "2025", "2026"].map(y => <option key={y} value={y}>{y}년</option>)}</select>
         <input aria-label="사업명, 낙찰업체, 수요기관 검색" placeholder="사업명·낙찰업체·수요기관 검색 (업체 전체 직접 낙찰 포함)" value={search} onChange={e => { setSearch(e.target.value); }} className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/10" />
-        <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="paas">PaaS</option><option value="direct_other">업체 직접 낙찰</option></select>
+        <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="direct_other">업체 직접 낙찰</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
       </div>
       <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년`} · 가상화·HCI 낙찰 {samePeriodAwards.length}건 (제조사 확인 {attributedAwards}건) · 추적업체 직접 낙찰은 별도 분류 · 제조사 공급 순위는 쇼핑몰 납품요구 기준</p>

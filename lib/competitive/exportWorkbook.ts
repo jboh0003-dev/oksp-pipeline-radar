@@ -1,4 +1,3 @@
-import {belongsToFamily, productFamily, type ProductFamily} from "./productFamily";
 import {broadRegion} from "./region";
 import {vendorFromAward, vendorFromDelivery, isCompetitiveDeliveryProduct, classifyDeliveryProduct} from "./vendorEvidence";
 
@@ -11,12 +10,12 @@ const text=(value:unknown)=>String(value??"").replace(/^[=+@\-\t\r]/,"'$&");
 
 export async function exportCompetitiveWorkbook(input:{
   deliveries:Delivery[];awards:Award[];directAwards:Direct[];
-  year:string;vendor:string;type:string;family:ProductFamily;agency:string;si:string;query:string;
+  year:string;vendor:string;type:string;agency:string;si:string;query:string;
 }) {
   const ExcelJS=(await import("exceljs")).default;
   const workbook=new ExcelJS.Workbook();
   workbook.creator="Pipeline Maker";
-  const selected=input.deliveries.filter(r=>(isCompetitiveDeliveryProduct(r.product_name)||productFamily(r.product_name)==="PaaS")&&vendorFromDelivery(r));
+  const selected=input.deliveries.filter(r=>isCompetitiveDeliveryProduct(r.product_name)&&vendorFromDelivery(r));
   const agencies=[...new Set([...selected.map(r=>r.customer_name),...input.awards.map(r=>r.customer),...input.directAwards.map(r=>r.customer)].filter((x):x is string=>!!x))];
   const regions:Record<string,string>={};
   // 마스터 매칭 실패 시에도 다운로드는 가능하다. 해당 건은 '지역 미확인'으로 남긴다.
@@ -30,15 +29,15 @@ export async function exportCompetitiveWorkbook(input:{
   const region=(agency:string|null)=>broadRegion(regions[agency??""],agency);
   const deliveries=selected.filter(r=>{
     const v=vendorFromDelivery(r)?.vendor;
-    return belongsToFamily(r.product_name,input.family)&&(input.year==="전체"||r.receipt_date?.startsWith(input.year))&&(input.vendor==="전체"||v===input.vendor)&&
+    return (input.year==="전체"||r.receipt_date?.startsWith(input.year))&&(input.vendor==="전체"||v===input.vendor)&&
       (input.agency==="전체"||r.customer_name===input.agency)&&(input.si==="전체"||input.si===r.supplier_business_no)&&
       (input.type==="전체"||classifyDeliveryProduct(r.product_name)===input.type)&&
       (!input.query||[r.product_name,r.brand,r.supplier_name,r.customer_name,r.delivery_request_no].some(x=>String(x??"").toLowerCase().includes(input.query.toLowerCase())));
   });
-  const awards=input.awards.filter(r=>vendorFromAward(r)&&belongsToFamily(r.project,input.family)&&(input.year==="전체"||r.award_date?.startsWith(input.year))&&
+  const awards=input.awards.filter(r=>vendorFromAward(r)&&(input.year==="전체"||r.award_date?.startsWith(input.year))&&
     (input.vendor==="전체"||vendorFromAward(r)?.vendor===input.vendor)&&(input.agency==="전체"||r.customer===input.agency)&&
     (!input.query||[r.project,r.customer,r.winner_name,r.bid_no].some(x=>String(x??"").toLowerCase().includes(input.query.toLowerCase()))));
-  const direct=input.directAwards.filter(r=>input.family==="통합"&&(input.year==="전체"||r.award_date?.startsWith(input.year))&&
+  const direct=input.directAwards.filter(r=>(input.year==="전체"||r.award_date?.startsWith(input.year))&&
     (input.vendor==="전체"||r.competitor===input.vendor)&&(input.agency==="전체"||r.customer===input.agency));
   const rows=deliveries.map(r=>({vendor:vendorFromDelivery(r)!.vendor,region:region(r.customer_name),amount:won(r.amount),year:r.receipt_date.slice(0,4)}));
   const makeSheet=(title:string,headers:string[],data:(string|number)[][])=>{

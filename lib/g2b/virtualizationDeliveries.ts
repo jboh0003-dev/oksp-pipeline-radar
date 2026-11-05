@@ -1,6 +1,5 @@
 import { buildG2bUrl, fetchG2bApi } from "@/lib/g2b/client";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { productFamily } from "@/lib/competitive/productFamily";
 import { VIRTUALIZATION_KEYWORDS } from "@/lib/competitive/keywords";
 export { VIRTUALIZATION_KEYWORDS } from "@/lib/competitive/keywords";
 
@@ -15,7 +14,7 @@ export type DeliveryItem = {
   product_category: string | null; brand: string | null; supplier_name: string | null;
   supplier_business_no: string | null; customer_name: string | null;
   amount: number | null; quantity: number | null; final_request: boolean;
-  classification: "virtualization" | "paas" | "related" | "review"; matched_keyword: string;
+  classification: "virtualization" | "related" | "review"; matched_keyword: string;
   source_type: "g2b_shopping_delivery"; raw_data: RawItem; updated_at: string;
 };
 const str = (value: unknown) => String(value ?? "").trim();
@@ -45,20 +44,17 @@ function classifyProduct(productName: string): { brand: string | null; classific
   // Identify the maker from the actual G2B product name; NEVER from a reseller's name.
   const brands: Array<[RegExp, string]> = [
     [/에이블클라우드|에이블스택|ablestack|abelstack|ABLECLOUD/i, "에이블클라우드 / ABLESTACK"],
-    [/contrabass|콘트라베이스|콘트라바스|\bviola\b|비올라/i, "오케스트로"],
+    [/contrabass|콘트라베이스|콘트라바스|\bviola\b|비올라/i, "오케스트로 / CONTRABASS · VIOLA"],
     [/nutanix|뉴타닉스|acropolis|\bAHV\b/i, "Nutanix"],
-    [/vmware|vsphere|vcenter|esxi|\bvcf\b|\bvsan\b|vcloud|\btanzu\b/i, "VMware"],
-    [/se\s*cloudit|se클라우드잇/i, "이노그리드 / SECloudit"],
-    [/cocktail\s*cloud|칵테일\s*클라우드/i, "나무기술 / Cocktail Cloud"],
-    [/\baccordion\b|아코디언/i, "맨텍솔루션 / Accordion"],
+    [/vmware|vsphere|vcenter|esxi|\bvcf\b|\bvsan\b|vcloud/i, "VMware"],
     [/openstackit|오픈스택잇|클라우드잇|cloud.?it/i, "이노그리드 / CloudIT"],
-    [/red\s*hat.{0,20}(virtualization|openshift)|\bopenshift\b|오픈시프트|\brhocp\b|레드햇.{0,12}가상화/i, "Red Hat"],
+    [/red\s*hat.{0,20}(virtualization|openshift)|openshift.{0,20}virtualization|레드햇.{0,12}가상화/i, "Red Hat"],
     [/proxmox|프록스목스/i, "Proxmox"],
   ];
   const brand = brands.find(([pattern]) => pattern.test(productName))?.[1] ?? null;
-  const family = productFamily(productName);
-  if (family === "PaaS") return {brand, classification:"paas"};
-  if (family === "가상화") return {brand, classification:"virtualization"};
+  if (brand || /가상화|하이퍼바이저|hypervisor|hyper-v|\bhci\b|하이퍼컨버지드|하이퍼컨버전스|virtualization/i.test(productName)) {
+    return {brand, classification: "virtualization"};
+  }
   return {brand:null,classification:"review"};
 }
 function normalize(item: RawItem, keyword: string): DeliveryItem | null {
@@ -70,7 +66,7 @@ function normalize(item: RawItem, keyword: string): DeliveryItem | null {
   // Query APIs can return fuzzy or generic product matches; reject non-matching item names.
   if (!name.toLowerCase().includes(keyword.toLowerCase())) return null;
   const { brand, classification } = classifyProduct(name);
-  if (classification !== "virtualization" && classification !== "paas") return null;
+  if (classification !== "virtualization") return null;
   return {
     external_key: `delivery:${requestNo}:${serial}`,
     delivery_request_no: requestNo, delivery_change_order: str(item.dlvrReqChgOrd) || null,

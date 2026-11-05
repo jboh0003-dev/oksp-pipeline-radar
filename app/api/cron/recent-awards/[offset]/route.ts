@@ -13,8 +13,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ off
   const today = kstTodayYmd();
   const date = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1 - Number(raw), 1));
   try {
-    const [result, paas] = await Promise.all(["core", "paas"].map(group => collectVirtualizationAwardCandidatesMonth(date.getUTCFullYear(), date.getUTCMonth() + 1, true, group as "core" | "paas", true)));
-    return NextResponse.json({ ok: result.ok && paas.ok, year: result.year, month: result.month, matchedCount: result.matchedCount + paas.matchedCount, insertedCount: result.insertedCount + paas.insertedCount, updatedCount: result.updatedCount + paas.updatedCount, errors: [...result.errors, ...paas.errors] }, { status: result.ok && paas.ok ? 200 : 502 });
+    const result = await collectVirtualizationAwardCandidatesMonth(date.getUTCFullYear(), date.getUTCMonth() + 1, true, "core", true);
+    return NextResponse.json({ ok: result.ok, year: result.year, month: result.month, matchedCount: result.matchedCount, insertedCount: result.insertedCount, updatedCount: result.updatedCount, errors: result.errors }, { status: result.ok ? 200 : 502 });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "수집 실패" }, { status: 502 });
   }

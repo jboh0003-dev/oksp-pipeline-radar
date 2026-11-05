@@ -63,18 +63,6 @@
     {
       "path": "/api/cron/recent-deliveries/2",
       "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/paas-history/0",
-      "schedule": "10 2 * * *"
-    },
-    {
-      "path": "/api/cron/paas-history/1",
-      "schedule": "20 2 * * *"
-    },
-    {
-      "path": "/api/cron/paas-history/2",
-      "schedule": "30 2 * * *"
     }
   ]
 }

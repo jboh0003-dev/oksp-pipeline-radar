@@ -170,8 +170,12 @@ async function handle(request: NextRequest) {
 
     if (roundPages.length === 0) break;
 
-    const roundResults = await Promise.allSettled(
-      roundPages.map(async (page) => {
+    // 나라장터가 느릴 때 다섯 페이지의 모든 엔드포인트를 한꺼번에 열면
+    // 동일 lane 안에서도 timeout이 연쇄적으로 발생한다.
+    const roundResults: PromiseSettledResult<{ page: number; body: CollectResponse }>[] = [];
+    for (let index = 0; index < roundPages.length; index += 2) {
+      const batch = roundPages.slice(index, index + 2);
+      roundResults.push(...await Promise.allSettled(batch.map(async (page) => {
         const result = await runCollect({
           targetCount: 1,
           lookbackDays: LOOKBACK_DAYS,
@@ -179,8 +183,8 @@ async function handle(request: NextRequest) {
           pageEnd: page,
         });
         return { page, body: result.body };
-      }),
-    );
+      })));
+    }
 
     let roundFetchedCount = 0;
 

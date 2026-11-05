@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
-import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, isDirectVendorSupply, hasConfirmedVendorBusinessNo, vendorFromProduct, type VendorId} from "@/lib/competitive/vendorEvidence";
-import {belongsToFamily, type ProductFamily} from "@/lib/competitive/productFamily";
+import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, isDirectVendorSupply, hasConfirmedVendorBusinessNo, type VendorId} from "@/lib/competitive/vendorEvidence";
 import {VIRTUALIZATION_KEYWORDS} from "@/lib/competitive/keywords";
 import {authedFetch} from "@/lib/authedFetch";
 import {useAuth} from "@/lib/auth";
@@ -102,7 +101,6 @@ export default function CompetitiveAnalysisPage(){
   const [year,setYear]=useState("2026");
   const [vendor,setVendor]=useState<"전체"|VendorId>("전체");
   const [type,setType]=useState("전체");
-  const [family,setFamily]=useState<ProductFamily>("통합");
   const [agency,setAgency]=useState("전체");
   const [si,setSi]=useState("전체");
   const [query,setQuery]=useState("");
@@ -142,11 +140,11 @@ export default function CompetitiveAnalysisPage(){
     return ()=>{cancelled=true;};
   },[refreshKey]);
 
-  const relevantDeliveries=useMemo(()=>deliveries.filter(r=>isCompetitiveDeliveryProduct(r.product_name)||r.classification==="paas"),[deliveries]);
+  const relevantDeliveries=useMemo(()=>deliveries.filter(r=>isCompetitiveDeliveryProduct(r.product_name)),[deliveries]);
   const comparableAwards=useMemo(()=>{
     const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
-    return candidates.filter(row=>inYear(row.award_date,year)&&belongsToFamily(row.project,family)&&isRecentAward(row,today));
-  },[candidates,year,family]);
+    return candidates.filter(row=>inYear(row.award_date,year)&&isRecentAward(row,today));
+  },[candidates,year]);
   const comparableAttributed=comparableAwards.filter(row=>vendorFromAward(row)!=null).length;
   const agencies=useMemo(()=>[...new Set([...candidates.map(x=>x.customer),...relevantDeliveries.map(x=>x.customer_name)]
     .filter((s):s is string=>!!s))].sort((a,b)=>a.localeCompare(b,"ko-KR")),[candidates,relevantDeliveries]);
@@ -166,7 +164,7 @@ export default function CompetitiveAnalysisPage(){
   const filteredAwards=useMemo(()=>{
     const q=query.trim().toLocaleLowerCase();
     return candidates.filter(r=>{
-      if(r.classification==="review"||!inYear(r.award_date,year)||!belongsToFamily(r.project,family))return false;
+      if(r.classification==="review"||!inYear(r.award_date,year))return false;
       const attribution=vendorFromAward(r);
       if(vendor!=="전체"&&attribution?.vendor!==vendor)return false;
       if(type!=="전체"&&r.classification!==type)return false;
@@ -175,20 +173,20 @@ export default function CompetitiveAnalysisPage(){
       return !q||[r.project,r.customer,r.bid_no,r.winner_name,r.product_brand,attribution?.vendor]
         .filter(Boolean).join(" ").toLocaleLowerCase().includes(q);
     });
-  },[candidates,year,vendor,type,family,agency,si,query]);
+  },[candidates,year,vendor,type,agency,si,query]);
   const filteredDeliveries=useMemo(()=>{
     const q=query.trim().toLocaleLowerCase();
     return relevantDeliveries.filter(r=>{
-      if(!inYear(r.receipt_date,year)||!belongsToFamily(r.product_name,family))return false;
+      if(!inYear(r.receipt_date,year))return false;
       const attribution=vendorFromDelivery(r);
       if(vendor!=="전체"&&attribution?.vendor!==vendor)return false;
       if(agency!=="전체"&&r.customer_name!==agency)return false;
       if(si!=="전체"&&r.supplier_business_no!==si)return false;
-      if(type!=="전체"&&r.classification!=="paas"&&classifyDeliveryProduct(r.product_name)!==type)return false;
+      if(type!=="전체"&&classifyDeliveryProduct(r.product_name)!==type)return false;
       return !q||[r.product_name,r.brand,r.supplier_name,r.customer_name,r.delivery_request_no,r.product_id,attribution?.vendor]
         .filter(Boolean).join(" ").toLocaleLowerCase().includes(q);
     });
-  },[relevantDeliveries,year,vendor,type,family,agency,si,query]);
+  },[relevantDeliveries,year,vendor,type,agency,si,query]);
 
   const verifiedAwards=useMemo(()=>filteredAwards.filter(r=>vendorFromAward(r)!=null),[filteredAwards]);
   const unverifiedAwards=useMemo(()=>filteredAwards.filter(r=>vendorFromAward(r)==null),[filteredAwards]);
@@ -213,26 +211,15 @@ export default function CompetitiveAnalysisPage(){
   const ranking=useMemo(()=>vendorStats.filter(row=>row.deliveryCount>0).sort((a,b)=>
     b.deliveryAmount-a.deliveryAmount||b.deliveryCount-a.deliveryCount||a.label.localeCompare(b.label,"ko-KR")
   ),[vendorStats]);
-  const paasAwardRanking=useMemo(()=>{
-    const map=new Map<VendorId,{vendor:VendorId;count:number;amount:number}>();
-    for(const row of verifiedAwards){
-      const vendor=vendorFromProduct(row.project);
-      if(!vendor||!row.amount)continue;
-      const prior=map.get(vendor)??{vendor,count:0,amount:0};
-      map.set(vendor,{vendor,count:prior.count+1,amount:prior.amount+money(row.amount)});
-    }
-    return [...map.values()].sort((a,b)=>b.amount-a.amount||b.count-a.count);
-  },[verifiedAwards]);
   const comparisonDeliveries=useMemo(()=>relevantDeliveries.filter(r=>{
     const attribution=vendorFromDelivery(r);
     const q=query.trim().toLocaleLowerCase();
     return (vendor==="전체"||attribution?.vendor===vendor)&&
-      belongsToFamily(r.product_name,family)&&
-      (type==="전체"||r.classification==="paas"||classifyDeliveryProduct(r.product_name)===type)&&
+      (type==="전체"||classifyDeliveryProduct(r.product_name)===type)&&
       (agency==="전체"||r.customer_name===agency)&&
       (si==="전체"||r.supplier_business_no===si)&&
       (!q||[r.product_name,r.brand,r.supplier_name,r.customer_name,r.delivery_request_no,r.product_id,attribution?.vendor].filter(Boolean).join(" ").toLocaleLowerCase().includes(q))&&attribution!=null;
-  }),[relevantDeliveries,vendor,type,family,agency,si,query]);
+  }),[relevantDeliveries,vendor,type,agency,si,query]);
   const yearly=useMemo(()=>[2024,2025,2026].map(y=>{
     const ds=comparisonDeliveries.filter(x=>String(x.receipt_date??"").startsWith(String(y)));
     return {year:y,deliveryCount:ds.length,deliveryAmount:ds.reduce((s,x)=>s+money(x.amount),0)};
@@ -255,9 +242,9 @@ export default function CompetitiveAnalysisPage(){
   const shownDeliveries=orderDeliveries.slice((deliveryPage-1)*pageSize,deliveryPage*pageSize);
   const awardPages=Math.max(1,Math.ceil(orderAwards.length/pageSize));
   const deliveryPages=Math.max(1,Math.ceil(orderDeliveries.length/pageSize));
-  useEffect(()=>{setAwardPage(1);setDeliveryPage(1);},[year,vendor,type,family,agency,si,query,pageSize,awardSort,deliverySort]);
+  useEffect(()=>{setAwardPage(1);setDeliveryPage(1);},[year,vendor,type,agency,si,query,pageSize,awardSort,deliverySort]);
 
-  function reset(){setFamily("통합");setYear("2026");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");}
+  function reset(){setYear("2026");setVendor("전체");setType("전체");setAgency("전체");setSi("전체");setQuery("");}
   function refresh(){reset();setDrilldown(null);setErrors({});setReady({});setRefreshKey(key=>key+1);}
   function openDrilldown(next:{vendor:VendorId;group:SupplyGroup}){setDetailMonth(null);setDrilldown(next);}
   async function collectLatest(){
@@ -266,7 +253,7 @@ export default function CompetitiveAnalysisPage(){
     const [yearNow,monthNow]=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit"}).format(new Date()).split("-").map(Number);
     const tasks=[
       ...VIRTUALIZATION_KEYWORDS.map(keyword=>({url:"/api/admin/virtualization-backfill",body:{year:yearNow,month:monthNow,keyword}})),
-      ...(["core","nutanix","vmware","redhat","proxmox","paas"] as const).map(group=>({url:"/api/admin/virtualization-candidates",body:{year:yearNow,month:monthNow,group,persist:true}})),
+      ...(["core","nutanix","vmware","redhat","proxmox"] as const).map(group=>({url:"/api/admin/virtualization-candidates",body:{year:yearNow,month:monthNow,group,persist:true}})),
       {url:"/api/admin/competitive-awards-backfill",body:{year:yearNow,month:monthNow,persist:true}},
     ];
     let failed=0;
@@ -285,7 +272,7 @@ export default function CompetitiveAnalysisPage(){
   async function downloadExcel(){
     if(exporting)return;setExporting(true);
     try{const {exportCompetitiveWorkbook}=await import("@/lib/competitive/exportWorkbook");
-      await exportCompetitiveWorkbook({deliveries,awards:candidates,directAwards,year,vendor,type,family,agency,si,query});
+      await exportCompetitiveWorkbook({deliveries,awards:candidates,directAwards,year,vendor,type,agency,si,query});
     }catch(error){setCollectMessage(`엑셀 생성 실패: ${error instanceof Error?error.message:String(error)}`);}finally{setExporting(false);}
   }
   const deliveryAmount=verifiedDeliveries.reduce((sum,r)=>sum+money(r.amount),0);
@@ -301,7 +288,7 @@ export default function CompetitiveAnalysisPage(){
   const drilldownTitle=drilldown?`${drilldown.vendor} · ${{all:"전체 조달 공급",direct:"제조사 직접 공급",other:"타 공급업체 공급",unidentified:"공급경로 미확인"}[drilldown.group]}`:"";
   const visibleDrilldownRows=detailMonth?drilldownRows.filter(row=>row.receipt_date.startsWith(detailMonth)):drilldownRows;
   const noData=ready.award&&ready.delivery&&!verifiedAwards.length&&!verifiedDeliveries.length;
-  const directVisible=directAwards.filter(r=>belongsToFamily(r.project,family)&&inYear(r.award_date,year)&&
+  const directVisible=directAwards.filter(r=>inYear(r.award_date,year)&&
     (vendor==="전체"||r.competitor===vendor)&&
     (si==="전체"||r.winner_business_no===si)&&
     (agency==="전체"||r.customer===agency)&&
@@ -311,11 +298,10 @@ export default function CompetitiveAnalysisPage(){
     <div className="mx-auto w-full max-w-[1850px] px-4 py-5 sm:px-6">
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-2xl bg-slate-900 px-5 py-4 text-white dark:ring-1 dark:ring-white/10">
         <div><p className="text-sm font-semibold tracking-widest text-cyan-300">PIPELINE MAKER</p>
-          <h1 className="mt-1 text-xl font-bold sm:text-2xl">가상화·PaaS 경쟁분석</h1></div>
+          <h1 className="mt-1 text-xl font-bold sm:text-2xl">가상화 벤더 경쟁분석</h1></div>
         <div className="text-sm text-slate-300">{year==="전체"?"2024–2026년 전체":year+"년"} · 나라장터 기준</div>
       </header>
 
-      <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="제품군 선택">{(["통합","가상화","PaaS"] as const).map(option=><button key={option} type="button" aria-pressed={family===option} onClick={()=>{setFamily(option);setType("전체");setVendor("전체");setDrilldown(null);}} className={`rounded-lg border px-4 py-2 text-sm font-bold ${family===option?"border-blue-600 bg-blue-600 text-white":"border-slate-200 bg-white text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"}`}>{option}</button>)}</div>
       <div className="mb-4 grid grid-cols-2 gap-2.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-slate-900/70 md:grid-cols-3 xl:grid-cols-5">
         <Field label="분석 연도"><select className={inputClass} value={year} onChange={e=>setYear(e.target.value)}>
           {YEARS.map(y=><option key={y} value={y}>{y==="전체"?"2024~2026년 전체":y+"년"}</option>)}
@@ -323,7 +309,7 @@ export default function CompetitiveAnalysisPage(){
         <Field label="경쟁 제조사"><select className={inputClass} value={vendor} onChange={e=>setVendor(e.target.value as typeof vendor)}>
           <option value="전체">전체 제조사</option>{VENDORS.filter(v=>relevantDeliveries.some(r=>vendorFromDelivery(r)?.vendor===v.id)).map(v=><option value={v.id} key={v.id}>{v.label}</option>)}
         </select></Field>
-        <Field label="세부 분야"><select className={inputClass} value={type} disabled={family==="PaaS"} onChange={e=>setType(e.target.value)}>
+        <Field label="가상화 분야"><select className={inputClass} value={type} onChange={e=>setType(e.target.value)}>
           <option value="전체">전체 분야</option>{Object.entries(TYPE_LABELS).filter(([id])=>id!=="review").map(([id,label])=><option key={id} value={id}>{label}</option>)}
         </select></Field>
         <Field label="수요기관"><select className={inputClass} value={agency} onChange={e=>setAgency(e.target.value)}>
@@ -378,12 +364,6 @@ export default function CompetitiveAnalysisPage(){
         </div>
       </section>
 
-      {family==="PaaS"&&paasAwardRanking.length>0&&<section className="mb-5 rounded-xl border border-slate-200 bg-white p-5 dark:border-white/10 dark:bg-slate-900/70">
-        <h2 className="text-xl font-bold">PaaS 제품명 확인 낙찰</h2>
-        <div className="mt-3 space-y-2">{paasAwardRanking.map(row=><button type="button" key={row.vendor} onClick={()=>setVendor(row.vendor)} className="flex w-full items-center gap-3 rounded-lg border border-slate-100 px-3 py-2 text-left hover:border-blue-300 dark:border-white/10">
-          <span className="w-32 shrink-0 font-bold">{row.vendor}</span><div className="h-2 flex-1 rounded bg-slate-100 dark:bg-slate-700"><div className="h-full rounded bg-blue-600" style={{width:`${Math.max(1,100*row.amount/paasAwardRanking[0].amount)}%`}}/></div><strong className="w-28 text-right tabular-nums text-blue-700 dark:text-blue-300">{fmtCompact(row.amount)}</strong><span className="w-12 text-right tabular-nums text-sm">{row.count}건</span>
-        </button>)}</div>
-      </section>}
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-white/10">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white">제조사별 조달 공급 현황</h2>
@@ -428,7 +408,7 @@ export default function CompetitiveAnalysisPage(){
           <div className="mt-4 grid grid-cols-2 gap-2.5">
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">분석 대상 제품 구매</p><p className="mt-1 text-lg font-bold tabular-nums">{filteredDeliveries.length}건</p></div>
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">제조사 확인 제품</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedDeliveries.length}건</p></div>
-            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">{family==="PaaS"?"제조사 미확인 제품":"기타 가상화 제품"}</p><p className="mt-1 text-lg font-bold tabular-nums">{otherDeliveries.length}건</p></div>
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">기타 가상화 제품</p><p className="mt-1 text-lg font-bold tabular-nums">{otherDeliveries.length}건</p></div>
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">별도 입찰사업</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedAwards.length}건</p></div>
           </div>
         </div>
@@ -501,7 +481,7 @@ export default function CompetitiveAnalysisPage(){
 
       <details className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          제조사 미확인 {family==="PaaS"?"PaaS":"가상화"} 사업 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span> <span className="ml-2 text-sm font-normal text-slate-400">벤더 실적에서 제외 · 클릭하여 검토</span>
+          제조사 미확인 가상화 사업 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span> <span className="ml-2 text-sm font-normal text-slate-400">벤더 실적에서 제외 · 클릭하여 검토</span>
         </summary>
         <div className="max-h-[520px] overflow-auto border-t border-slate-100 dark:border-white/10">
           <table className="w-full min-w-[800px] text-left text-sm"><thead className="sticky top-0 bg-slate-50 dark:bg-slate-800"><tr className="text-slate-500">

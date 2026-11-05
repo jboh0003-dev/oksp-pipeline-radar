@@ -96,6 +96,7 @@ export async function fetchPreSpecNotices(
         .from("pre_spec_notices")
         .select("*", { count: offset === 0 ? "exact" : undefined })
         .order("updated_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
         .range(offset, offset + PRE_SPEC_DISPLAY_FETCH_CHUNK - 1);
 
       if (error) {

@@ -365,6 +365,8 @@ export default function PreSpecPage() {
       if (result.error) {
         setErrorMessage(result.error);
         console.warn("[pre-spec/page] DB 조회 실패:", result.error);
+        // 일시적인 DB 오류가 정상적으로 표시 중인 목록과 캐시를 지우지 않도록 한다.
+        return { newCount: 0 };
       } else {
         setErrorMessage(null);
       }
@@ -427,8 +429,6 @@ export default function PreSpecPage() {
     viewMode,
     productFilter,
     territoryFilter,
-    budgetFilter,
-    dailyNewKeys,
   ]);
 
   /** G2B 사전규격 수집 — admin 전용 (/api/pre-spec/collect). */
