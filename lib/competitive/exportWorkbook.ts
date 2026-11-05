@@ -1,4 +1,4 @@
-import {belongsToFamily, type ProductFamily} from "./productFamily";
+import {belongsToFamily, productFamily, type ProductFamily} from "./productFamily";
 import {broadRegion} from "./region";
 import {vendorFromAward, vendorFromDelivery, isCompetitiveDeliveryProduct, classifyDeliveryProduct} from "./vendorEvidence";
 
@@ -16,7 +16,7 @@ export async function exportCompetitiveWorkbook(input:{
   const ExcelJS=(await import("exceljs")).default;
   const workbook=new ExcelJS.Workbook();
   workbook.creator="Pipeline Maker";
-  const selected=input.deliveries.filter(r=>(isCompetitiveDeliveryProduct(r.product_name)||r.product_name.toLowerCase().includes("paas")||r.product_name.toLowerCase().includes("viola"))&&vendorFromDelivery(r));
+  const selected=input.deliveries.filter(r=>(isCompetitiveDeliveryProduct(r.product_name)||productFamily(r.product_name)==="PaaS")&&vendorFromDelivery(r));
   const agencies=[...new Set([...selected.map(r=>r.customer_name),...input.awards.map(r=>r.customer),...input.directAwards.map(r=>r.customer)].filter((x):x is string=>!!x))];
   const regions:Record<string,string>={};
   // 마스터 매칭 실패 시에도 다운로드는 가능하다. 해당 건은 '지역 미확인'으로 남긴다.

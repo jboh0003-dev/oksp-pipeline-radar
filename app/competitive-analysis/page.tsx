@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
-import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, isDirectVendorSupply, hasConfirmedVendorBusinessNo, type VendorId} from "@/lib/competitive/vendorEvidence";
+import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, isDirectVendorSupply, hasConfirmedVendorBusinessNo, vendorFromProduct, type VendorId} from "@/lib/competitive/vendorEvidence";
 import {belongsToFamily, type ProductFamily} from "@/lib/competitive/productFamily";
 import {VIRTUALIZATION_KEYWORDS} from "@/lib/competitive/keywords";
 import {authedFetch} from "@/lib/authedFetch";
@@ -213,6 +213,16 @@ export default function CompetitiveAnalysisPage(){
   const ranking=useMemo(()=>vendorStats.filter(row=>row.deliveryCount>0).sort((a,b)=>
     b.deliveryAmount-a.deliveryAmount||b.deliveryCount-a.deliveryCount||a.label.localeCompare(b.label,"ko-KR")
   ),[vendorStats]);
+  const paasAwardRanking=useMemo(()=>{
+    const map=new Map<VendorId,{vendor:VendorId;count:number;amount:number}>();
+    for(const row of verifiedAwards){
+      const vendor=vendorFromProduct(row.project);
+      if(!vendor||!row.amount)continue;
+      const prior=map.get(vendor)??{vendor,count:0,amount:0};
+      map.set(vendor,{vendor,count:prior.count+1,amount:prior.amount+money(row.amount)});
+    }
+    return [...map.values()].sort((a,b)=>b.amount-a.amount||b.count-a.count);
+  },[verifiedAwards]);
   const comparisonDeliveries=useMemo(()=>relevantDeliveries.filter(r=>{
     const attribution=vendorFromDelivery(r);
     const q=query.trim().toLocaleLowerCase();
@@ -368,6 +378,12 @@ export default function CompetitiveAnalysisPage(){
         </div>
       </section>
 
+      {family==="PaaS"&&paasAwardRanking.length>0&&<section className="mb-5 rounded-xl border border-slate-200 bg-white p-5 dark:border-white/10 dark:bg-slate-900/70">
+        <h2 className="text-xl font-bold">PaaS 제품명 확인 낙찰</h2>
+        <div className="mt-3 space-y-2">{paasAwardRanking.map(row=><button type="button" key={row.vendor} onClick={()=>setVendor(row.vendor)} className="flex w-full items-center gap-3 rounded-lg border border-slate-100 px-3 py-2 text-left hover:border-blue-300 dark:border-white/10">
+          <span className="w-32 shrink-0 font-bold">{row.vendor}</span><div className="h-2 flex-1 rounded bg-slate-100 dark:bg-slate-700"><div className="h-full rounded bg-blue-600" style={{width:`${Math.max(1,100*row.amount/paasAwardRanking[0].amount)}%`}}/></div><strong className="w-28 text-right tabular-nums text-blue-700 dark:text-blue-300">{fmtCompact(row.amount)}</strong><span className="w-12 text-right tabular-nums text-sm">{row.count}건</span>
+        </button>)}</div>
+      </section>}
       <section className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-white/10">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white">제조사별 조달 공급 현황</h2>
@@ -412,7 +428,7 @@ export default function CompetitiveAnalysisPage(){
           <div className="mt-4 grid grid-cols-2 gap-2.5">
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">분석 대상 제품 구매</p><p className="mt-1 text-lg font-bold tabular-nums">{filteredDeliveries.length}건</p></div>
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">제조사 확인 제품</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedDeliveries.length}건</p></div>
-            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">기타 가상화 제품</p><p className="mt-1 text-lg font-bold tabular-nums">{otherDeliveries.length}건</p></div>
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">{family==="PaaS"?"제조사 미확인 제품":"기타 가상화 제품"}</p><p className="mt-1 text-lg font-bold tabular-nums">{otherDeliveries.length}건</p></div>
             <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50"><p className="text-sm text-slate-500">별도 입찰사업</p><p className="mt-1 text-lg font-bold tabular-nums">{verifiedAwards.length}건</p></div>
           </div>
         </div>
@@ -485,7 +501,7 @@ export default function CompetitiveAnalysisPage(){
 
       <details className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          제조사 미확인 가상화 사업 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span> <span className="ml-2 text-sm font-normal text-slate-400">벤더 실적에서 제외 · 클릭하여 검토</span>
+          제조사 미확인 {family==="PaaS"?"PaaS":"가상화"} 사업 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span> <span className="ml-2 text-sm font-normal text-slate-400">벤더 실적에서 제외 · 클릭하여 검토</span>
         </summary>
         <div className="max-h-[520px] overflow-auto border-t border-slate-100 dark:border-white/10">
           <table className="w-full min-w-[800px] text-left text-sm"><thead className="sticky top-0 bg-slate-50 dark:bg-slate-800"><tr className="text-slate-500">
