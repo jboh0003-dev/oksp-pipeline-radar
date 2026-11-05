@@ -7,9 +7,11 @@ export const VENDORS = [
   { id: "오케스트로", label: "오케스트로", products: "CONTRABASS · VIOLA" },
   { id: "에이블클라우드", label: "에이블클라우드", products: "ABLESTACK" },
   { id: "Nutanix", label: "Nutanix", products: "AHV · NCI" },
-  { id: "VMware", label: "VMware", products: "vSphere · VCF" },
-  { id: "이노그리드", label: "이노그리드", products: "CloudIT · OpenStackit" },
-  { id: "Red Hat", label: "Red Hat", products: "OpenShift Virtualization" },
+  { id: "VMware", label: "VMware", products: "vSphere · VCF · Tanzu" },
+  { id: "이노그리드", label: "이노그리드", products: "CloudIT · OpenStackit · SECloudit" },
+  { id: "Red Hat", label: "Red Hat", products: "OpenShift · OpenShift Virtualization" },
+  { id: "나무기술", label: "나무기술", products: "Cocktail Cloud" },
+  { id: "맨텍솔루션", label: "맨텍솔루션", products: "Accordion" },
   { id: "Proxmox", label: "Proxmox", products: "Proxmox VE" },
   { id: "파이오링크", label: "파이오링크", products: "POPCON HCI" },
   { id: "도시엔컴", label: "도시엔컴", products: "씨티클라우드" },
@@ -50,11 +52,13 @@ export function vendorFromProduct(text: string): VendorId | null {
   // do not identify a manufacturer and must not contribute to its sales totals.
   if (/에이블클라우드|ablecloud|ablestack|abelstack|에이블스택/i.test(text)) return "에이블클라우드";
   if (/오케스트로|okestro|contrabass|콘트라베이스|콘트라바스|(?:^|\W)viola(?:$|\W)|비올라/i.test(text)) return "오케스트로";
+  if (/cocktail\s*cloud|칵테일\s*클라우드/i.test(text)) return "나무기술";
+  if (/\baccordion\b|아코디언/i.test(text)) return "맨텍솔루션";
   if (/nutanix|뉴타닉스|acropolis/i.test(text) ||
       (/\bAHV\b/i.test(text) && /가상화|하이퍼바이저|hci|클라우드|virtualization/i.test(text))) return "Nutanix";
-  if (/vmware|vcenter|vsphere|esxi|\bVCF\b|\bvSAN\b|브이엠웨어/i.test(text)) return "VMware";
-  if (/이노그리드|innogrid|openstackit|오픈스택잇|클라우드잇|cloud.?it/i.test(text)) return "이노그리드";
-  if (/red\s*hat.{0,20}(?:virtualization|openshift)|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
+  if (/vmware|vcenter|vsphere|esxi|\bVCF\b|\bvSAN\b|브이엠웨어|\btanzu\b/i.test(text)) return "VMware";
+  if (/이노그리드|innogrid|openstackit|오픈스택잇|클라우드잇|cloud.?it|se\s*cloudit|se클라우드잇/i.test(text)) return "이노그리드";
+  if (/red\s*hat.{0,20}(?:virtualization|openshift)|\bopenshift\b|오픈시프트|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
   if (/proxmox|프록스목스/i.test(text)) return "Proxmox";
   if (/popcon\s*hci|파이오링크.{0,30}(hci|가상화)/i.test(text)) return "파이오링크";
   if (/씨티클라우드|citycloud|도시엔컴.{0,25}(가상화|hci)/i.test(text)) return "도시엔컴";

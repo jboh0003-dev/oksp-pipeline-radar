@@ -1,3 +1,4 @@
+import { productFamily } from "@/lib/competitive/productFamily";
 import { buildG2bUrl, fetchG2bApi } from "@/lib/g2b/client";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { kstTodayYmd } from "@/lib/g2b/competitiveAwards";
@@ -13,7 +14,7 @@ export const VIRTUALIZATION_BID_KEYWORD_GROUPS = {
   vmware: ["vSphere", "ESXi", "vSAN", "VMware"],
   redhat: ["OpenShift Virtualization", "Red Hat Virtualization", "오픈시프트 가상화"],
   proxmox: ["Proxmox", "프록스목스"],
-  paas: ["PaaS", "VIOLA", "쿠버네티스", "Kubernetes", "OpenShift", "오픈시프트", "K-PaaS", "Tanzu"],
+  paas: ["PaaS", "VIOLA", "쿠버네티스", "Kubernetes", "OpenShift", "오픈시프트", "K-PaaS", "Tanzu", "SECloudit", "SE클라우드잇", "Cocktail Cloud", "칵테일 클라우드", "Accordion", "아코디언"],
 } as const;
 export type VendorKeywordGroup = keyof typeof VIRTUALIZATION_BID_KEYWORD_GROUPS;
 const KINDS = [
@@ -51,13 +52,16 @@ function items(parsed: unknown): { total: number; rows: Raw[] } {
 }
 function productBrand(title: string): string | null {
   if (/에이블스택|ablestack|abelstack/i.test(title)) return "에이블클라우드";
+  if (/se\s*cloudit|se클라우드잇/i.test(title)) return "이노그리드";
+  if (/cocktail\s*cloud|칵테일\s*클라우드/i.test(title)) return "나무기술";
+  if (/\baccordion\b|아코디언/i.test(title)) return "맨텍솔루션";
   if (/클라우드잇|cloudit|openstackit|오픈스택잇/i.test(title)) return "이노그리드";
   if (/contrabass|콘트라베이스|viola|비올라/i.test(title)) return "오케스트로";
   if (/dstation|디스테이션/i.test(title)) return "틸론";
-  if (/vmware|vsphere|vcenter|esxi/i.test(title)) return "VMware";
+  if (/vmware|vsphere|vcenter|esxi|\btanzu\b/i.test(title)) return "VMware";
   if (/nutanix|뉴타닉스/i.test(title) ||
       (/\bAHV\b/i.test(title) && /가상화|하이퍼바이저|hci|클라우드|virtualization/i.test(title))) return "Nutanix";
-  if (/red\s*hat.{0,16}virtualization|openshift.{0,16}virtualization|레드햇.{0,12}가상화/i.test(title)) return "Red Hat";
+  if (/red\s*hat.{0,16}(?:virtualization|openshift)|\bopenshift\b|오픈시프트|레드햇.{0,12}가상화/i.test(title)) return "Red Hat";
   if (/proxmox|프록스목스/i.test(title)) return "Proxmox";
   return null;
 }
@@ -66,7 +70,7 @@ function classify(title: string): Classification {
   if (/(가상\s*화폐|암호화폐|블록체인|가상화\s*스위치|백본\s*가상화|네트워크\s*가상화|가상화.{0,8}물리모델|물리모델.{0,8}가상화|가상화.{0,10}수치해석)/i.test(title)) {
     return "review";
   }
-  if (/(\bviola\b|비올라|\bpaas\b|쿠버네티스|\bkubernetes\b|\bk8s\b|오픈시프트(?!\s*가상화)|\bopenshift\b(?!\s*virtualization)|\btanzu\b)/i.test(title) && !/가상화|virtualization|contrabass|콘트라베이스/i.test(title)) return "paas";
+  if (productFamily(title) === "PaaS") return "paas";
   if (/(가상화.{0,10}데스크톱|데스크톱.{0,10}가상화|가상\s*데스크톱|\bvdi\b|dstation|디스테이션|\bdaas\b|원격근무.{0,10}가상화|원격접속.{0,12}가상화|모바일.{0,8}가상화|가상화.{0,10}스마트오피스)/i.test(title)) {
     return "vdi";
   }

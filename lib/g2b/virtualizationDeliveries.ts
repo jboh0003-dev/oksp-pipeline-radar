@@ -47,9 +47,12 @@ function classifyProduct(productName: string): { brand: string | null; classific
     [/에이블클라우드|에이블스택|ablestack|abelstack|ABLECLOUD/i, "에이블클라우드 / ABLESTACK"],
     [/contrabass|콘트라베이스|콘트라바스|\bviola\b|비올라/i, "오케스트로"],
     [/nutanix|뉴타닉스|acropolis|\bAHV\b/i, "Nutanix"],
-    [/vmware|vsphere|vcenter|esxi|\bvcf\b|\bvsan\b|vcloud/i, "VMware"],
+    [/vmware|vsphere|vcenter|esxi|\bvcf\b|\bvsan\b|vcloud|\btanzu\b/i, "VMware"],
+    [/se\s*cloudit|se클라우드잇/i, "이노그리드 / SECloudit"],
+    [/cocktail\s*cloud|칵테일\s*클라우드/i, "나무기술 / Cocktail Cloud"],
+    [/\baccordion\b|아코디언/i, "맨텍솔루션 / Accordion"],
     [/openstackit|오픈스택잇|클라우드잇|cloud.?it/i, "이노그리드 / CloudIT"],
-    [/red\s*hat.{0,20}(virtualization|openshift)|openshift.{0,20}virtualization|레드햇.{0,12}가상화/i, "Red Hat"],
+    [/red\s*hat.{0,20}(virtualization|openshift)|\bopenshift\b|오픈시프트|레드햇.{0,12}가상화/i, "Red Hat"],
     [/proxmox|프록스목스/i, "Proxmox"],
   ];
   const brand = brands.find(([pattern]) => pattern.test(productName))?.[1] ?? null;
