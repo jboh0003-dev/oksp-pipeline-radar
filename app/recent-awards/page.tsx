@@ -155,8 +155,8 @@ export default function RecentAwardsPage() {
   }
 
   function download() {
-    const header = ["낙찰일", "공고번호", "사업명", "낙찰업체", "사업자번호", "수요기관", "분류", "사업 전체 낙찰금액(원)", "공고명에 확인된 제조사"];
-    const lines = [header, ...filtered.map(row => [row.award_date, row.bid_no, row.project, row.winner_name, row.winner_business_no, row.customer, category(row), row.amount, row.product_brand ?? "미확인"])];
+    const header = ["낙찰일", "공고번호", "사업명", "낙찰업체", "사업자번호", "수요기관", "분류", "사업 전체 낙찰금액(원)", "제조사(확인된 경우)"];
+    const lines = [header, ...filtered.map(row => [row.award_date, row.bid_no, row.project, row.winner_name, row.winner_business_no, row.customer, category(row), row.amount, vendorFromAward(row)?.vendor ?? ""])];
     const csv = "\uFEFF" + lines.map(line => line.map(value => {
       const raw = String(value ?? "");
       const safe = /^[=+\-@\t\r]/.test(raw) ? "'" + raw : raw;

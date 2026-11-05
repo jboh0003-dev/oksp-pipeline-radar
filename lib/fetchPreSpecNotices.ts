@@ -9,6 +9,13 @@ import { getSupabaseClient, getSupabaseConfigError } from "@/lib/supabase";
 /** Supabase 한 번 조회 청크. 전체 row 는 반복 조회해서 모두 가져온다. */
 export const PRE_SPEC_DISPLAY_FETCH_CHUNK = 1000;
 
+function kstDate(daysAgo = 0): string {
+  const date = new Date(Date.now() - daysAgo * 86_400_000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(date);
+}
+
 export type PreSpecDataSource = "supabase" | "empty";
 
 export type FetchPreSpecNoticesResult = {
@@ -90,11 +97,16 @@ export async function fetchPreSpecNotices(
     const rows: PreSpecDbRow[] = [];
     let offset = 0;
     let exactCount: number | null = null;
+    // 누적 보관된 수만 건 대신 화면에서 사용할 진행 중·최근 공고만 읽는다.
+    // 의견마감일이 비어 있어도 최근 등록된 공고는 놓치지 않는다.
+    const today = kstDate();
+    const recent = kstDate(7);
 
     while (true) {
       const { data, error, count } = await supabase
         .from("pre_spec_notices")
         .select("*", { count: offset === 0 ? "exact" : undefined })
+        .or(`opinion_deadline.gte.${today},open_date.gte.${recent}`)
         .order("updated_at", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
         .range(offset, offset + PRE_SPEC_DISPLAY_FETCH_CHUNK - 1);

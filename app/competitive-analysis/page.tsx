@@ -164,8 +164,9 @@ export default function CompetitiveAnalysisPage(){
 
   const filteredAwards=useMemo(()=>{
     const q=query.trim().toLocaleLowerCase();
+    const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
     return candidates.filter(r=>{
-      if(r.classification==="review"||!inYear(r.award_date,year))return false;
+      if(!isRecentAward(r,today)||!inYear(r.award_date,year))return false;
       const attribution=vendorFromAward(r);
       if(vendor!=="전체"&&attribution?.vendor!==vendor)return false;
       if(type!=="전체"&&r.classification!==type)return false;
@@ -476,9 +477,9 @@ export default function CompetitiveAnalysisPage(){
         <Pager page={awardPage} pages={awardPages} count={verifiedAwards.length} onPage={setAwardPage} pageSize={pageSize} onPageSize={setPageSize}/>
       </section>
 
-      <details className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
+      {canAdmin && unverifiedAwards.length > 0 && <details className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          제조사 미확인 가상화 사업 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span> <span className="ml-2 text-sm font-normal text-slate-400">벤더 실적에서 제외 · 클릭하여 검토</span>
+          원자료 검토 <span className="ml-1 text-blue-600">{unverifiedAwards.length}건</span>
         </summary>
         <div className="max-h-[520px] overflow-auto border-t border-slate-100 dark:border-white/10">
           <table className="w-full min-w-[800px] text-left text-sm"><thead className="sticky top-0 bg-slate-50 dark:bg-slate-800"><tr className="text-slate-500">
@@ -490,7 +491,7 @@ export default function CompetitiveAnalysisPage(){
             <td className="whitespace-nowrap p-3 text-right">{fmtWon(r.amount)}</td>
           </tr>)}</tbody></table>
         </div>
-      </details>
+      </details>}
 
       <details className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">기타 가상화 관련 쇼핑몰 품목 <span className="text-blue-600">{otherDeliveries.length}건</span><span className="ml-2 text-sm font-normal text-slate-400">중점 추적 벤더 외 제품</span></summary>
