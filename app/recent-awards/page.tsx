@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Header from "@/components/Header";
 import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "@/lib/authedFetch";
 import { useAuth } from "@/lib/auth";
@@ -165,18 +166,16 @@ export default function RecentAwardsPage() {
     const link = document.createElement("a"); link.href = url; link.download = "최근_가상화_낙찰.csv"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  return <main className="min-w-0 flex-1 bg-[#f2f6fc] px-4 py-6 text-slate-900 dark:bg-[#081426] dark:text-white sm:px-6 xl:px-8">
+  return <main className="min-w-0 flex-1 bg-[#f2f6fc] px-4 py-5 text-slate-900 dark:bg-[#081426] dark:text-white sm:px-6">
     <div className="mx-auto max-w-[1800px]">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div><p className="text-xs font-bold tracking-[.17em] text-blue-600 dark:text-cyan-300">G2B AWARD RADAR</p>
-          <h1 className="mt-1 text-2xl font-extrabold">최근 낙찰</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">가상화·HCI 낙찰 및 추적업체 직접 낙찰</p></div>
+      <Header title="최근 낙찰" description="가상화·HCI 낙찰 및 추적업체 직접 낙찰" />
+      <div className="flex flex-wrap justify-end gap-4">
         <div className="flex items-center gap-2">
           {canCollect && <button type="button" disabled={collecting} className={`${pill} bg-blue-50 text-blue-700 disabled:opacity-40 dark:bg-blue-500/10 dark:text-blue-200`} onClick={() => void collectNow()}>{collecting ? "수집 중…" : "지금 수집"}</button>}
           <button type="button" className={pill} onClick={() => { setLoading(true); setReload(x => x + 1); }}>화면 새로고침</button>
           <button type="button" className={`${pill} bg-blue-600 text-white disabled:opacity-40`} onClick={download} disabled={!filtered.length}>CSV 다운로드</button>
         </div>
-      </header>
+      </div>
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[["낙찰", `${filtered.length.toLocaleString()}건`], ["사업 전체 낙찰금액", compact(total)], ["낙찰업체", `${filteredVendorCount.toLocaleString()}곳`], ["최근 낙찰일", latest]].map(([label, value]) =>
           <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><p className="text-xs text-slate-500 dark:text-slate-400">{label}</p><p className="mt-2 text-xl font-extrabold tabular-nums text-blue-600 dark:text-cyan-200">{value}</p></div>)}

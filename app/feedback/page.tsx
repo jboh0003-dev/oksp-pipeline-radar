@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Header from "@/components/Header";
 import {
   feedbacksToCsv,
   loadAllFeedbacks,
@@ -75,19 +76,7 @@ export default function FeedbackPage() {
   return (
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
-        <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
-          <div className="relative flex min-h-[150px] flex-col justify-center px-5 py-7 sm:min-h-[190px] sm:px-7 sm:py-9">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">
-              OKESTRO CS-G2B
-            </p>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-white drop-shadow-sm sm:text-2xl">
-              피드백 현황
-            </h1>
-            <p className="mt-1 hidden text-xs text-slate-200/85 sm:block">
-              입찰공고·사전규격공고에 남긴 영업 의견 모아보기
-            </p>
-          </div>
-        </header>
+        <Header title="피드백 현황" description="입찰공고·사전규격공고에 남긴 영업 의견 모아보기" />
 
         <section className="mb-3 flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-slate-900/70 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">

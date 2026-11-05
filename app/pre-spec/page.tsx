@@ -9,6 +9,7 @@ import CollectionErrorPanel from "@/components/CollectionErrorPanel";
 import FeedbackModal from "@/components/FeedbackModal";
 import LastCollectionRunCard from "@/components/LastCollectionRunCard";
 import PreSpecTable from "@/components/PreSpecTable";
+import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { authedFetch } from "@/lib/authedFetch";
 import { parseApiResponse } from "@/lib/apiResponse";
@@ -950,24 +951,7 @@ export default function PreSpecPage() {
   return (
     <div className="min-h-full">
       <div className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-7 md:max-w-[1800px] md:px-6">
-        {/* 브랜드 헤더 — 입찰공고와 톤 통일 */}
-        <header className="relative mb-4 overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-md csg2b-header-bg dark:ring-white/10">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-cyan-300/20 blur-3xl"
-          />
-          <div className="relative flex min-h-[150px] flex-col justify-center px-5 py-7 sm:min-h-[190px] sm:px-7 sm:py-9">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/90">
-              OKESTRO CS-G2B
-            </p>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-white drop-shadow-sm sm:text-2xl">
-              나라장터 사전규격공고 대시보드
-            </h1>
-            <p className="mt-1 hidden text-xs text-slate-200/85 sm:block">
-              공공기관 조달 공고 조회 · 사전규격 조기탐지 · 담당본부 자동 매칭
-            </p>
-          </div>
-        </header>
+        <Header title="사전규격공고" description="사전규격 조기탐지 · 담당본부 자동 매칭" />
 
         <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-400 sm:text-xs">
           {canAdmin ? (

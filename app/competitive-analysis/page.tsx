@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Header from "@/components/Header";
 import {useEffect,useMemo,useState} from "react";
 import {VENDORS, vendorFromAward, vendorFromDelivery, classifyDeliveryProduct, isCompetitiveDeliveryProduct, isDirectVendorSupply, hasConfirmedVendorBusinessNo, type VendorId} from "@/lib/competitive/vendorEvidence";
 import {VIRTUALIZATION_KEYWORDS} from "@/lib/competitive/keywords";
@@ -296,11 +297,7 @@ export default function CompetitiveAnalysisPage(){
 
   return <div className="min-h-full">
     <div className="mx-auto w-full max-w-[1850px] px-4 py-5 sm:px-6">
-      <header className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-2xl bg-slate-900 px-5 py-4 text-white dark:ring-1 dark:ring-white/10">
-        <div><p className="text-sm font-semibold tracking-widest text-cyan-300">PIPELINE MAKER</p>
-          <h1 className="mt-1 text-xl font-bold sm:text-2xl">가상화 벤더 경쟁분석</h1></div>
-        <div className="text-sm text-slate-300">{year==="전체"?"2024–2026년 전체":year+"년"} · 나라장터 기준</div>
-      </header>
+      <Header title="수주 이력·경쟁분석" description="가상화 벤더 조달 실적 · 나라장터 기준" badge={year==="전체"?"2024–2026년 전체":year+"년"} />
 
       <div className="mb-4 grid grid-cols-2 gap-2.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-slate-900/70 md:grid-cols-3 xl:grid-cols-5">
         <Field label="분석 연도"><select className={inputClass} value={year} onChange={e=>setYear(e.target.value)}>
