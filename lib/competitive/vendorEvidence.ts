@@ -58,7 +58,7 @@ export function vendorFromProduct(text: string): VendorId | null {
       (/\bAHV\b/i.test(text) && /가상화|하이퍼바이저|hci|클라우드|virtualization/i.test(text))) return "Nutanix";
   if (/vmware|vcenter|vsphere|esxi|\bVCF\b|\bvSAN\b|브이엠웨어|\btanzu\b/i.test(text)) return "VMware";
   if (/이노그리드|innogrid|openstackit|오픈스택잇|클라우드잇|cloud.?it|se\s*cloudit|se클라우드잇/i.test(text)) return "이노그리드";
-  if (/red\s*hat.{0,20}(?:virtualization|openshift)|\bopenshift\b|오픈시프트|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
+  if (/red\s*hat.{0,20}(?:virtualization|openshift)|\bopenshift\b|오픈시프트|\brhocp\b|레드햇.{0,12}가상화/i.test(text)) return "Red Hat";
   if (/proxmox|프록스목스/i.test(text)) return "Proxmox";
   if (/popcon\s*hci|파이오링크.{0,30}(hci|가상화)/i.test(text)) return "파이오링크";
   if (/씨티클라우드|citycloud|도시엔컴.{0,25}(가상화|hci)/i.test(text)) return "도시엔컴";

@@ -14,7 +14,7 @@ export const VIRTUALIZATION_BID_KEYWORD_GROUPS = {
   vmware: ["vSphere", "ESXi", "vSAN", "VMware"],
   redhat: ["OpenShift Virtualization", "Red Hat Virtualization", "오픈시프트 가상화"],
   proxmox: ["Proxmox", "프록스목스"],
-  paas: ["PaaS", "VIOLA", "쿠버네티스", "Kubernetes", "OpenShift", "오픈시프트", "K-PaaS", "Tanzu", "SECloudit", "SE클라우드잇", "Cocktail Cloud", "칵테일 클라우드", "Accordion", "아코디언"],
+  paas: ["PaaS", "VIOLA", "쿠버네티스", "Kubernetes", "OpenShift", "오픈시프트", "RHOCP", "K-PaaS", "Tanzu", "SECloudit", "SE클라우드잇", "Cocktail Cloud", "칵테일 클라우드", "Accordion", "아코디언"],
 } as const;
 export type VendorKeywordGroup = keyof typeof VIRTUALIZATION_BID_KEYWORD_GROUPS;
 const KINDS = [
