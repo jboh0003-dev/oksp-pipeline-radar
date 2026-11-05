@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addDaysYmd, collectCompetitiveAwards, kstTodayYmd } from "@/lib/g2b/competitiveAwards";
+import { collectCompetitiveAwards, kstTodayYmd } from "@/lib/g2b/competitiveAwards";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +57,8 @@ export async function GET(request: NextRequest) {
 
   const startedAt = new Date().toISOString();
   const endDate = kstTodayYmd();
-  const startDate = addDaysYmd(endDate, -93);
+  const firstMonth = new Date(Date.UTC(Number(endDate.slice(0, 4)), Number(endDate.slice(5, 7)) - 3, 1));
+  const startDate = firstMonth.toISOString().slice(0, 10);
   try {
     const result = await collectCompetitiveAwards({ startDate, endDate, persist: true, concurrency: 6 });
     const completedAt = new Date().toISOString();

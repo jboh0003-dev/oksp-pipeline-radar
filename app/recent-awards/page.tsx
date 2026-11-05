@@ -5,13 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "@/lib/authedFetch";
 import { useAuth } from "@/lib/auth";
 import type { RecentAward } from "@/lib/competitive/recentAwardFilter";
-import { vendorFromAward } from "@/lib/competitive/vendorEvidence";
+import { vendorFromAward, vendorFromDelivery, isCompetitiveDeliveryProduct } from "@/lib/competitive/vendorEvidence";
 
 type ViewRow = RecentAward & { updated_at: string; source?: "direct" };
+type DeliveryRow = { receipt_date: string; product_name: string; brand: string | null; supplier_name: string | null; customer_name: string | null; amount: number | null };
 const category = (row: ViewRow) => row.source === "direct" ? "업체 직접 낙찰 · 제품 미확인" : row.classification === "hci" ? "HCI" : "서버 가상화";
 const won = (amount: number) => amount.toLocaleString("ko-KR") + "원";
 const compact = (amount: number) => amount >= 1e8
-  ? (amount / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "억 원"
+  ? (amount / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 2 }) + "억 원"
   : (amount / 1e4).toLocaleString("ko-KR", { maximumFractionDigits: 0 }) + "만 원";
 const monthKey = (date: string) => date.slice(0, 7);
 const pill = "rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold dark:border-white/10";
@@ -19,6 +20,8 @@ const pill = "rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold
 export default function RecentAwardsPage() {
   const [rows, setRows] = useState<ViewRow[]>([]);
   const [directRows, setDirectRows] = useState<ViewRow[]>([]);
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [deliveryError, setDeliveryError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [range, setRange] = useState<number | "all">("all");
@@ -30,6 +33,9 @@ export default function RecentAwardsPage() {
   const [reload, setReload] = useState(0);
   const [collecting, setCollecting] = useState(false);
   const [notice, setNotice] = useState("");
+  const [monthlyExpanded, setMonthlyExpanded] = useState(false);
+  const [winnersExpanded, setWinnersExpanded] = useState(false);
+  const [manufacturersExpanded, setManufacturersExpanded] = useState(false);
   const auth = useAuth();
   const canCollect = auth.profileStatus === "ready" && auth.role === "admin";
   useEffect(() => {
@@ -51,16 +57,23 @@ export default function RecentAwardsPage() {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [reload]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/virtualization-deliveries", { cache: "no-store", signal: controller.signal })
+      .then(async response => { const body = await response.json(); if (!response.ok || !body.ok) throw new Error(body.error || "제조사 자료 조회 실패"); return body; })
+      .then(body => { setDeliveries(body.rows); setDeliveryError(""); })
+      .catch(error => { if (!controller.signal.aborted) setDeliveryError(error instanceof Error ? error.message : "제조사 자료 조회 실패"); });
+    return () => controller.abort();
+  }, [reload]);
 
   const searchRows = useMemo(() => {
-    if (!search.trim()) return rows;
     const found = new Map<string, ViewRow>();
     for (const row of [...rows, ...directRows]) {
       const key = [row.bid_no, row.bid_ord || "000", row.winner_business_no].join(":");
       if (!found.has(key)) found.set(key, row);
     }
     return [...found.values()].sort((a, b) => b.award_date.localeCompare(a.award_date) || b.bid_no.localeCompare(a.bid_no));
-  }, [rows, directRows, search]);
+  }, [rows, directRows]);
   const base = useMemo(() => {
     if (range === "all") return searchRows;
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -89,8 +102,24 @@ export default function RecentAwardsPage() {
       const old = map.get(row.winner_business_no);
       map.set(row.winner_business_no, { no: row.winner_business_no, name: row.winner_name, count: (old?.count ?? 0) + 1, amount: (old?.amount ?? 0) + row.amount });
     }
-    return [...map.values()].sort((a, b) => b.amount - a.amount);
+    return [...map.values()].sort((a, b) => b.amount - a.amount || b.count - a.count || a.name.localeCompare(b.name, "ko-KR"));
   }, [matchingRows]);
+  const manufacturerStats = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase();
+    const map = new Map<string, { name: string; count: number; amount: number }>();
+    for (const row of deliveries) {
+      if (row.receipt_date.slice(0, 4) < startYear || row.receipt_date.slice(0, 4) > endYear) continue;
+      if (!isCompetitiveDeliveryProduct(row.product_name)) continue;
+      const maker = vendorFromDelivery(row)?.vendor;
+      if (!maker) continue;
+      if (term && ![maker, row.product_name, row.supplier_name, row.customer_name].join(" ").toLocaleLowerCase().includes(term)) continue;
+      const amount = Number(row.amount);
+      if (!Number.isSafeInteger(amount) || amount <= 0) continue;
+      const old = map.get(maker);
+      map.set(maker, { name: maker, count: (old?.count ?? 0) + 1, amount: (old?.amount ?? 0) + amount });
+    }
+    return [...map.values()].sort((a, b) => b.amount - a.amount || b.count - a.count || a.name.localeCompare(b.name, "ko-KR"));
+  }, [deliveries, startYear, endYear, search]);
   const monthly = useMemo(() => {
     const map = new Map<string, { count: number; amount: number }>();
     for (const row of filtered) {
@@ -100,6 +129,7 @@ export default function RecentAwardsPage() {
     return [...map].sort(([a], [b]) => b.localeCompare(a));
   }, [filtered]);
   const largest = Math.max(1, ...vendorStats.map(v => v.amount));
+  const largestManufacturer = Math.max(1, ...manufacturerStats.map(v => v.amount));
   const monthlyMax = Math.max(1, ...monthly.map(([, v]) => v.amount));
   const latest = filtered[0]?.award_date ?? "-";
   const updated = rows.reduce((max, row) => row.updated_at > max ? row.updated_at : max, "");
@@ -140,7 +170,7 @@ export default function RecentAwardsPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[.17em] text-blue-600 dark:text-cyan-300">G2B AWARD RADAR</p>
           <h1 className="mt-1 text-2xl font-extrabold">최근 낙찰</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">가상화·HCI 입찰 낙찰 · 조달 공급 실적은 별도 집계</p></div>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">가상화·HCI 낙찰 및 추적업체 직접 낙찰</p></div>
         <div className="flex items-center gap-2">
           {canCollect && <button type="button" disabled={collecting} className={`${pill} bg-blue-50 text-blue-700 disabled:opacity-40 dark:bg-blue-500/10 dark:text-blue-200`} onClick={() => void collectNow()}>{collecting ? "수집 중…" : "지금 수집"}</button>}
           <button type="button" className={pill} onClick={() => { setLoading(true); setReload(x => x + 1); }}>화면 새로고침</button>
@@ -161,13 +191,13 @@ export default function RecentAwardsPage() {
         <select aria-label="사업 분류" value={kind} onChange={e => setKind(e.target.value)} className={`${pill} bg-transparent`}><option>전체</option><option value="server_virtualization">서버 가상화</option><option value="hci">HCI</option><option value="direct_other">업체 직접 낙찰</option></select>
         {winner && <button type="button" onClick={() => setWinner("")} className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">업체 필터 해제 ×</button>}
       </div>
-      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년`} 같은 입찰 원자료 · 기준 충족 {samePeriodAwards.length}건 · 제조사 확인 {attributedAwards}건 · 제조사 미확인 {samePeriodAwards.length - attributedAwards}건. <Link href="/competitive-analysis" className="font-semibold text-blue-600 underline">수주·경쟁 이력에서 비교</Link> · 쇼핑몰 납품요구는 별도 집계입니다.</p>
+      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년`} · 가상화·HCI 낙찰 {samePeriodAwards.length}건 (제조사 확인 {attributedAwards}건) · 추적업체 직접 낙찰은 별도 분류 · 제조사 공급 순위는 쇼핑몰 납품요구 기준</p>
       {search.trim() && filtered.some(row => row.source === "direct") && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">업체 직접 낙찰에는 가상화 제품 공급 여부를 확인할 수 없는 사업도 포함됩니다. 쇼핑몰 납품요구는 <Link href="/competitive-analysis" className="font-bold underline">수주 이력·경쟁분석</Link>에서 확인할 수 있습니다.</p>}
       {notice && <p role="status" className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{notice}</p>}
       {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]">
         <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#101f36]">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년` : `최근 ${range}일`} · 가상화·HCI 기준 충족 {samePeriodAwards.length}건</span></div>
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-white/10"><h2 className="font-bold">낙찰 원자료 <span className="ml-1 text-blue-600 dark:text-cyan-200">{filtered.length}건</span></h2><span className="text-xs text-slate-500">{range === "all" ? startYear === endYear ? `${startYear}년` : `${startYear}~${endYear}년` : `최근 ${range}일`} · 가상화·HCI + 추적업체 직접 낙찰</span></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[800px] table-fixed text-left text-sm"><colgroup><col className="w-[90px]"/><col/><col className="w-[145px]"/><col className="w-[125px]"/><col className="w-[130px]"/></colgroup>
             <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-white/5"><tr><th className="p-3">낙찰일</th><th className="p-3">사업명</th><th className="p-3">낙찰업체</th><th className="p-3">수요기관</th><th className="p-3 text-right">전체 낙찰금액</th></tr></thead>
             <tbody>{filtered.map(row => <tr key={row.external_key} className="border-t border-slate-100 align-top dark:border-white/10">
@@ -180,9 +210,21 @@ export default function RecentAwardsPage() {
           {!loading && !filtered.length && <p className="p-8 text-center text-sm text-slate-500">해당 조건의 낙찰 건이 없습니다.</p>}
         </section>
         <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><h2 className="font-bold">월별 낙찰 추이</h2><div className="mt-4 space-y-3">{monthly.map(([month, value]) => <div key={month} className="grid grid-cols-[55px_1fr_85px] items-center gap-2 text-xs"><span className="tabular-nums text-slate-500">{month.slice(2)}</span><div className="h-5 overflow-hidden rounded bg-slate-100 dark:bg-white/10"><div className="h-full rounded bg-gradient-to-r from-blue-600 to-cyan-400" style={{ width: `${value.amount / monthlyMax * 100}%` }} /></div><span className="text-right font-bold tabular-nums">{compact(value.amount)}</span></div>)}</div></section>
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]"><div className="flex items-center justify-between"><h2 className="font-bold">낙찰업체별 합계</h2><span className="text-xs text-slate-500">금액순</span></div><div className="mt-3 space-y-1">{vendorStats.slice(0, 12).map((v, index) => <button type="button" key={v.no} onClick={() => setWinner(winner === v.no ? "" : v.no)} className={`w-full rounded-lg p-2 text-left hover:bg-slate-50 dark:hover:bg-white/5 ${winner === v.no ? "bg-blue-50 dark:bg-blue-500/10" : ""}`}><div className="flex items-baseline justify-between gap-2 text-sm"><span className="min-w-0 truncate"><span className="mr-2 text-xs text-slate-400">{index + 1}</span><strong>{v.name}</strong></span><span className="shrink-0 font-bold tabular-nums text-blue-600 dark:text-cyan-200">{compact(v.amount)}</span></div><div className="mt-1.5 flex items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded bg-slate-100 dark:bg-white/10"><div className="h-full rounded bg-blue-500" style={{ width: `${v.amount / largest * 100}%` }}/></div><span className="text-xs tabular-nums text-slate-500">{v.count}건</span></div></button>)}</div></section>
-          <p className="px-1 text-xs leading-5 text-slate-500">나라장터 최종 낙찰업체 기준 · 금액은 사업 전체 낙찰금액 · 제조사는 공고명에 명시된 경우만 표시<br/>최근 저장 자료 {updated ? new Date(updated).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</p>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]">
+            <div className="flex items-center justify-between gap-2"><h2 className="font-bold">월별 낙찰 추이</h2><button type="button" aria-expanded={monthlyExpanded} onClick={() => setMonthlyExpanded(value => !value)} className="text-sm font-semibold text-blue-600 hover:underline dark:text-cyan-200">{monthlyExpanded ? "접기" : `전체 보기 (${monthly.length}개월)`}</button></div>
+            <div className="mt-4 space-y-3">{(monthlyExpanded ? monthly : monthly.slice(0, 3)).map(([month, value]) => <div key={month} className="grid grid-cols-[55px_1fr_85px] items-center gap-2 text-xs"><span className="tabular-nums text-slate-500">{month.slice(2)}</span><div className="h-5 overflow-hidden rounded bg-slate-100 dark:bg-white/10"><div className="h-full rounded bg-gradient-to-r from-blue-600 to-cyan-400" style={{ width: `${value.amount / monthlyMax * 100}%` }} /></div><span className="text-right font-bold tabular-nums">{compact(value.amount)}</span></div>)}</div>
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]">
+            <div className="flex items-center justify-between gap-2"><div><h2 className="font-bold">제조사 조달 공급 순위</h2><p className="mt-1 text-xs text-slate-500">쇼핑몰 납품요구금액 · 금액 내림차순</p></div><button type="button" aria-expanded={manufacturersExpanded} onClick={() => setManufacturersExpanded(value => !value)} className="shrink-0 text-sm font-semibold text-blue-600 hover:underline dark:text-cyan-200">{manufacturersExpanded ? "접기" : `전체 보기 (${manufacturerStats.length}곳)`}</button></div>
+            {deliveryError && <p role="alert" className="mt-3 text-sm text-red-600">{deliveryError}</p>}
+            <div className="mt-3 space-y-1">{(manufacturersExpanded ? manufacturerStats : manufacturerStats.slice(0, 5)).map((v, index) => <div key={v.name} className="rounded-lg p-2"><div className="flex items-baseline justify-between gap-2 text-sm"><span className="min-w-0 truncate"><span className="mr-2 text-xs text-slate-400">{index + 1}</span><strong>{v.name}</strong></span><span className="shrink-0 font-bold tabular-nums text-blue-600 dark:text-cyan-200" title={won(v.amount)}>{compact(v.amount)}</span></div><div className="mt-1.5 flex items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded bg-slate-100 dark:bg-white/10"><div className="h-full rounded bg-cyan-500" style={{ width: `${v.amount / largestManufacturer * 100}%` }}/></div><span className="text-xs tabular-nums text-slate-500">{v.count}건</span></div></div>)}</div>
+            {!deliveryError && !manufacturerStats.length && <p className="mt-3 text-sm text-slate-500">해당 기간의 제조사 확인 공급 내역이 없습니다.</p>}
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#101f36]">
+            <div className="flex items-center justify-between gap-2"><div><h2 className="font-bold">실제 낙찰업체 순위</h2><p className="mt-1 text-xs text-slate-500">입찰 사업 전체 낙찰금액 · 금액 내림차순</p></div><button type="button" aria-expanded={winnersExpanded} onClick={() => setWinnersExpanded(value => !value)} className="shrink-0 text-sm font-semibold text-blue-600 hover:underline dark:text-cyan-200">{winnersExpanded ? "접기" : `전체 보기 (${vendorStats.length}곳)`}</button></div>
+            <div className="mt-3 space-y-1">{(winnersExpanded ? vendorStats : vendorStats.slice(0, 5)).map((v, index) => <button type="button" key={v.no} onClick={() => setWinner(winner === v.no ? "" : v.no)} className={`w-full rounded-lg p-2 text-left hover:bg-slate-50 dark:hover:bg-white/5 ${winner === v.no ? "bg-blue-50 dark:bg-blue-500/10" : ""}`}><div className="flex items-baseline justify-between gap-2 text-sm"><span className="min-w-0 truncate"><span className="mr-2 text-xs text-slate-400">{index + 1}</span><strong>{v.name}</strong></span><span className="shrink-0 font-bold tabular-nums text-blue-600 dark:text-cyan-200" title={won(v.amount)}>{compact(v.amount)}</span></div><div className="mt-1.5 flex items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded bg-slate-100 dark:bg-white/10"><div className="h-full rounded bg-blue-500" style={{ width: `${v.amount / largest * 100}%` }}/></div><span className="text-xs tabular-nums text-slate-500">{v.count}건</span></div></button>)}</div>
+          </section>
+          <p className="px-1 text-xs leading-5 text-slate-500">각 순위는 원 단위 금액으로 정렬 · 동일 사업이 두 자료에 나타날 수 있으므로 합산하지 않습니다.<br/>최근 저장 자료 {updated ? new Date(updated).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-"}</p>
         </aside>
       </div>
     </div>
