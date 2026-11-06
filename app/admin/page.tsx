@@ -67,7 +67,7 @@ export default function AdminHomePage() {
         </section>
 
         <section className="mt-5 grid gap-3 lg:grid-cols-3">
-          <AdminLink href="/admin/users" title="사용자 관리" desc="계정 목록 확인 및 admin/user 권한 변경" />
+          <AdminLink href="/admin/users" title="계정 관리" desc="신규 계정 생성 · 비밀번호 초기화 · 접근 권한 관리" />
           <AdminLink href="/admin/keywords" title="키워드 규칙" desc="실제 자동수집에 적용되는 CONTRABASS·VIOLA·제외 키워드 관리" />
           <AdminLink href="/admin/collection-reset" title="수집 상태 초기화" desc="브라우저 공고 캐시와 신규 표시 snapshot 초기화" />
           <AdminLink href="/admin/virtualization" title="가상화 3개년 납품이력" desc="2024~2026년 조달쇼핑몰 가상화 제품 월별 미리보기 및 수동 수집" />

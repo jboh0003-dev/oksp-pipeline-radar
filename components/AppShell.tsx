@@ -118,8 +118,8 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/users",
-    label: "사용자 관리",
-    description: "role / 계정",
+    label: "계정 관리",
+    description: "계정 생성 / 비밀번호 / 권한",
     scope: "admin",
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -311,6 +311,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               {role}
             </span>
           </div>
+          <Link href="/account/password" onClick={() => setMobileOpen(false)} className="mt-2 inline-flex h-7 w-full items-center justify-center rounded-md bg-white/5 text-[11px] font-semibold text-slate-200 ring-1 ring-inset ring-white/10 transition hover:bg-white/10 hover:text-white">
+            비밀번호 변경
+          </Link>
           <button
             type="button"
             onClick={() => {
